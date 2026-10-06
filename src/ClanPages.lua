@@ -10,7 +10,6 @@
 -- Talks to ServerScriptService.Clans through Shared.ClanFn (see Clans.lua for the ops).
 -- Sets the PlayerGui attribute "WFClanTag" (TAG or "") whenever it learns the player's clan, so
 -- the main menu's TAG button can show it.
---
 -- ClanPages.render(page)            the Clans page (MenuKit page)
 -- ClanPages.renderBoard(page)       the "Clans" tab of the leaderboard
 -- ClanPages.summary(body, order)    the profile's Clans tab

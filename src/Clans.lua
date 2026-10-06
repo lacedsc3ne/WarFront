@@ -7,7 +7,6 @@
 ]]
 
 -- ServerScriptService.Clans (ModuleScript), started by GameServer.
---
 -- DataStore "WF_Clans_v1":
 --   "c_<TAG>"  clan { tag, name, desc, open, leader, created, wins, games,
 --                     members = { ["<userId>"] = { r = "leader" | "officer" | "member", n = name, j = time } },
@@ -17,7 +16,6 @@
 --              and the clan leaderboard
 -- MessagingService "WFClans" { u = userId, t = TAG | false } tells other servers a player's clan
 -- changed (accepted, kicked) so their name tag updates without rejoining.
---
 -- Client -> server: Shared.ClanFn (RemoteFunction) :InvokeServer(op, arg) -> ok, result | message
 --   "me"                     { clan = view?, role?, medals, tokens, cost, charterId, max }
 --   "view", TAG              view of any clan (requests only for its officers)
@@ -31,7 +29,6 @@
 --   "transfer", userId                  leader hands over leadership
 --   "leave"                  (the leader must transfer first; a lone leader disbands the clan)
 --   "settings", { desc, open }          leader
---
 -- Clans.init(ctx)          ctx: progression, onTagChanged(plr, tag?)
 -- Clans.load(plr)          on join: finds the player's clan (background)
 -- Clans.forget(plr)
