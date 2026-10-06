@@ -29,6 +29,13 @@ Config.TICK = 0.1 -- seconds per simulation tick (10 tps)
 -- old single-place behaviour (rounds play in the server you join).
 Config.LOBBY_PLACE_ID = 87826104198202
 Config.MATCH_PLACE_ID = 113898874348705 -- "War Front" match subplace (reserved match servers)
+-- The test experience "War Front [TEST SERVER]" runs this same file with its own two places, so
+-- testing there never sends players to the live places (and saves, lobbies and boards stay apart).
+Config.TEST_GAME_ID = 10769671248
+if game.GameId == Config.TEST_GAME_ID then
+	Config.LOBBY_PLACE_ID = 132423840946896 -- "War Front [TEST SERVER]"
+	Config.MATCH_PLACE_ID = 137834113447127 -- "War Front: Match [TEST SERVER]"
+end
 Config.PUBLIC_LOBBY_SECONDS = 60 -- countdown once the first player is in the public lobby
 Config.PUBLIC_MAX_PLAYERS = 50 -- Roblox server size of the match place (Max Players setting)
 Config.PRIVATE_MAX_PLAYERS = 50
