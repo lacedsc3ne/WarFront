@@ -2445,7 +2445,8 @@ RunService.RenderStepped:Connect(function()
 	AttackLabels.step(MapRender.altView() or phase.phase ~= "Play")
 	-- Build ghost under the cursor (BuildPreviewController): validity re-checked every 50 ms,
 	-- the icon follows the pointer every frame. Not on touch screens without a gamepad pointer.
-	if mode and tile and (padAbs or DeviceLayout.state.input ~= "Touch") and MapUtil.isLand(map, tile) then
+	-- Warships and bombs can be aimed at water too, so only buildings hide their ghost there.
+	if mode and tile and (padAbs or DeviceLayout.state.input ~= "Touch") and (mode.type ~= "build" or MapUtil.isLand(map, tile)) then
 		if now - ghost.checkAt > 0.05 or ghost.tile ~= tile or ghost.kind ~= mode.kind then
 			ghost.checkAt, ghost.tile, ghost.kind = now, tile, mode.kind
 			local canPlace, canUpgrade, upTile, cost, afford = Interact.build.ghostInfo(mode.kind, tile)

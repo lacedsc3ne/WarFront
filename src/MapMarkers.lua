@@ -787,7 +787,8 @@ function MapMarkers.setGhost(g, zoom: number)
 	if not hasIcon then
 		local icon = ghostExtra.icon
 		if not icon then
-			icon = IconKit.image(g.kind, { Name = "BuildGhostIcon", AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(26, 26), ImageTransparency = 0.15, ZIndex = 4, Parent = ctx.layer })
+			-- Kind -> icon name (HydrogenBomb is "HBomb" in IconKit).
+			icon = IconKit.image(IconKit.KIND[g.kind] or g.kind, { Name = "BuildGhostIcon", AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(26, 26), ImageTransparency = 0.15, ZIndex = 4, Parent = ctx.layer })
 			ghostExtra.icon, ghostExtra.kind = icon, g.kind
 		end
 		icon.Position = xyScale(g.x - 0.5, g.y - 0.5)
