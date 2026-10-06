@@ -13,7 +13,6 @@
 --   L break alliance    C centre camera    W A S D pan (held; arrows too)    Q / E zoom (held; - / = too)
 --   Space (hold) alternate view    M coordinate grid    Alt + R reset graphics    F select all warships
 --   P pause, . / , game speed up / down (solo rounds)    Shift + wheel attack ratio    Esc cancel
---
 -- Keybinds.setup(ctx)
 --   ctx.net, ctx.actionList, ctx.setMode({type, kind}), ctx.getRatio(), ctx.setRatio(r),
 --   ctx.zoomAt(factor, sx, sy), ctx.pan(dx, dy), ctx.fitMap(), ctx.centerCamera(), ctx.cancel(),

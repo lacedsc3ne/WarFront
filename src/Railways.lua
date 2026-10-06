@@ -10,7 +10,6 @@
 ]]
 
 -- ServerScriptService.Railways (ModuleScript), used by GameServer.
---
 -- Railways.init(ctx) / setMap(map) / reset()
 -- Railways.onBuilt(s)       a structure finished construction (City / Port / Factory matter)
 -- Railways.onRemoved(s)     a structure was destroyed or deleted
@@ -19,12 +18,10 @@
 -- Railways.flush()          send this tick's "rails" / "trains" changes
 -- Railways.sendInit(plr)    full rail network + trains for a (re)joining client
 -- Railways.trainUnits() -> number
---
 -- Scale: OpenFront distances / LINEAR_SCALE (4): station range 110 -> 27.5, min range 15 -> 3.75,
 -- max railroad length 110 * 1.4142 -> 38.9 tiles, snap radius 3 -> 1 tile, train speed
 -- 2 -> 0.5 tiles per tick, car spacing 2 -> 0.5 tiles. Train counts, spawn odds and gold are
 -- not distances and stay as in OpenFront.
---
 -- Network (server -> client):
 --   "rails"  { add = { { id, tiles: buffer of u32 } ... }, remove = { id ... } }
 --   "trains" { add = { { id, owner, path: buffer of u32 tiles, start: server time at path[1],
@@ -121,9 +118,7 @@ local function tradeAvailable(st, player): boolean
 	return o == player or canTrade(player, o)
 end
 
---------------------------------------------------------------------------------
 -- Rail pathfinding (AStar.Rail on our map)
---------------------------------------------------------------------------------
 local heapT, heapP = {}, {}
 local function hpush(t, p)
 	local n = #heapT + 1
@@ -234,9 +229,7 @@ local function railPath(from: number, to: number): { number }?
 	end
 end
 
---------------------------------------------------------------------------------
 -- Railroads
---------------------------------------------------------------------------------
 local function registerRail(r)
 	rails[r.id] = r
 	for _, t in r.tiles do
@@ -506,9 +499,7 @@ local function factoryNearby(tile: number): boolean
 	return #nearbyStructures(tile, STATION_MAX_RANGE, { Factory = true }, true) > 0
 end
 
---------------------------------------------------------------------------------
 -- Structures
---------------------------------------------------------------------------------
 function Railways.onBuilt(s)
 	if s.kind == "Factory" then
 		-- FactoryExecution.createStation: the factory spawns trains; nearby cities, ports and
@@ -535,9 +526,7 @@ function Railways.onRemoved(s)
 	end
 end
 
---------------------------------------------------------------------------------
 -- Trains
---------------------------------------------------------------------------------
 local function sigmoid(x: number, k: number, mid: number): number
 	return 1 / (1 + math.exp(-k * (x - mid)))
 end

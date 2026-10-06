@@ -12,7 +12,6 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.MapRender (ModuleScript), used by GameClient and MapFx.
---
 -- OpenFront draws one map tile per texel, and its tiles are 4x smaller than ours, so its borders
 -- are a hair-thin line. To match that we draw every sim tile as an S x S pixel block (S = 3 on
 -- desktop / console, 2 on phones, 1 with the "Low detail" setting) and draw borders as a 1-pixel
@@ -20,11 +19,9 @@
 -- EditableImages are limited to 1024 x 1024, so the map is split into a grid of chunk images
 -- (ImageLabels laid side by side inside GameClient's map frame, sized by scale, so the camera code
 -- and screenToTile keep working through the map frame's size / position).
---
 -- Repaint is incremental: tiles are grouped into 8 x 8 cells; a changed tile marks its cell (and
 -- the neighbouring cells it borders), dirty cells are repainted under a per-frame time budget into
 -- each chunk's pixel buffer, and only the touched strips of rows are uploaded.
---
 -- MapRender.init(ctx)  ctx = { parent = map frame, holder = viewport frame, map = MapUtil map,
 --                              getOwners() -> buffer, roster, getMyId(), getPhase() -> string,
 --                              getStructures() -> list }
@@ -128,9 +125,7 @@ local function unpackRGB(c: number): (number, number, number)
 	return c % 256, (c // 256) % 256, (c // 65536) % 256
 end
 
---------------------------------------------------------------------------------
 -- Dirty cells
---------------------------------------------------------------------------------
 local function markCell(ci: number)
 	if readu8(cellFlag, ci) == 0 then
 		buffer.writeu8(cellFlag, ci, 1)
@@ -215,9 +210,7 @@ function MapRender.invalidate()
 	lastSignature = ""
 end
 
---------------------------------------------------------------------------------
 -- Tile painting
---------------------------------------------------------------------------------
 -- Wake directions: bit -> (dx, dy)
 local DIRS = { { 0, -1 }, { 1, -1 }, { 1, 0 }, { 1, 1 }, { 0, 1 }, { -1, 1 }, { -1, 0 }, { -1, -1 } }
 
@@ -576,9 +569,7 @@ local function paintOne(owners: buffer, t: number)
 	ch.anyPending = true
 end
 
---------------------------------------------------------------------------------
 -- Chunk images
---------------------------------------------------------------------------------
 local scratch: { [number]: buffer } = {}
 local scratchCount = 0
 local function scratchOf(len: number): buffer
@@ -800,9 +791,7 @@ local function rebuild()
 	upload()
 end
 
---------------------------------------------------------------------------------
 -- Overlays computed from game state: defence coverage, spawn halos
---------------------------------------------------------------------------------
 local coverPosts: { [number]: boolean } = {} -- key tile * 65536 + owner of each covering post
 
 local function refreshCoverage()
@@ -893,9 +882,7 @@ local function refreshSpawnHalos()
 	end
 end
 
---------------------------------------------------------------------------------
 -- Transport wakes (OpenFront TrailManager: stamped behind the boat, cleared when it's gone)
---------------------------------------------------------------------------------
 local function dirBit(a: number, b: number): number?
 	local dx, dy = b % W - a % W, b // W - a // W
 	for i, d in DIRS do
@@ -980,9 +967,7 @@ local function stepTrails()
 	end
 end
 
---------------------------------------------------------------------------------
 -- Public API
---------------------------------------------------------------------------------
 function MapRender.buildBase()
 	local rgb = if Settings.values.terrainShading then Theme.terrainRGB else Theme.flatTerrainRGB
 	local terrain = map.terrain

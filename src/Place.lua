@@ -6,7 +6,6 @@
 ]]
 
 -- ReplicatedStorage.Shared.Place (ModuleScript), used by the server and the client.
---
 -- Place.role() -> "lobby" | "match" | "standalone"
 --   lobby       the root place: main menu, public lobby queue, private lobbies, ranked queue.
 --               No rounds are played here; matches start in reserved servers of the match place.
@@ -14,7 +13,6 @@
 --               then everyone is sent back to the lobby.
 --   standalone  the old behaviour (rounds play in the server you joined). Used while
 --               Config.MATCH_PLACE_ID is 0, and in Studio unless a role is picked for testing.
---
 -- Studio testing: set the workspace attribute "WFRole" to "lobby" or "match" before pressing Play.
 -- A Studio "match" reads its settings from the workspace attribute "WFMatchConfig" (JSON).
 -- The server publishes the role as the workspace attribute "WFPlaceRole" for clients.

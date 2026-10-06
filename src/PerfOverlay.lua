@@ -9,7 +9,6 @@
 -- OpenFront PerformanceOverlay: Settings "Performance Overlay" or Shift + D shows a small panel
 -- with the current / 60 s average FPS, frame time, ping and the slowest client sections (Perf.lua
 -- writes them to the PlayerGui attribute "FrontlinesPerf" every 5 s).
---
 -- PerfOverlay.mount(gui)
 
 local Players = game:GetService("Players")

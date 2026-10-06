@@ -74,10 +74,8 @@ function MapUtil.magnitude(map: GameMap, t: number): number
 	return bit32.band(buffer.readu8(map.terrain, t), 31)
 end
 
---------------------------------------------------------------------------------
 -- Terrain byte: bit 7 = land, bit 6 = shoreline, bit 5 = ocean, low 5 bits = magnitude
 -- (31 on land = impassable).
---------------------------------------------------------------------------------
 local LAND, SHORE, OCEAN, MAG = 128, 64, 32, 31
 
 local function impassableByte(b: number): boolean

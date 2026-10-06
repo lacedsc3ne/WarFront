@@ -38,9 +38,7 @@ local BUTTON_H = 36
 local HEADER_H = 46
 local PAD = 8
 
---------------------------------------------------------------------------------
 -- Diplomacy state (from the server's "diplomacy" and "allyRequests" messages)
---------------------------------------------------------------------------------
 local myAllies: { [number]: number } = {} -- ally id -> expiry (server time)
 local traitorUntil: { [number]: number } = {} -- player id -> server time
 local incoming: { any } = {} -- { fromId, expiresAt, renew }
@@ -174,9 +172,7 @@ function ContextMenu.applyDiplomacy(data): boolean
 	return false
 end
 
---------------------------------------------------------------------------------
 -- UI helpers
---------------------------------------------------------------------------------
 local function make(className: string, props: { [string]: any })
 	local inst = Instance.new(className)
 	for k, v in props do
@@ -226,9 +222,7 @@ local function button(parent, text: string, color: Color3, order: number, onClic
 	return b
 end
 
---------------------------------------------------------------------------------
 -- Context menu
---------------------------------------------------------------------------------
 local blocker: TextButton
 local menu: Frame
 local menuHeader: TextLabel
@@ -429,9 +423,7 @@ function ContextMenu.open(sx: number, sy: number, tile: number)
 	end
 end
 
---------------------------------------------------------------------------------
 -- Incoming alliance requests popup
---------------------------------------------------------------------------------
 local popupRows: { [number]: any } = {} -- fromId -> { frame, text, expiresAt, renew }
 
 local function removeRequest(fromId: number)
@@ -583,9 +575,7 @@ function ContextMenu.reset()
 	end
 end
 
---------------------------------------------------------------------------------
 -- Setup
---------------------------------------------------------------------------------
 --[[
 	ctx = {
 		gui, net, map, roster,         -- ScreenGui, RemoteEvent, map, live roster table

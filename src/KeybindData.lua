@@ -8,11 +8,9 @@
 
 -- StarterPlayer.StarterPlayerScripts.KeybindData (ModuleScript), used by Keybinds, HudSidebars,
 -- GameClient (via Interact.keys) and MenuPages (the Keybinds settings tab).
---
 -- A binding is a Roblox KeyCode name, optionally with "Shift+" in front ("R", "Shift+R", "One").
 -- The player's changes are a JSON map action -> binding in Settings "keybinds"; "Null" = unbound
 -- (OpenFront: an unbound default no longer works, so its key can go to another action).
---
 -- KeybindData.SECTIONS                 { { title, actions = { action ids } } } in OpenFront's order
 -- KeybindData.INFO[action]             { label, desc, default }
 -- KeybindData.get(action) -> string?   current binding (nil = unbound)
@@ -91,9 +89,7 @@ KeybindData.SECTIONS = {
 local MODIFIERS = { altKey = true, buildMenuModifier = true, emojiMenuModifier = true, boxSelectWarships = true }
 KeybindData.MODIFIERS = MODIFIERS
 
---------------------------------------------------------------------------------
 -- Saved overrides
---------------------------------------------------------------------------------
 local lastRaw: string? = nil
 local overrides: { [string]: string } = {}
 

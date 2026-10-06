@@ -325,9 +325,7 @@ local function claimDaily(plr: Player)
 	metaEvent:FireClient(plr, "daily", { day = p.streak, coins = coins, table = MetaConfig.DAILY })
 end
 
---------------------------------------------------------------------------------
 -- Player lifecycle
---------------------------------------------------------------------------------
 local function onPlayerAdded(plr: Player)
 	local data
 	if store then
@@ -457,9 +455,7 @@ MarketplaceService.ProcessReceipt = function(receipt)
 	return Enum.ProductPurchaseDecision.PurchaseGranted
 end
 
---------------------------------------------------------------------------------
 -- Client requests
---------------------------------------------------------------------------------
 metaFn.OnServerInvoke = function(plr: Player, action: any, arg: any)
 	local p = profiles[plr]
 	if not p or typeof(action) ~= "string" then
@@ -536,9 +532,7 @@ metaFn.OnServerInvoke = function(plr: Player, action: any, arg: any)
 	return false, "Unknown action"
 end
 
---------------------------------------------------------------------------------
 -- API used by GameServer
---------------------------------------------------------------------------------
 
 -- Returns {r,g,b} if the player picked a colour, or nil for random.
 function Progression.colorFor(plr: Player)
@@ -669,9 +663,7 @@ function Progression.roundEnded(results, info: any?)
 	end
 end
 
---------------------------------------------------------------------------------
 -- Matchmaking (ServerScriptService.Matchmaker / GameServer)
---------------------------------------------------------------------------------
 
 -- Before a teleport to another place: save now and stop this server saving the profile again,
 -- so the server the player arrives on loads the latest profile and later saves aren't undone.

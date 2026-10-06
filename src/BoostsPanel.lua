@@ -10,7 +10,6 @@
 -- ("boostResult"). Shown in every match (hidden only while watching a replay); a boost that can't
 -- be used right now has a greyed-out button that says why ("Ranked", "In 12s", "Used"). The crown
 -- button in the top-right bar folds the strip away and back.
---
 -- BoostsPanel.setup({ button = GuiButton, gui = ScreenGui, net = RemoteEvent }) -> strip Frame
 --   (HudSidebars stacks the strip under the top-right bar, with the speed and clock panels)
 

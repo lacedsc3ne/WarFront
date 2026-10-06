@@ -6,7 +6,6 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.DefeatScreen (ModuleScript), set up by GameClient.
---
 -- Listens on Shared.Net for "defeated", "revived", "reviveDenied", "shields", "init", "me",
 -- "phase" and sends "revive" / "newCountry" / "leave" (see ServerScriptService.Revive).
 -- EXIT GAME fires PlayerGui.FrontlinesMenuShow (BindableEvent; MainMenu listens and shows itself).
@@ -84,9 +83,7 @@ local function short(n: number): string
 	return tostring(math.floor(n))
 end
 
---------------------------------------------------------------------------------
 -- State
---------------------------------------------------------------------------------
 local net: RemoteEvent
 local focusTile: ((number) -> ())? = nil
 local myId = 0
@@ -95,9 +92,7 @@ local mode = "hidden" -- hidden | panel | watching
 local shields: { [number]: number } = {} -- player id -> server time the shield ends
 local busy = false -- request sent, waiting for the server
 
---------------------------------------------------------------------------------
 -- GUI
---------------------------------------------------------------------------------
 local gui = make("ScreenGui", {
 	Name = "FrontlinesDefeat",
 	IgnoreGuiInset = true,
@@ -323,9 +318,7 @@ local shieldSpan = { ends = 0, len = 1 }
 
 DeviceLayout.attachScreenGui(gui)
 
---------------------------------------------------------------------------------
 -- Layout per device
---------------------------------------------------------------------------------
 local function layout()
 	local profile = DeviceLayout.state.profile
 	local screen = gui.AbsoluteSize
@@ -359,9 +352,7 @@ local function layout()
 	rowLayout.Padding = UDim.new(0, if compact then 6 else 10)
 end
 
---------------------------------------------------------------------------------
 -- Show / hide
---------------------------------------------------------------------------------
 local function menuOpen(): boolean
 	return playerGui:GetAttribute("FrontlinesMenuOpen") == true
 end
@@ -533,9 +524,7 @@ watchBtn.Activated:Connect(DefeatScreen.watch)
 leaveBtn.Activated:Connect(leave)
 pill.Activated:Connect(DefeatScreen.showPanel)
 
---------------------------------------------------------------------------------
 -- Shields
---------------------------------------------------------------------------------
 -- Prefix for a player's map name label while their spawn shield is up.
 function DefeatScreen.shieldTag(id: number): string
 	local ends = shields[id]
@@ -573,9 +562,7 @@ local function updateShieldPill()
 	end
 end
 
---------------------------------------------------------------------------------
 -- Setup
---------------------------------------------------------------------------------
 -- opts: { net: RemoteEvent, focusTile: ((tile: number) -> ())? }
 function DefeatScreen.setup(opts)
 	net = opts.net

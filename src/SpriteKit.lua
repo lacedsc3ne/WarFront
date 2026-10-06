@@ -11,7 +11,6 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.SpriteKit (ModuleScript), used by GameClient and NameLabels.
---
 -- SpriteKit.image(name, props) -> ImageLabel?   one Shared.Sprites image (nil if unavailable);
 --   every label showing the same name shares ONE EditableImage.
 -- SpriteKit.set(imageLabel, name) -> boolean     switch such a label to another sprite
@@ -169,9 +168,7 @@ function SpriteKit.set(label: ImageLabel, name: string): boolean
 	return false
 end
 
---------------------------------------------------------------------------------
 -- Units
---------------------------------------------------------------------------------
 function SpriteKit.cellPx(zoom: number): number
 	return CELL / MAP_SCALE * zoom
 end

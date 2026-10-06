@@ -8,13 +8,11 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.AttackLabels (ModuleScript), used by GameClient.
---
 -- Our outgoing attacks on players (#3fa9f5) and incoming attacks from players / nations (#f87171)
 -- show their troop count (renderTroops) on up to two front segments. The server sends the label
 -- tiles with every personal update ("me": attacks[i][4] = id, [5] = tiles); labels glide to new
 -- positions and snap on big jumps. Constant on-screen size (17 px, 1.2 px black outline), hidden
 -- in the alternate view and when the "Attacking Troops Overlay" setting is off.
---
 -- AttackLabels.init({ layer = Frame (map-sized), mapSize() -> W, H, fmtTroops(n) -> string })
 -- AttackLabels.update(me)      on every "me" message
 -- AttackLabels.step(hidden)    every frame (hidden = alt view / not playing)
