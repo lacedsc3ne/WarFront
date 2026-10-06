@@ -177,6 +177,113 @@ local function showToast(title: string, body: string, opts: any?)
 	end)
 end
 
+-- Group rewards popup: tells players about the group rewards and lets them join without leaving
+-- the game (GroupService:PromptJoinAsync). Opens once per session for non-members when the main
+-- menu is up, and from the main menu's REWARDS news item (PlayerGui.FrontlinesGroupPopup).
+local groupPopup: any = { shown = false, busy = false }
+do
+	local G = MetaConfig.GROUP
+	local TEAL = Color3.fromRGB(20, 205, 185)
+	local boost = MetaConfig.boost(G.DAILY_BOOST)
+	local colour = MetaConfig.color(G.COLOR)
+	local shade = make("Frame", { Name = "GroupPopup", Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.4, Active = true, Visible = false, ZIndex = 50, Parent = gui })
+	local card = make("Frame", { Name = "Card", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(1, -32, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundColor3 = MenuKit.C.GRAY900, BorderSizePixel = 0, Active = true, Parent = shade })
+	corner(card, 18)
+	make("UIStroke", { Color = TEAL, Transparency = 0.5, Thickness = 1.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = card })
+	make("UIPadding", { PaddingTop = UDim.new(0, 24), PaddingBottom = UDim.new(0, 20), PaddingLeft = UDim.new(0, 22), PaddingRight = UDim.new(0, 22), Parent = card })
+	make("UIListLayout", { Padding = UDim.new(0, 10), HorizontalAlignment = Enum.HorizontalAlignment.Center, SortOrder = Enum.SortOrder.LayoutOrder, Parent = card })
+	make("UISizeConstraint", { MaxSize = Vector2.new(440, math.huge), Parent = card }) -- full width minus 16 px on phones
+	local badge = make("Frame", { LayoutOrder = 1, Size = UDim2.fromOffset(68, 68), BackgroundColor3 = TEAL, BackgroundTransparency = 0.8, BorderSizePixel = 0, Parent = card })
+	corner(badge, 18)
+	make("UIStroke", { Color = TEAL, Transparency = 0.5, Thickness = 1, Parent = badge })
+	IconKit.image("Alliance", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(40, 40), ImageColor3 = TEAL, Parent = badge })
+	label({ LayoutOrder = 2, Size = UDim2.new(1, 0, 0, 14), FontFace = FONT_BOLD, TextSize = 11, TextColor3 = TEAL, Text = "FREE GROUP REWARDS", Parent = card })
+	label({ LayoutOrder = 3, Size = UDim2.new(1, 0, 0, 28), FontFace = FONT_BOLD, TextSize = 24, Text = "Join " .. G.name, Parent = card })
+	label({ LayoutOrder = 4, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, TextSize = 14, TextTransparency = 0.35, TextWrapped = true, Text = "Join our Roblox group and get these rewards right away:", Parent = card })
+	local list = make("Frame", { LayoutOrder = 5, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, Parent = card })
+	make("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = list })
+	make("UIPadding", { PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 6), Parent = list })
+	local rows = {
+		{ icon = "Gold", color = GOLD, title = G.MEDALS .. " medals", desc = "Once, as a welcome gift" },
+		{ swatch = colour, color = TEAL, title = (if colour then colour.name else "Group colour") .. " territory colour", desc = "Only group members can use it" },
+		{ icon = if boost then boost.icon else "Gold", color = MenuKit.C.MALIBU, title = "Free " .. (if boost then boost.name else "boost") .. " every day", desc = (if boost then boost.desc else "A free boost") .. ", each day you play" },
+	}
+	for i, row in rows do
+		local f = make("Frame", { LayoutOrder = i, Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 0.96, BorderSizePixel = 0, Parent = list })
+		corner(f, 12)
+		make("UIStroke", { Color = Color3.new(1, 1, 1), Transparency = 0.92, Thickness = 1, Parent = f })
+		local tile = make("Frame", { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 10, 0.5, 0), Size = UDim2.fromOffset(38, 38), BackgroundColor3 = row.color, BackgroundTransparency = 0.82, BorderSizePixel = 0, Parent = f })
+		corner(tile, 10)
+		if row.swatch then
+			local sw = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(22, 22), BackgroundColor3 = Color3.fromRGB(row.swatch.rgb[1], row.swatch.rgb[2], row.swatch.rgb[3]), BorderSizePixel = 0, Parent = tile })
+			corner(sw, 11)
+		else
+			IconKit.image(row.icon, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(22, 22), ImageColor3 = row.color, Parent = tile })
+		end
+		label({ Position = UDim2.fromOffset(60, 9), Size = UDim2.new(1, -70, 0, 20), FontFace = FONT_BOLD, TextSize = 15, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Text = row.title, Parent = f })
+		label({ Position = UDim2.fromOffset(60, 29), Size = UDim2.new(1, -70, 0, 16), TextSize = 12, TextTransparency = 0.45, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Text = row.desc, Parent = f })
+	end
+	local join = button({ Name = "Join", LayoutOrder = 6, Size = UDim2.new(1, 0, 0, 48), BackgroundColor3 = TEAL, TextColor3 = MenuKit.C.GRAY900, TextSize = 17, Text = "JOIN GROUP", Parent = card })
+	join:FindFirstChildWhichIsA("UICorner").CornerRadius = UDim.new(0, 12)
+	local later = button({ Name = "Later", LayoutOrder = 7, Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 0.94, TextTransparency = 0.3, TextSize = 14, Text = "Maybe later", Parent = card })
+	later:FindFirstChildWhichIsA("UICorner").CornerRadius = UDim.new(0, 10)
+	local status = label({ LayoutOrder = 8, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, TextSize = 13, TextColor3 = MenuKit.C.AMBER300, TextWrapped = true, Text = "", Visible = false, Parent = card })
+	local B_ACTION = "WFGroupPopupBack"
+	local function close()
+		shade.Visible = false
+		ContextActionService:UnbindAction(B_ACTION)
+		local sel = GuiService.SelectedObject
+		if sel and sel:IsDescendantOf(shade) then
+			GuiService.SelectedObject = nil
+		end
+	end
+	function groupPopup.open()
+		groupPopup.shown = true
+		status.Visible = false
+		join.Text = "JOIN GROUP"
+		shade.Visible = true
+		card.Position = UDim2.new(0.5, 0, 0.5, 24)
+		TweenService:Create(card, TweenInfo.new(0.3, Enum.EasingStyle.Back), { Position = UDim2.fromScale(0.5, 0.5) }):Play()
+		ContextActionService:BindActionAtPriority(B_ACTION, function(_, state)
+			if state == Enum.UserInputState.Begin then
+				close()
+			end
+			return Enum.ContextActionResult.Sink
+		end, false, Enum.ContextActionPriority.High.Value + 30, Enum.KeyCode.ButtonB)
+		if DeviceLayout.usingGamepad() then
+			GuiService.SelectedObject = join
+		end
+	end
+	later.Activated:Connect(close)
+	join.Activated:Connect(function()
+		if groupPopup.busy then
+			return
+		end
+		groupPopup.busy = true
+		join.Text = "..."
+		local prompted = pcall(function()
+			game:GetService("GroupService"):PromptJoinAsync(G.id)
+		end)
+		local ok, _, msg = pcall(function()
+			return metaFn:InvokeServer("groupCheck")
+		end)
+		groupPopup.busy = false
+		join.Text = "JOIN GROUP"
+		if profile and profile.inGroup then
+			close() -- the reward popup shows what they got
+			return
+		end
+		status.Text = if not prompted then "Search for " .. G.name .. " on Roblox, join it, then press Join again." elseif ok and typeof(msg) == "string" then msg else "Not in the group yet."
+		status.Visible = true
+	end)
+	local ev = Instance.new("BindableEvent")
+	ev.Name = "FrontlinesGroupPopup"
+	ev.Event:Connect(function()
+		groupPopup.open()
+	end)
+	ev.Parent = localPlayer:WaitForChild("PlayerGui")
+end
+
 -- Store / stats window: an OpenFront o-modal (MenuKit.modal) showing the same pages as the
 -- main menu (MenuPages "store" and "profile"), so the store looks identical everywhere.
 local MenuPages = require(localPlayer:WaitForChild("PlayerScripts"):WaitForChild("MenuPages"))
@@ -344,6 +451,26 @@ local function applyProfile(p)
 		return
 	end
 	profile = p
+	local pg = localPlayer:FindFirstChild("PlayerGui")
+	if pg then
+		pg:SetAttribute("WFInGroup", p.inGroup == true)
+	end
+	if p.inGroup == false and p.saving and not groupPopup.shown and not groupPopup.waiting then
+		-- Once per session: a few seconds after joining, when the main menu is up (never mid-match).
+		groupPopup.waiting = true
+		task.delay(6, function()
+			while not groupPopup.shown do
+				if profile and profile.inGroup then
+					return
+				end
+				if pg and pg:GetAttribute("FrontlinesMenuOpen") == true and not window.Visible then
+					groupPopup.open()
+					return
+				end
+				task.wait(2)
+			end
+		end)
+	end
 	levelText.Text = (if p.vip then "VIP · " else "") .. "Level " .. p.level
 	coinsText.Text = p.coins .. " medals"
 	xpFill.Size = UDim2.fromScale(math.clamp(p.xpInto / math.max(1, p.xpNeed), 0, 1), 1)

@@ -641,8 +641,12 @@ local NEWS_TYPES = {
 	tutorial = { "TUTORIAL", C.SKY300, C.SKY300 },
 	tournament = { "TOURNAMENT", C.AMBER500, C.AMBER300 },
 	warning = { "WARNING", C.RED500, C.RED300 },
+	rewards = { "REWARDS", Color3.fromRGB(20, 205, 185), Color3.fromRGB(153, 246, 228) },
 }
 local NEWS = {
+	-- Shown first until the player is in the group (PlayerGui attribute WFInGroup, set by MetaClient);
+	-- clicking it opens the group rewards popup (PlayerGui.FrontlinesGroupPopup).
+	{ id = "group", type = "rewards", title = "Free group rewards", desc = "Join Phasma Studio's for 500 medals, an exclusive colour and a free boost every day. Click here!", action = "group" },
 	{ id = "lobbies", type = "announcement", title = "FFA, Teams and Special games", desc = "Pick a game card to join. Special games add modifiers like Water Nukes and the Doomsday Clock." },
 	{ id = "tutorial", type = "tutorial", title = "New Player Tutorial", desc = "Press Tutorial to play your first game with a step-by-step guide." },
 	{ id = "alliances", type = "announcement", title = "Alliances, trade and warships", desc = "Right-click a player (long-press on touch, X on a controller) to ally." },
@@ -668,11 +672,23 @@ MenuKit.hover(newsClose, function(s)
 	newsCloseIcon.ImageTransparency = if s == "idle" then 0.7 else 0.3
 end)
 local newsDotButtons: { TextButton } = {}
+do
+	-- The whole strip is clickable for items with an action (under the dots and the close button).
+	local open = make("TextButton", { Name = "Open", Text = "", AutoButtonColor = false, BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ZIndex = 0, Selectable = false, Parent = news })
+	open.Activated:Connect(function()
+		if news:GetAttribute("Action") == "group" then
+			local ev = playerGui:FindFirstChild("FrontlinesGroupPopup")
+			if ev and ev:IsA("BindableEvent") then
+				ev:Fire()
+			end
+		end
+	end)
+end
 
 local function visibleNews()
 	local out = {}
 	for _, n in NEWS do
-		if not newsDismissed[n.id] then
+		if not newsDismissed[n.id] and not (n.action == "group" and playerGui:GetAttribute("WFInGroup") == true) then
 			out[#out + 1] = n
 		end
 	end
@@ -696,6 +712,7 @@ renderNews = function()
 	newsTag.TextColor3 = t[3]
 	newsTitle.Text = item.title
 	newsDesc.Text = item.desc
+	news:SetAttribute("Action", item.action or "")
 	if #newsDotButtons ~= #items then
 		for _, d in newsDotButtons do
 			d:Destroy()
@@ -2189,6 +2206,10 @@ LobbyPages.init({
 
 paintNav()
 renderNews()
+playerGui:GetAttributeChangedSignal("WFInGroup"):Connect(function()
+	newsIndex = 1
+	relayout() -- the group rewards news item comes or goes
+end)
 if Place.waitRole(5) == "match" then
 	-- Match server: no main menu; join the round right away (the tutorial match turns the
 	-- tutorial on).
