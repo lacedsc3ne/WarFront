@@ -59,11 +59,11 @@ MetaConfig.REVIVE = { key = "revive", id = 3716885094, coins = 600, name = "Extr
 MetaConfig.REVIVE_BUY_MAX = 3
 
 -- Clans (ServerScriptService.Clans): creating one costs CREATE_MEDALS medals, or one Clan Charter
--- (developer product, id = 0 until it exists; bought with Robux it waits in the inventory).
+-- (developer product "Clan Charter"; bought with Robux it waits in the inventory).
 MetaConfig.CLAN = {
 	CREATE_MEDALS = 1000,
 	MAX_MEMBERS = 50,
-	CHARTER = { key = "clanCharter", id = 0, coins = 1000, name = "Clan Charter", desc = "Create your own clan", icon = "People", hidden = true }, -- 99 R$
+	CHARTER = { key = "clanCharter", id = 3716907118, coins = 1000, name = "Clan Charter", desc = "Create your own clan", icon = "People", hidden = true }, -- 90 R$
 }
 
 -- Everything sold one at a time (store Boosts tab, ProcessReceipt, metaFn "buyBoost"). hidden =
