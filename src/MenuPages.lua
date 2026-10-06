@@ -592,8 +592,8 @@ local CHANGELOG = {
 	{ "li", "Map renderer with OpenFront's terrain colours, borders, name labels and flags." },
 	{ "li", "Radial menu, player panel, build menu and keyboard shortcuts from OpenFront." },
 	{ "li", "Controller and touch support for every menu." },
-	{ "h2", "Known Limitations" },
-	{ "li", "Matchmaking (Create Lobby, Ranked, Join Lobby), clans, global leaderboards and cosmetics are coming soon." },
+	{ "h2", "New: Clans" },
+	{ "li", "Clans: create or join one from Clans in the menu. Your tag shows in front of your name and clanmates play on the same team." },
 }
 
 local function renderNews(page: any)
@@ -745,7 +745,7 @@ local function renderProfileTab(page: any, ctx: any, tab: string)
 			end
 		end)
 	else
-		MenuKit.comingSoon(body, 2, "People", "Clans are coming soon.")
+		require(script.Parent:WaitForChild("ClanPages")).summary(body, 2)
 	end
 end
 
@@ -1118,6 +1118,9 @@ renderStoreTab = function(page: any, tab: string)
 		local grid = storeGrid(body, 2, 270)
 		local owned = if type(p.boosts) == "table" then p.boosts else {}
 		for i, b in MetaConfig.SHOP_ITEMS do
+			if b.hidden then
+				continue
+			end
 			local info = if b.id ~= 0 then marketInfo(false, b.id) else nil
 			local n = tonumber(owned[b.key]) or 0
 			local card = storeCard(grid, i, b.name .. (if n > 0 then "  ·  x" .. n else ""), function(art)
@@ -1273,8 +1276,13 @@ local function renderLeaderboard(page: any)
 	page:setTabs({
 		{ key = "elo", label = "1v1 Ranked" }, -- leaderboard_modal.ranked_tab
 		{ key = "wins", label = "Most Wins" },
+		{ key = "clans", label = "Clans" }, -- leaderboard_modal.clans_tab
 	}, "elo", function(key)
-		renderLeaderboardTab(page, key)
+		if key == "clans" then
+			require(script.Parent:WaitForChild("ClanPages")).renderBoard(page)
+		else
+			renderLeaderboardTab(page, key)
+		end
 	end)
 end
 
@@ -1403,6 +1411,8 @@ function MenuPages.render(kind: string, page: any, ctx: any)
 		renderLeaderboard(page)
 	elseif kind == "friends" then
 		renderFriends(page)
+	elseif kind == "clans" then
+		require(script.Parent:WaitForChild("ClanPages")).render(page)
 	else
 		page:setTabs({})
 		page:clear()

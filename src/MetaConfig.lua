@@ -58,9 +58,19 @@ MetaConfig.BOOST_SHIELD_SECONDS = 30
 MetaConfig.REVIVE = { key = "revive", id = 0, coins = 600, name = "Extra Revive", desc = "Come back after you're defeated, on top of your free revive", icon = "Land" } -- 49 R$
 MetaConfig.REVIVE_BUY_MAX = 3
 
--- Everything sold one at a time (store Boosts tab, ProcessReceipt, metaFn "buyBoost").
+-- Clans (ServerScriptService.Clans): creating one costs CREATE_MEDALS medals, or one Clan Charter
+-- (developer product, id = 0 until it exists; bought with Robux it waits in the inventory).
+MetaConfig.CLAN = {
+	CREATE_MEDALS = 1000,
+	MAX_MEMBERS = 50,
+	CHARTER = { key = "clanCharter", id = 0, coins = 1000, name = "Clan Charter", desc = "Create your own clan", icon = "People", hidden = true }, -- 99 R$
+}
+
+-- Everything sold one at a time (store Boosts tab, ProcessReceipt, metaFn "buyBoost"). hidden =
+-- not listed in the store (bought where it's used).
 MetaConfig.SHOP_ITEMS = table.clone(MetaConfig.BOOSTS)
 table.insert(MetaConfig.SHOP_ITEMS, MetaConfig.REVIVE)
+table.insert(MetaConfig.SHOP_ITEMS, MetaConfig.CLAN.CHARTER)
 
 function MetaConfig.boost(key: string)
 	for _, b in MetaConfig.BOOSTS do

@@ -56,6 +56,9 @@ local function areFriends(a, b): boolean
 	if not a.userId or not b.userId then
 		return false
 	end
+	if a.clan and a.clan == b.clan then
+		return true -- clanmates count as friends (Clans)
+	end
 	local fa, fb = friendsOf[a.userId], friendsOf[b.userId]
 	return (fa ~= nil and fa[b.userId] == true) or (fb ~= nil and fb[a.userId] == true)
 end

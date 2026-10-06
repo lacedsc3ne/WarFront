@@ -719,15 +719,15 @@ renderNews = function()
 end
 
 -- Identity row (UsernameInput over the cosmetic background) ------------------------
--- The name field is editable (NameInput); the clan tag picker needs OpenFront's clan servers and
--- says "Coming Soon".
+-- The name field is editable (NameInput); the TAG button shows your clan tag (ClanPages sets the
+-- PlayerGui attribute WFClanTag) and opens the Clans page.
 local identity = make("Frame", { Name = "Identity", BackgroundColor3 = C.SURFACE, BorderSizePixel = 0, Parent = playPage })
 local identityCorner = corner(identity, 12)
 local idInner = make("Frame", { Name = "Inner", BackgroundColor3 = C.SURFACE, BackgroundTransparency = 0.2, BorderSizePixel = 0, Parent = identity })
 corner(idInner, 12)
 local tagBtn = make("TextButton", { Name = "ClanTag", Text = "", AutoButtonColor = false, BackgroundColor3 = WHITE, BackgroundTransparency = 1, Size = UDim2.fromOffset(116, 44), Parent = idInner })
 corner(tagBtn, 8)
-text({ Position = UDim2.fromOffset(6, 0), Size = UDim2.new(1, -24, 1, 0), FontFace = F.SEMIBOLD, TextSize = 16, TextTransparency = 0.55, TextXAlignment = Enum.TextXAlignment.Left, Text = "TAG", Parent = tagBtn })
+text({ Name = "Label", Position = UDim2.fromOffset(6, 0), Size = UDim2.new(1, -24, 1, 0), FontFace = F.SEMIBOLD, TextSize = 16, TextTransparency = 0.55, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Text = "TAG", Parent = tagBtn })
 MenuKit.icon("Caret", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -6, 0.5, 0), Size = UDim2.fromOffset(12, 12), ImageTransparency = 0.55, Parent = tagBtn })
 MenuKit.hover(tagBtn, function(s)
 	tagBtn.BackgroundTransparency = if s == "idle" then 1 else 0.95
@@ -1860,8 +1860,22 @@ upHeader.Activated:Connect(function()
 	openPage("upcoming", upHeader)
 end)
 tagBtn.Activated:Connect(function()
-	showToast("Clan tags: Coming Soon")
+	openPage("clans", tagBtn)
 end)
+do
+	local function showTag()
+		local tag = playerGui:GetAttribute("WFClanTag")
+		local label = tagBtn:FindFirstChild("Label")
+		if label and label:IsA("TextLabel") then
+			local has = type(tag) == "string" and tag ~= ""
+			label.Text = if has then "[" .. tag .. "]" else "TAG"
+			label.TextTransparency = if has then 0 else 0.55
+			label.TextColor3 = if has then C.AQUARIUS else WHITE
+		end
+	end
+	playerGui:GetAttributeChangedSignal("WFClanTag"):Connect(showTag)
+	require(script.Parent:WaitForChild("ClanPages")).refreshTag()
+end
 newsClose.Activated:Connect(function()
 	local items = visibleNews()
 	local item = items[newsIndex]

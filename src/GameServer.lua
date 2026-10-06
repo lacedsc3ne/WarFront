@@ -22,6 +22,7 @@ local Missiles = require(ServerScriptService:WaitForChild("Missiles")) -- nukes 
 local Railways = require(ServerScriptService:WaitForChild("Railways")) -- factories' railroads and trains
 local Revive = require(ServerScriptService:WaitForChild("Revive"))
 local Perks = require(ServerScriptService:WaitForChild("Perks")) -- gameplay perk passes and one-use boosts
+local Clans = require(ServerScriptService:WaitForChild("Clans")) -- clans: [TAG] on names, clan stats
 local Emojis = require(Shared:WaitForChild("Emojis")) -- quick emoji relay (index into a fixed list)
 -- Game flow (OpenFront parity): immunity, win check, embargo/target/quick chat, stats; tribe/nation AI.
 local Flow = require(ServerScriptService:WaitForChild("GameFlow"))
@@ -1669,6 +1670,21 @@ Revive.init({
 	end,
 })
 
+-- Clans: a player's tag changed (joined, left, kicked) -> their name in a round that hasn't started.
+Clans.init({
+	progression = Progression,
+	onTagChanged = function(plr: Player, tag: string?)
+		local p = players and byUser[plr.UserId]
+		if p then
+			p.clan = tag
+			if phase == "Lobby" or phase == "Spawn" then
+				p.name = Clans.display(plr, (string.gsub(p.name, "^%[%w+%] ", ""))) -- swap the [TAG]
+				rosterDirty = true
+			end
+		end
+	end,
+})
+
 Perks.init({
 	net = net,
 	feed = feed,
@@ -2619,7 +2635,7 @@ local function setPlayerName(plr: Player, raw: any)
 	-- Shown from the next round; right away while the round hasn't started fighting yet.
 	local p = byUser[plr.UserId]
 	if p and (phase == "Lobby" or phase == "Spawn") then
-		p.name = name
+		p.name = Clans.display(plr, name)
 		rosterDirty = true
 	end
 	reply(true, name)
@@ -2629,7 +2645,8 @@ local function addHuman(plr: Player)
 	if byUser[plr.UserId] then
 		return byUser[plr.UserId]
 	end
-	local p = newPlayer(customNames[plr.UserId] or plr.DisplayName, "Human", plr.UserId)
+	local p = newPlayer(Clans.display(plr, customNames[plr.UserId] or plr.DisplayName), "Human", plr.UserId)
+	p.clan = Clans.tagOf(plr) -- clanmates go on the same team (Teams.assign)
 	if Progression then
 		local rgb = Progression.colorFor(plr)
 		if rgb then
@@ -2930,6 +2947,7 @@ local function endGame(winner, winnerTeam: string?)
 				mapName = info.name
 			end
 		end
+		task.spawn(Clans.roundEnded, results)
 		task.spawn(Progression.roundEnded, results, {
 			map = currentMapId,
 			mapName = mapName .. (if mapState.compact then " (Compact)" else ""),
@@ -3460,6 +3478,7 @@ end)
 -- New players start in the main menu; they join a round when they press Play.
 Players.PlayerAdded:Connect(function(plr)
 	Teams.loadFriends(plr) -- friends end up on the same team
+	Clans.load(plr)
 	if not gameSpeed.solo() then
 		gameSpeed.reset()
 	end
@@ -3471,10 +3490,12 @@ end)
 
 for _, plr in Players:GetPlayers() do
 	Teams.loadFriends(plr)
+	Clans.load(plr)
 end
 
 Players.PlayerRemoving:Connect(function(plr)
 	Teams.forget(plr.UserId)
+	Clans.forget(plr)
 	-- MarkDisconnectedExecution: the nation stays on the map, marked disconnected.
 	if players and byUser[plr.UserId] then
 		Flow.setDisconnected(byUser[plr.UserId], true)
@@ -3502,6 +3523,7 @@ end)
 --   ("win", userId)            end the round with that player as the winner
 --   ("item", userId, key, n)   add n boosts (or "revive") to the player's inventory
 --   ("kill", userId)           defeat that player (defeat screen / revive tests)
+--   ("medals", userId, n)      add n medals (works outside a round too, like "item")
 if RunService:IsStudio() then
 	local dev = Instance.new("BindableFunction")
 	dev.Name = "WFDev"
@@ -3512,6 +3534,14 @@ if RunService:IsStudio() then
 				return { phase = phase, W = W, H = HGT }
 			end
 			return { id = p.id, tiles = p.tiles, gold = p.gold, troops = p.troops, cx = p.tiles > 0 and p.sumX // p.tiles or 0, cy = p.tiles > 0 and p.sumY // p.tiles or 0, W = W, H = HGT, phase = phase }
+		elseif cmd == "item" then -- ("item", userId, key, n): add n boosts / revives to the inventory
+			for _ = 1, (tonumber(b) or 1) do
+				Progression.returnBoost(Players:GetPlayerByUserId(uid), a)
+			end
+			return true
+		elseif cmd == "medals" then -- ("medals", userId, n): add n medals
+			Progression.refundCoins(Players:GetPlayerByUserId(uid), tonumber(a) or 0)
+			return true
 		elseif not p then
 			return "no player"
 		elseif cmd == "gold" then
@@ -3534,10 +3564,6 @@ if RunService:IsStudio() then
 			endGame(p)
 		elseif cmd == "kill" then -- ("kill", userId): defeat that player now
 			killPlayer(p, nil)
-		elseif cmd == "item" then -- ("item", userId, key, n): add n boosts / revives to the inventory
-			for _ = 1, (tonumber(b) or 1) do
-				Progression.returnBoost(Players:GetPlayerByUserId(uid), a)
-			end
 		end
 		return true
 	end

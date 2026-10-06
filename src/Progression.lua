@@ -590,6 +590,28 @@ function Progression.takeBoost(plr: Player, key: string): boolean
 	return true
 end
 
+-- Spend medals (profile.coins) for something bought outside metaFn (Clans). Returns true if paid.
+function Progression.spendCoins(plr: Player, amount: number): boolean
+	local p = profiles[plr]
+	if not p or not loaded[plr] or (tonumber(p.coins) or 0) < amount then
+		return false
+	end
+	p.coins -= amount
+	push(plr)
+	task.spawn(save, plr)
+	return true
+end
+
+-- Give medals back (a purchase that failed after paying).
+function Progression.refundCoins(plr: Player, amount: number)
+	local p = profiles[plr]
+	if p then
+		p.coins += amount
+		push(plr)
+		task.spawn(save, plr)
+	end
+end
+
 -- Put a boost back (it was taken but could not be used after all).
 function Progression.returnBoost(plr: Player, key: string)
 	local p = profiles[plr]
