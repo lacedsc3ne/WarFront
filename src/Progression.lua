@@ -412,6 +412,22 @@ local function onPlayerAdded(plr: Player)
 	perkCache[plr] = perks
 	claimDaily(plr)
 	claimGroup(plr)
+	-- Badges for what the player already did (earned before the badges existed, or a missed award).
+	do
+		local pr = profiles[plr]
+		if (tonumber(pr.games) or 0) > 0 then
+			awardBadge(plr, "FirstGame")
+		end
+		if (tonumber(pr.wins) or 0) > 0 then
+			awardBadge(plr, "FirstWin")
+		end
+		if (tonumber(pr.nukes) or 0) > 0 then
+			awardBadge(plr, "FirstNuke")
+		end
+		if MetaConfig.levelFromXP(tonumber(pr.xp) or 0) >= 10 then
+			awardBadge(plr, "Level10")
+		end
+	end
 	-- Leaderboards only change when a game ends; put players whose wins / Elo predate the boards
 	-- (or whose last update failed) on them once.
 	local profile = profiles[plr]

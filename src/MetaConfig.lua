@@ -158,10 +158,10 @@ end
 
 -- Badge ids (create them on the Creator Hub). 0 = disabled.
 MetaConfig.BADGES = {
-	FirstGame = 0,
-	FirstWin = 0,
-	FirstNuke = 0,
-	Level10 = 0,
+	FirstGame = 1877864424117064, -- "First Game!"
+	FirstWin = 2587913609901125, -- "Victory!"
+	FirstNuke = 1177559290227077, -- "First Nuke!"
+	Level10 = 538336775647334, -- "Level 10"
 }
 
 return MetaConfig
