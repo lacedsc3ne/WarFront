@@ -8,6 +8,7 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.MapMarkers (ModuleScript), used by GameClient.
+--
 -- Mirrors OpenFront's StructurePass / SamRadiusPass / NukeTelegraphPass / TrailPass looks:
 --   * Structures: a per-type shape (City circle, Port pentagon, Defense octagon, SAM square,
 --     Silo triangle) filled with the owner's colour darkened (HSV value x0.65), a near-black
@@ -20,6 +21,7 @@
 --     plus the missile's trail in the launcher's colour.
 -- Markers are pooled by structure id: refresh() only adds / removes / restyles what changed,
 -- and zoom changes just resize the existing instances.
+--
 -- MapMarkers.init(ctx)   ctx = { layer, fxLayer, roster, getMyId(), isAlly(id), mapSize() -> W, H }
 -- MapMarkers.refresh(structureList, zoom)   list rows { id, kind, tile, owner, done,
 --                                            buildStart, buildEnd, reloadStart, reloadEnd } (server
@@ -158,8 +160,10 @@ local function sizeFor(zoom: number): (number, boolean)
 	return ICON_SIZE * iconScale, true
 end
 
+--------------------------------------------------------------------------------
 -- Dashed ring: a rotating holder with dashes laid around its edge (sizes by scale, so it follows
 -- the map's zoom on its own).
+--------------------------------------------------------------------------------
 local function dashedRing(parent: Instance, radius: number, color: Color3, zIndex: number): Frame
 	local W, H = ctx.mapSize()
 	local holder = Instance.new("Frame")
@@ -203,7 +207,9 @@ local function setRingTransparency(ring: Frame, tr: number)
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Structures
+--------------------------------------------------------------------------------
 -- Red X over a structure marked for deletion (structure.frag: rgb 1, 0.25, 0.25 at 95%).
 local function setDeleteMark(m, on: boolean)
 	if on and not m.xMark then
@@ -475,7 +481,9 @@ function MapMarkers.refresh(list, zoom: number)
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Nukes
+--------------------------------------------------------------------------------
 function MapMarkers.addNuke(data): Frame
 	local W, H = ctx.mapSize()
 	local def = ctx.nukes[data.kind] or { inner = 3, outer = 7.5 }
@@ -563,7 +571,9 @@ function MapMarkers.addNuke(data): Frame
 	return holder
 end
 
+--------------------------------------------------------------------------------
 -- Per frame
+--------------------------------------------------------------------------------
 function MapMarkers.step(st: number, zoom: number, mode)
 	if not ctx then
 		return
@@ -675,7 +685,9 @@ function MapMarkers.step(st: number, zoom: number, mode)
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Build ghost (BuildPreviewController + StructurePass ghost + WorldTextPass ghost cost)
+--------------------------------------------------------------------------------
 -- g = { kind, x, y (tile coords, float: follows the cursor), owner, canPlace, canUpgrade,
 --       upgradeTile, cost, canAfford, showCost } or nil.
 -- Icon: the structure's marker at 50 % alpha with the owner's colours; outline tinted green

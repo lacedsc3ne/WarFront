@@ -14,9 +14,9 @@ MetaConfig.GAMEPASS = {
 	AllColors = 2008508400, -- unlocks every territory colour (299 R$)
 }
 MetaConfig.PRODUCTS = {
-	{ id = 3716869826, coins = 500, label = "500 coins" }, -- 35 R$
-	{ id = 3716869865, coins = 1500, label = "1,500 coins" }, -- 89 R$
-	{ id = 3716869917, coins = 5000, label = "5,000 coins" }, -- 249 R$
+	{ id = 3716869826, coins = 500, label = "500 medals" }, -- 35 R$
+	{ id = 3716869865, coins = 1500, label = "1,500 medals" }, -- 89 R$
+	{ id = 3716869917, coins = 5000, label = "5,000 medals" }, -- 249 R$
 }
 
 MetaConfig.VIP_MULT = 1.5
@@ -36,21 +36,43 @@ MetaConfig.PERK_GROWTH = 1.10 -- Rapid Growth: troop growth x1.10
 MetaConfig.PERK_EXTRA_REVIVES = 1 -- Second Chance
 MetaConfig.PERK_SHIELD_SECONDS = 10 -- Safe Landing: personal shield after spawn immunity ends
 
--- One-use boosts (developer products, or coins). Used in a match from the Boosts button: each at
--- most once per match, not in the first BOOST_DELAY seconds of fighting, never in ranked.
+-- Boosts (developer products, or coins). Used in a match from the boosts strip, as often as you
+-- have them: not in the first BOOST_DELAY seconds of fighting, then BOOST_COOLDOWN seconds between
+-- two of the same kind; never in ranked. Bought in a match = used right away when possible.
 MetaConfig.BOOSTS = {
 	{ key = "goldCrate", id = 3716871545, coins = 400, name = "Gold Crate", desc = "+100K gold instantly", icon = "Gold" }, -- 25 R$
-	{ key = "reinforcements", id = 3716871574, coins = 400, name = "Reinforcements", desc = "+25% of your troops (up to your max)", icon = "Soldier" }, -- 25 R$
-	{ key = "shield", id = 3716871650, coins = 800, name = "Shield", desc = "30 s safe from land attacks (nukes still hit)", icon = "Defense" }, -- 49 R$
+	{ key = "reinforcements", id = 3716871574, coins = 400, name = "Reinforcements", desc = "+25% troops now and 25% higher max troops for 60 s", icon = "Soldier" }, -- 25 R$
+	{ key = "shield", id = 3716871650, coins = 800, name = "Shield", desc = "30 s safe from land attacks (nukes still hit; attacking a player ends it)", icon = "Defense" }, -- 49 R$
 	{ key = "nukeVoucher", id = 3716871701, coins = 800, name = "Nuke Voucher", desc = "Your next Atom Bomb is free (needs a silo)", icon = "AtomBomb" }, -- 49 R$
 }
 MetaConfig.BOOST_DELAY = 30 -- seconds after the spawn phase before boosts can be used
+MetaConfig.BOOST_COOLDOWN = 60 -- seconds between two uses of the same boost
 MetaConfig.BOOST_GOLD = 100000
-MetaConfig.BOOST_TROOPS = 0.25
+MetaConfig.BOOST_TROOPS = 0.25 -- Reinforcements: +25% of max troops now, max troops x1.25 ...
+MetaConfig.BOOST_TROOPS_SECONDS = 60 -- ... for this long
 MetaConfig.BOOST_SHIELD_SECONDS = 30
+
+-- Extra revive (developer product, or coins): used from the defeat screen once the round's free
+-- revives are gone. At most REVIVE_BUY_MAX bought revives per round; never in ranked.
+-- id = 0 until the developer product exists (then only the coin price is offered).
+MetaConfig.REVIVE = { key = "revive", id = 0, coins = 600, name = "Extra Revive", desc = "Come back after you're defeated, on top of your free revive", icon = "Land" } -- 49 R$
+MetaConfig.REVIVE_BUY_MAX = 3
+
+-- Everything sold one at a time (store Boosts tab, ProcessReceipt, metaFn "buyBoost").
+MetaConfig.SHOP_ITEMS = table.clone(MetaConfig.BOOSTS)
+table.insert(MetaConfig.SHOP_ITEMS, MetaConfig.REVIVE)
 
 function MetaConfig.boost(key: string)
 	for _, b in MetaConfig.BOOSTS do
+		if b.key == key then
+			return b
+		end
+	end
+	return nil
+end
+
+function MetaConfig.item(key: string)
+	for _, b in MetaConfig.SHOP_ITEMS do
 		if b.key == key then
 			return b
 		end

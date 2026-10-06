@@ -10,6 +10,7 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.MenuPages (ModuleScript), used by MainMenu.
+--
 -- MenuPages.TITLES[kind]                       page title (kind = "settings" | "help" | "news" |
 --                                              "language" | "profile" | "inventory" |
 --                                              "leaderboard" | "clans" | "store")
@@ -61,7 +62,9 @@ local function numberText(n: any): string
 	return out
 end
 
+--------------------------------------------------------------------------------
 -- Settings (UserSettingModal: tabs Gameplay / Graphics / Audio / Keybinds)
+--------------------------------------------------------------------------------
 local function boolSetter(key: string)
 	return function(): boolean
 		return Settings.values[key] == true
@@ -374,7 +377,9 @@ local function renderSettings(page: any)
 	end)
 end
 
+--------------------------------------------------------------------------------
 -- Help (HelpModal)
+--------------------------------------------------------------------------------
 local HOTKEYS = {
 	{ "Esc", "Closes menu. Cancels unit build preview." },
 	{ "Space (hold)", "Alternate view" },
@@ -578,7 +583,9 @@ local function renderHelp(page: any, ctx: any)
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Release notes (NewsModal renders changelog.md: h1 / h2 / bullets)
+--------------------------------------------------------------------------------
 local CHANGELOG = {
 	{ "h1", "War Front Changelog" },
 	{ "p", "War Front is a Roblox port of OpenFront. These notes list what has been ported so far." },
@@ -616,7 +623,9 @@ local function renderNews(page: any)
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Language (LanguageModal: grid of flag + native + English name; English only here)
+--------------------------------------------------------------------------------
 local function renderLanguage(page: any, ctx: any)
 	page:setTabs({})
 	page:clear()
@@ -642,7 +651,9 @@ local function renderLanguage(page: any, ctx: any)
 	MenuKit.paragraph(page.body, 2, "More languages coming soon.", { TextColor3 = C.WHITE, TextTransparency = 0.6 })
 end
 
+--------------------------------------------------------------------------------
 -- Player profile (PlayerProfileModal: tabs Stats / Games / Clans)
+--------------------------------------------------------------------------------
 local function statCard(parent: Instance, order: number, label: string, value: string)
 	local c = make("Frame", { LayoutOrder = order, BackgroundColor3 = C.WHITE, BackgroundTransparency = 0.95, BorderSizePixel = 0, Parent = parent })
 	MenuKit.corner(c, 12)
@@ -759,7 +770,9 @@ local function renderProfile(page: any, ctx: any)
 	end)
 end
 
+--------------------------------------------------------------------------------
 -- Inventory (skins / territory patterns, flags, crowns, effects): locked, coming soon
+--------------------------------------------------------------------------------
 local function lockedTile(parent: Instance, order: number, fill: (Frame) -> ())
 	local t = make("TextButton", { LayoutOrder = order, Text = "", AutoButtonColor = false, BackgroundColor3 = C.SURFACE, BorderSizePixel = 0, Parent = parent })
 	MenuKit.corner(t, 12)
@@ -846,10 +859,12 @@ local function renderInventory(page: any, ctx: any)
 	end)
 end
 
+--------------------------------------------------------------------------------
 -- Store (Store.ts layout: modalHeader with the currency on the right, tab strip, grid of
 -- cosmetic cards with a full-width action; owned = emerald status box). Our store sells
 -- territory colours for coins, passes and coin packs (MetaConfig); purchases go through
 -- Shared.MetaFn like MetaClient did.
+--------------------------------------------------------------------------------
 local MarketplaceService = game:GetService("MarketplaceService")
 local MetaConfig = require(Shared:WaitForChild("MetaConfig"))
 local metaFn = Shared:WaitForChild("MetaFn")
@@ -1025,7 +1040,7 @@ renderStoreTab = function(page: any, tab: string)
 	local body = page.body
 	local coins = page.header:FindFirstChild("StoreCoins")
 	if coins and coins:IsA("TextLabel") then
-		coins.Text = if storeProfile then numberText(storeProfile.coins) .. " coins" else ""
+		coins.Text = if storeProfile then numberText(storeProfile.coins) .. " medals" else ""
 	end
 	local status = MenuKit.paragraph(body, 0, page.storeMsg or "", { Name = "StoreStatus", TextColor3 = C.AMBER300, TextXAlignment = Enum.TextXAlignment.Center })
 	status.Visible = (page.storeMsg or "") ~= ""
@@ -1067,11 +1082,11 @@ renderStoreTab = function(page: any, tab: string)
 				cardAction(card, "Unlocks at level " .. c.level, "muted")
 			else
 				local afford = (tonumber(p.coins) or 0) >= c.price
-				cardAction(card, numberText(c.price) .. " coins", if afford then "primary" else "gray", function()
+				cardAction(card, numberText(c.price) .. " medals", if afford then "primary" else "gray", function()
 					if afford then
 						storeInvoke(page, "buyColor", c.id)
 					else
-						storeStatus(page, "Not enough coins.")
+						storeStatus(page, "Not enough medals.")
 					end
 				end)
 			end
@@ -1103,7 +1118,7 @@ renderStoreTab = function(page: any, tab: string)
 			end
 		end
 		passGrid(2, {
-			{ id = MetaConfig.GAMEPASS.VIP, name = "VIP", desc = "1.5x XP and coins, VIP tag on the leaderboard", owned = p.vip, icon = "User" },
+			{ id = MetaConfig.GAMEPASS.VIP, name = "VIP", desc = "1.5x XP and medals, VIP tag on the leaderboard", owned = p.vip, icon = "User" },
 			{ id = MetaConfig.GAMEPASS.AllColors, name = "All Colours", desc = "Unlock every territory colour", owned = p.allColors, icon = "Layout" },
 		})
 		MenuKit.paragraph(body, 3, "Gameplay perks: work in solo, private and public games, never in ranked.", { FontFace = F.BOLD, TextColor3 = C.WHITE, TextTransparency = 0.3 })
@@ -1114,10 +1129,10 @@ renderStoreTab = function(page: any, tab: string)
 		end
 		passGrid(4, perks)
 	elseif tab == "boosts" then
-		MenuKit.paragraph(body, 1, "One-use boosts for a match. Use them from the Boosts button at the top right during a game: each once per match, from " .. MetaConfig.BOOST_DELAY .. " s after the spawn phase, never in ranked.", { TextColor3 = C.WHITE, TextTransparency = 0.5 })
+		MenuKit.paragraph(body, 1, "Boosts for your matches. Use them from the boosts bar at the top right during a game, as many as you own: from " .. MetaConfig.BOOST_DELAY .. " s after the spawn phase, then once every " .. MetaConfig.BOOST_COOLDOWN .. " s per kind. Extra Revives are used from the defeat screen. Never in ranked.", { TextColor3 = C.WHITE, TextTransparency = 0.5 })
 		local grid = storeGrid(body, 2, 270)
 		local owned = if type(p.boosts) == "table" then p.boosts else {}
-		for i, b in MetaConfig.BOOSTS do
+		for i, b in MetaConfig.SHOP_ITEMS do
 			local info = if b.id ~= 0 then marketInfo(false, b.id) else nil
 			local n = tonumber(owned[b.key]) or 0
 			local card = storeCard(grid, i, b.name .. (if n > 0 then "  ·  x" .. n else ""), function(art)
@@ -1127,11 +1142,11 @@ renderStoreTab = function(page: any, tab: string)
 				MenuKit.paragraph(art, 0, b.desc, { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -6), Size = UDim2.new(1, -12, 0, 0), TextSize = 12, TextXAlignment = Enum.TextXAlignment.Center, TextColor3 = C.WHITE, TextTransparency = 0.4 })
 			end)
 			local afford = (tonumber(p.coins) or 0) >= b.coins
-			local coinBtn = cardAction(card, numberText(b.coins) .. " coins", if afford then "primary" else "gray", function()
+			local coinBtn = cardAction(card, numberText(b.coins) .. " medals", if afford then "primary" else "gray", function()
 				if afford then
 					storeInvoke(page, "buyBoost", b.key)
 				else
-					storeStatus(page, "Not enough coins.")
+					storeStatus(page, "Not enough medals.")
 				end
 			end)
 			coinBtn.Size = UDim2.new(1, 0, 0, 32)
@@ -1174,7 +1189,7 @@ renderStoreTab = function(page: any, tab: string)
 			MenuKit.comingSoon(body, 3, "Layout")
 		end
 	end
-	MenuKit.paragraph(body, 20, if tab == "colours" or tab == "coins" then "Colours are cosmetic. Coins buy colours and boosts." else "Perks and boosts never work in ranked games.", { TextSize = 12, TextXAlignment = Enum.TextXAlignment.Center, TextColor3 = C.WHITE, TextTransparency = 0.6 })
+	MenuKit.paragraph(body, 20, if tab == "colours" or tab == "coins" then "Colours are cosmetic. Medals buy colours and boosts." else "Perks and boosts never work in ranked games.", { TextSize = 12, TextXAlignment = Enum.TextXAlignment.Center, TextColor3 = C.WHITE, TextTransparency = 0.6 })
 end
 
 local function renderStore(page: any)
@@ -1202,15 +1217,17 @@ local function renderStore(page: any)
 		{ key = "colours", label = "Colours" },
 		{ key = "passes", label = "Passes" },
 		{ key = "boosts", label = "Boosts" },
-		{ key = "coins", label = "Coins" },
+		{ key = "coins", label = "Medals" },
 	}, "colours", function(key)
 		page.storeMsg = ""
 		renderStoreTab(page, key)
 	end)
 end
 
+--------------------------------------------------------------------------------
 -- Leaderboard (LeaderboardModal): 1v1 Ranked by ELO, and most wins. The server keeps the top 100
 -- of each in a DataStore (Progression lbUpdate) and refreshes its copy every minute.
+--------------------------------------------------------------------------------
 local function renderLeaderboardTab(page: any, board: string)
 	page:clear()
 	local body = page.body
@@ -1278,8 +1295,10 @@ local function renderLeaderboard(page: any)
 	end)
 end
 
+--------------------------------------------------------------------------------
 -- Friends (FriendsList): your Roblox friends, who is online and where; join a friend in the
 -- lobby, invite friends. In team games friends are placed on the same team (Teams.assign).
+--------------------------------------------------------------------------------
 local function renderFriends(page: any)
 	page:setTabs({})
 	page:clear()
@@ -1378,6 +1397,7 @@ local function renderFriends(page: any)
 	end)
 end
 
+--------------------------------------------------------------------------------
 function MenuPages.render(kind: string, page: any, ctx: any)
 	page.title.Text = string.upper(MenuPages.TITLES[kind] or kind)
 	page.storeShowing = kind == "store"

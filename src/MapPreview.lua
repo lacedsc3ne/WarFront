@@ -6,6 +6,7 @@
 -- StarterPlayer.StarterPlayerScripts.MapPreview (ModuleScript), used by GameClient.
 -- Same colours as the main menu's map cards (MainMenu renderPreview): water shades, plains,
 -- highlands, mountains from the terrain byte.
+--
 -- MapPreview.get(id, width) -> EditableImage?   nil until ready (rendered in the background)
 -- MapPreview.onReady(fn)                         fn(id, width) when a preview finishes
 

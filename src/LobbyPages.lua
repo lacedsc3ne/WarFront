@@ -9,12 +9,14 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.LobbyPages (ModuleScript), used by MainMenu.
+--
 -- LobbyPages.init(ctx)          ctx: net, toast(text), preview(mapId, width) -> EditableImage?,
 --                                    mapPool() -> { MapCatalog info }
 -- LobbyPages.handles(kind)      "host" | "join" | "ranked" | "public" (waiting in a public lobby)
 --                               | "solo" (SinglePlayerModal: the same game settings, then Start)
 -- LobbyPages.render(kind, page) fills a MenuKit page (MainMenu's inline page)
 -- LobbyPages.closed(kind)       the page was closed: leave the lobby / the ranked queue
+--
 -- Net: sends "lobbyCreate", "lobbyJoin", "lobbyLeave", "lobbySettings", "lobbyStart",
 -- "lobbyKick", "rankedJoin", "rankedLeave"; receives "mm" (see ServerScriptService.Matchmaker).
 
@@ -90,7 +92,9 @@ local function mapName(id: string?): string
 	return id or "?"
 end
 
+--------------------------------------------------------------------------------
 -- Small UI pieces
+--------------------------------------------------------------------------------
 -- Loading spinner (BaseModal renderLoadingSpinner): a ring with a coloured quarter, spinning.
 local function spinner(parent: Instance, order: number, color: Color3, label: string): TextLabel
 	local box = make("Frame", { Name = "Spinner", LayoutOrder = order, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 96), Parent = parent })
@@ -181,7 +185,9 @@ local function sectionTitle(parent: Instance, order: number, title: string)
 	MenuKit.heading(parent, order, nil, title)
 end
 
+--------------------------------------------------------------------------------
 -- Settings (GameConfigSettings subset)
+--------------------------------------------------------------------------------
 local function pushSettings(change: { [string]: any })
 	if not isHost() then
 		return
@@ -454,7 +460,9 @@ local function buildSettings(body: Instance, base: number, editable: boolean)
 	return order
 end
 
+--------------------------------------------------------------------------------
 -- Players list (HostLobbyModal lobby-player-view)
+--------------------------------------------------------------------------------
 local function buildPlayers(body: Instance, order: number)
 	local title = MenuKit.heading(body, order, "People", "Players")
 	local list = make("Frame", { Name = "Players", LayoutOrder = order + 1, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Parent = body })
@@ -532,7 +540,9 @@ local function buildPlayers(body: Instance, order: number)
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Pages
+--------------------------------------------------------------------------------
 local function resetPage(page)
 	page:setTabs({})
 	page:clear()
@@ -794,7 +804,9 @@ local function renderPublic(page)
 	end
 end
 
+--------------------------------------------------------------------------------
 -- "Joining the match" screen
+--------------------------------------------------------------------------------
 local overlay: any = nil
 local function showOverlay(label: string?)
 	if not overlay then
@@ -816,6 +828,7 @@ local function hideOverlay()
 	end
 end
 
+--------------------------------------------------------------------------------
 function LobbyPages.handles(kind: string): boolean
 	return kind == "host" or kind == "join" or kind == "ranked" or kind == "public" or kind == "solo"
 end

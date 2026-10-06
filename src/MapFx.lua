@@ -10,9 +10,11 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.MapFx (ModuleScript), used by GameClient.
+--
 -- Everything here is GUI instances inside GameClient's map frame, positioned by map scale, so they
 -- follow pan / zoom for free. Procedural textures (rings, glows, chevrons) are drawn once into small
 -- EditableImages; sprite sheets come from FxSprites (palette-indexed OpenFront sprites).
+--
 -- MapFx.init(ctx)  ctx = { parent = map frame, layer = top fx frame, roster, getMyId(), getPhase(),
 --                          getStructures(), mapSize() -> W, H, landTiles() -> n, fmt(n) -> string }
 -- MapFx.reset()                       new round
@@ -86,7 +88,9 @@ local gridOn = false
 local gridLabels: { TextLabel } = {}
 local gridCell = 0
 
+--------------------------------------------------------------------------------
 -- Textures
+--------------------------------------------------------------------------------
 local textures: { [string]: any } = {}
 local texFailed = false
 
@@ -196,7 +200,9 @@ local function chevronTex()
 	end)
 end
 
+--------------------------------------------------------------------------------
 -- Sprite sheets
+--------------------------------------------------------------------------------
 local sheetsModule: any = nil
 local sheets: { [string]: any } = {}
 
@@ -239,7 +245,9 @@ local function sheet(name: string): (any, any)
 	return img, def
 end
 
+--------------------------------------------------------------------------------
 -- Instances
+--------------------------------------------------------------------------------
 local function tilePos(x: number, y: number): UDim2
 	local W, H = ctx.mapSize()
 	return UDim2.fromScale((x + 0.5) / W, (y + 0.5) / H)
@@ -326,7 +334,9 @@ local function seeded(seed: number): number
 	return Random.new(seed):NextNumber()
 end
 
+--------------------------------------------------------------------------------
 -- Events
+--------------------------------------------------------------------------------
 function MapFx.nukeEnd(data)
 	local W = ctx.mapSize()
 	local t = data.tile
@@ -504,7 +514,9 @@ function MapFx.spawnRing(st: any?, now: number)
 	l.ImageTransparency = 1 - (0.65 + 0.35 * b)
 end
 
+--------------------------------------------------------------------------------
 -- Coordinate grid (CoordinateGridPass: white lines, "A1" labels once cells are >= 60 px)
+--------------------------------------------------------------------------------
 local function cellSize(W: number, H: number): number
 	local raw = math.min(W, H) / 10
 	local rows = math.max(1, math.floor(H / raw + 0.5))
@@ -593,7 +605,9 @@ function MapFx.setGrid(on: boolean)
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Per-frame
+--------------------------------------------------------------------------------
 local function stepStructures()
 	local list = ctx.getStructures()
 	if list == lastStructureList then

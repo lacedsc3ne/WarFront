@@ -39,7 +39,9 @@ local W, H, SIZE = map.width, map.height, map.size
 local NB = table.create(4)
 local FALLOUT_OWNER = 65535
 
+--------------------------------------------------------------------------------
 -- Helpers
+--------------------------------------------------------------------------------
 -- OpenFront Utils.renderNumber (truncating, not rounding): 999, 1.23K, 12.3K, 123K, 1.23M, 12.3M, 1.23B
 local function fmt(n: number): string
 	n = math.max(0, n)
@@ -94,7 +96,9 @@ local function serverNow(): number
 	return SimClock.now()
 end
 
+--------------------------------------------------------------------------------
 -- Terrain colours (recomputed when the map changes)
+--------------------------------------------------------------------------------
 -- The per-tile terrain colours live in MapRender (rebuilt by MapRender.setMap / buildBase).
 local function buildBaseColors()
 	if MapRender.scale() > 0 then
@@ -102,7 +106,9 @@ local function buildBaseColors()
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Client game state
+--------------------------------------------------------------------------------
 local owners = buffer.create(SIZE * 2) -- wire owner (65535 = fallout)
 local roster: { [number]: any } = {}
 local myId = 0
@@ -223,7 +229,9 @@ local function applyOwnersSnapshot(b: buffer)
 	end
 end
 
+--------------------------------------------------------------------------------
 -- GUI
+--------------------------------------------------------------------------------
 local gui = make("ScreenGui", {
 	Name = "FrontlinesUI",
 	IgnoreGuiInset = true,
@@ -775,7 +783,9 @@ function refreshVotePanel()
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Camera (pan / zoom of the map image)
+--------------------------------------------------------------------------------
 local zoom, panX, panY = 1, 0, 0
 local camAnim = nil -- smooth "Go to" camera move (tutorial)
 
@@ -864,7 +874,9 @@ local function xyPos(x: number, y: number): UDim2
 	return UDim2.fromScale((x + 0.5) / W, (y + 0.5) / H)
 end
 
+--------------------------------------------------------------------------------
 -- Labels, structures, HUD refresh
+--------------------------------------------------------------------------------
 local nameLabels: { [number]: TextLabel } = {}
 
 NameLabels.setup({
@@ -1152,12 +1164,16 @@ local function refreshBanner()
 	refreshVotePanel()
 end
 
+--------------------------------------------------------------------------------
 -- Event feed
+--------------------------------------------------------------------------------
 local function pushFeed(text: string, kind: string, owner: number?)
 	AlertsPanel.push(text, kind, owner)
 end
 
+--------------------------------------------------------------------------------
 -- Boats and nukes (drawn every frame from their start time)
+--------------------------------------------------------------------------------
 local function addBoat(data)
 	local path = data.path
 	local n = buffer.len(path) // 4
@@ -1238,7 +1254,9 @@ local function clearUnits()
 	UnitFx.reset()
 end
 
+--------------------------------------------------------------------------------
 -- Warships (server sends "units" snapshots at ~5 Hz and "shot" effects)
+--------------------------------------------------------------------------------
 local UNIT_LERP = 0.2 -- seconds between snapshots
 local shots: { any } = {}
 
@@ -1470,7 +1488,9 @@ local function drawWarships()
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Map switching (server picks the map each round; see 'init')
+--------------------------------------------------------------------------------
 -- Loaded map (server mapKey: id, "@c" compact, "#" revision) and how many of the round's water
 -- nuke edits we applied.
 local mapSync = { key = "Europe#0", applied = 0 }
@@ -1501,7 +1521,9 @@ local function switchMap(id: string, compact: boolean?): boolean
 	return true
 end
 
+--------------------------------------------------------------------------------
 -- Tutorial (PlayerGui attribute FrontlinesTutorial) and the pulsing ring on our territory
+--------------------------------------------------------------------------------
 local tutorial, drawHomeRing
 do
 	local function liveTerritory(id: number)
@@ -1583,7 +1605,9 @@ do
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Network
+--------------------------------------------------------------------------------
 SoundKit.setup({
 	myId = function()
 		return myId
@@ -1806,7 +1830,9 @@ local function openContextMenuAt(sx: number, sy: number)
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Input
+--------------------------------------------------------------------------------
 local function setRatio(r: number)
 	local old = attackRatio
 	attackRatio = math.clamp(math.floor(r * 100 + 0.5) / 100, 0.01, 1)
@@ -2077,7 +2103,9 @@ UserInputService.TouchPinch:Connect(function(positions, scale, _velocity, state,
 	end
 end)
 
+--------------------------------------------------------------------------------
 -- Devices: per-device layout (phone / tablet / console / desktop) and gamepad controls
+--------------------------------------------------------------------------------
 DeviceLayout.bindMatchUI({
 	gui = gui,
 	backdrop = backdrop,
@@ -2291,7 +2319,9 @@ Interact.setup({
 require(playerScripts:WaitForChild("AlertFrame")).mount(gui)
 require(playerScripts:WaitForChild("PerfOverlay")).mount(gui)
 
+--------------------------------------------------------------------------------
 -- Player settings (Settings.lua): display toggles; other settings are read where they're used.
+--------------------------------------------------------------------------------
 do
 	local function applyDisplaySettings()
 		labelLayer.Visible = Settings.values.nameLabels
@@ -2324,7 +2354,9 @@ do
 	end)
 end
 
+--------------------------------------------------------------------------------
 -- Frame loop
+--------------------------------------------------------------------------------
 local lastTutorialUpdate = 0
 RunService.RenderStepped:Connect(function()
 	local now = os.clock()

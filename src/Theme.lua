@@ -11,6 +11,7 @@
 
 -- ReplicatedStorage.Shared.Theme (ModuleScript), used by GameServer (player colours) and the
 -- client renderer (GameClient paint, NameLabels).
+--
 -- Server:  Theme.newRoundColors() -> pools; pools:take(kind) -> packed 0xRRGGBB colour.
 --          Humans / nations draw distinct colours from their own palette, bots all share the flat
 --          OpenFront "Bot" colour. Call newRoundColors() once per round.
@@ -24,7 +25,9 @@
 
 local Theme = {}
 
+--------------------------------------------------------------------------------
 -- Palettes (hex lists from OpenFront's theme JSON files)
+--------------------------------------------------------------------------------
 local function parse(s: string): { { number } }
 	local out = {}
 	for hex in string.gmatch(s, "%x%x%x%x%x%x") do
@@ -103,7 +106,9 @@ Theme.FRIENDLY_TINT = { 0, 255, 0 } -- border tint where an allied territory tou
 Theme.FRIENDLY_TINT_RATIO = 0.35
 Theme.NAME_SHADE = { Human = 0, Nation = 0.3, Bot = 0.4 } -- name.nameShade*: grey level of name text
 
+--------------------------------------------------------------------------------
 -- Terrain (OpenFront ColorUtils.encodeTerrainTile + render-settings.json terrain colours)
+--------------------------------------------------------------------------------
 local BACKGROUND = { 60, 60, 60 } -- #3c3c3c: outside the map and impassable peaks
 local OCEAN = { 71, 133, 181 } -- #4785b5
 local SAND = { 204, 203, 158 } -- #CCCB9E
@@ -158,7 +163,9 @@ function Theme.falloutRGB(x: number, y: number): (number, number, number)
 	return math.floor((0.05 + noise) * 255 + 0.5), math.floor((0.55 + noise) * 255 + 0.5), math.floor((0.07 + noise) * 255 + 0.5)
 end
 
+--------------------------------------------------------------------------------
 -- Colour math (HSL for borders, CIE Lab + CIEDE2000 for picking distinct colours)
+--------------------------------------------------------------------------------
 local function rgbToHsl(r: number, g: number, b: number): (number, number, number)
 	r, g, b = r / 255, g / 255, b / 255
 	local mx, mn = math.max(r, g, b), math.min(r, g, b)
@@ -275,7 +282,9 @@ local function deltaE2000(a: { number }, b: { number }): number
 	return math.sqrt(tl * tl + tc * tc + th * th + Rt * tc * th)
 end
 
+--------------------------------------------------------------------------------
 -- ColorAllocator: stable, maximally distinct colours from a pool, then a fallback pool
+--------------------------------------------------------------------------------
 local Allocator = {}
 Allocator.__index = Allocator
 
@@ -346,7 +355,9 @@ function Theme.newRoundColors()
 	return pools
 end
 
+--------------------------------------------------------------------------------
 -- Client: display colours (colour-blind remap) and precomputed paint colours
+--------------------------------------------------------------------------------
 -- Colours the server hands out from the default palettes. A human colour outside this set is a
 -- cosmetic (Progression) colour, which OpenFront keeps even in the colour-blind palette.
 local THEMED: { [number]: boolean } = {}
@@ -359,7 +370,9 @@ end
 local clientRng = Random.new(1)
 local cbPools: { [string]: any } = {}
 
+--------------------------------------------------------------------------------
 -- Team colours (ThemeProvider.teamColorForPlayer / generateTeamColors, render/gl/*-theme.json)
+--------------------------------------------------------------------------------
 local TEAM_COLORS = {
 	Red = "#eb3333", Blue = "#2962ff", Teal = "#06b6d4", Purple = "#9234ea", Yellow = "#e7b008",
 	Orange = "#ff7f0e", Green = "#41be52", Bot = "#d1cdc7", Humans = "#2962ff", Nations = "#eb3333",

@@ -8,10 +8,12 @@
 ]]
 
 -- ReplicatedStorage.Shared.Ballistics (ModuleScript).
+--
 -- OpenFront nukes, MIRVs and MIRV warheads fly a cubic Bezier arc that bows "up" the map
 -- (toward y = 0) by max(distance / 3, 50 tiles), clamped to the map, and advance `speed` tiles
 -- of arc length per tick. Our tiles are LINEAR_SCALE (4) times bigger, so the 50-tile minimum
 -- height becomes 12.5 here and speeds are divided by 4 by the caller.
+--
 -- Ballistics.curve(fx, fy, tx, ty, mapHeight, ignoreBounds?, down?) -> curve   (down: the arc bows
 --                                             down the map instead, "Swap Rocket Direction")
 -- Ballistics.length(curve) -> arc length in tiles

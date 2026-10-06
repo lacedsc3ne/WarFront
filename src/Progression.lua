@@ -325,7 +325,9 @@ local function claimDaily(plr: Player)
 	metaEvent:FireClient(plr, "daily", { day = p.streak, coins = coins, table = MetaConfig.DAILY })
 end
 
+--------------------------------------------------------------------------------
 -- Player lifecycle
+--------------------------------------------------------------------------------
 local function onPlayerAdded(plr: Player)
 	local data
 	if store then
@@ -421,7 +423,7 @@ MarketplaceService.ProcessReceipt = function(receipt)
 			product = prod
 		end
 	end
-	for _, b in MetaConfig.BOOSTS do
+	for _, b in MetaConfig.SHOP_ITEMS do -- boosts + extra revive
 		if b.id ~= 0 and b.id == receipt.ProductId then
 			boost = b
 		end
@@ -452,10 +454,15 @@ MarketplaceService.ProcessReceipt = function(receipt)
 		return Enum.ProductPurchaseDecision.NotProcessedYet
 	end
 	push(plr)
+	if boost and Progression.onItemBought then
+		task.spawn(Progression.onItemBought, plr, boost.key) -- GameServer: use it now if it can be
+	end
 	return Enum.ProductPurchaseDecision.PurchaseGranted
 end
 
+--------------------------------------------------------------------------------
 -- Client requests
+--------------------------------------------------------------------------------
 metaFn.OnServerInvoke = function(plr: Player, action: any, arg: any)
 	local p = profiles[plr]
 	if not p or typeof(action) ~= "string" then
@@ -478,7 +485,7 @@ metaFn.OnServerInvoke = function(plr: Player, action: any, arg: any)
 				return false, "Reach level " .. c.level .. " first"
 			end
 			if p.coins < c.price then
-				return false, "Not enough coins"
+				return false, "Not enough medals"
 			end
 			p.coins -= c.price
 			table.insert(p.ownedColors, c.id)
@@ -503,12 +510,12 @@ metaFn.OnServerInvoke = function(plr: Player, action: any, arg: any)
 		end
 		return true, { board = board, list = list, you = you }
 	elseif action == "buyBoost" then
-		local b = typeof(arg) == "string" and MetaConfig.boost(arg)
+		local b = typeof(arg) == "string" and MetaConfig.item(arg)
 		if not b then
 			return false, "Unknown boost"
 		end
 		if p.coins < b.coins then
-			return false, "Not enough coins"
+			return false, "Not enough medals"
 		end
 		if typeof(p.boosts) ~= "table" then
 			p.boosts = {}
@@ -517,7 +524,10 @@ metaFn.OnServerInvoke = function(plr: Player, action: any, arg: any)
 		p.boosts[b.key] = (tonumber(p.boosts[b.key]) or 0) + 1
 		push(plr)
 		task.spawn(save, plr)
-		return true, b.name .. " added. Use it in a match from the Boosts button."
+		if b.key == "revive" then
+			return true, b.name .. " added. Use it from the defeat screen."
+		end
+		return true, b.name .. " added. Use it in a match from the boosts bar."
 	elseif action == "clearColor" then
 		p.color = nil
 		push(plr)
@@ -532,7 +542,9 @@ metaFn.OnServerInvoke = function(plr: Player, action: any, arg: any)
 	return false, "Unknown action"
 end
 
+--------------------------------------------------------------------------------
 -- API used by GameServer
+--------------------------------------------------------------------------------
 
 -- Returns {r,g,b} if the player picked a colour, or nil for random.
 function Progression.colorFor(plr: Player)
@@ -559,6 +571,15 @@ end
 -- Gameplay perk passes the player owns: { startingArmy = true, ... } (MetaConfig.PERKS keys).
 function Progression.perksFor(plr: Player): { [string]: boolean }
 	return perkCache[plr] or {}
+end
+
+-- Set by GameServer: called after a boost / revive bought with Robux is in the inventory.
+Progression.onItemBought = nil :: ((Player, string) -> ())?
+
+-- How many of a boost (or "revive") the player owns.
+function Progression.itemCount(plr: Player, key: string): number
+	local p = profiles[plr]
+	return if p and typeof(p.boosts) == "table" then tonumber(p.boosts[key]) or 0 else 0
 end
 
 -- One boost of this kind, if the player has one: takes it from the inventory and returns true.
@@ -663,7 +684,9 @@ function Progression.roundEnded(results, info: any?)
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Matchmaking (ServerScriptService.Matchmaker / GameServer)
+--------------------------------------------------------------------------------
 
 -- Before a teleport to another place: save now and stop this server saving the profile again,
 -- so the server the player arrives on loads the latest profile and later saves aren't undone.

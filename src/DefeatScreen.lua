@@ -6,10 +6,13 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.DefeatScreen (ModuleScript), set up by GameClient.
+--
 -- Listens on Shared.Net for "defeated", "revived", "reviveDenied", "shields", "init", "me",
--- "phase" and sends "revive" / "newCountry" / "leave" (see ServerScriptService.Revive).
+-- "phase" and sends "revive" / "newCountry" / "leave" / "buyRevive" (see ServerScriptService.Revive).
 -- EXIT GAME fires PlayerGui.FrontlinesMenuShow (BindableEvent; MainMenu listens and shows itself).
--- No purchases here: every option is free.
+-- The first revive of a round is free. After that REVIVE turns into a bought revive
+-- (MetaConfig.REVIVE): it spends an Extra Revive you own ("x2" badge), or buys one with Robux (the
+-- server revives you as soon as the purchase goes through) or, while the product has no id, coins.
 -- Look: OpenFront's WinModal as it shows on death ("You died"): bg-gray-800/70 rounded-lg panel,
 -- 26 px title, bg-black/30 content box, a row of o-button primaries (malibu-blue -> aquarius,
 -- rounded-xl, bold uppercase). Revive / new country are War Front additions in the same row.
@@ -19,6 +22,9 @@ local GuiService = game:GetService("GuiService")
 local ContextActionService = game:GetService("ContextActionService")
 local TweenService = game:GetService("TweenService")
 local SimClock = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("SimClock")) -- game clock (speed / pause)
+local MarketplaceService = game:GetService("MarketplaceService")
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local MetaConfig = require(Shared:WaitForChild("MetaConfig"))
 
 local localPlayer = Players.LocalPlayer
 local playerGui = localPlayer:WaitForChild("PlayerGui")
@@ -83,7 +89,9 @@ local function short(n: number): string
 	return tostring(math.floor(n))
 end
 
+--------------------------------------------------------------------------------
 -- State
+--------------------------------------------------------------------------------
 local net: RemoteEvent
 local focusTile: ((number) -> ())? = nil
 local myId = 0
@@ -91,8 +99,11 @@ local info: any = nil -- last "defeated" payload
 local mode = "hidden" -- hidden | panel | watching
 local shields: { [number]: number } = {} -- player id -> server time the shield ends
 local busy = false -- request sent, waiting for the server
+local buy = { tokens = 0, price = nil :: number?, phase = "Lobby" } -- Extra Revives owned, Robux price, round phase
 
+--------------------------------------------------------------------------------
 -- GUI
+--------------------------------------------------------------------------------
 local gui = make("ScreenGui", {
 	Name = "FrontlinesDefeat",
 	IgnoreGuiInset = true,
@@ -256,7 +267,8 @@ local watchBtn, watchLabel = oButton("SPECTATE", 4) -- win_modal.spectate
 local freeBadge = make("TextLabel", {
 	AnchorPoint = Vector2.new(1, 0),
 	Position = UDim2.new(1, -4, 0, 4),
-	Size = UDim2.fromOffset(34, 14),
+	Size = UDim2.fromOffset(0, 14),
+	AutomaticSize = Enum.AutomaticSize.X,
 	BackgroundColor3 = C.YELLOW,
 	BorderSizePixel = 0,
 	FontFace = FONT_BLACK,
@@ -266,6 +278,7 @@ local freeBadge = make("TextLabel", {
 	Parent = reviveBtn,
 })
 corner(freeBadge, 4)
+make("UIPadding", { PaddingLeft = UDim.new(0, 4), PaddingRight = UDim.new(0, 4), Parent = freeBadge })
 
 -- Spectating pill (bottom centre): brings the options back.
 local pill = make("TextButton", {
@@ -318,7 +331,9 @@ local shieldSpan = { ends = 0, len = 1 }
 
 DeviceLayout.attachScreenGui(gui)
 
+--------------------------------------------------------------------------------
 -- Layout per device
+--------------------------------------------------------------------------------
 local function layout()
 	local profile = DeviceLayout.state.profile
 	local screen = gui.AbsoluteSize
@@ -352,7 +367,9 @@ local function layout()
 	rowLayout.Padding = UDim.new(0, if compact then 6 else 10)
 end
 
+--------------------------------------------------------------------------------
 -- Show / hide
+--------------------------------------------------------------------------------
 local function menuOpen(): boolean
 	return playerGui:GetAttribute("FrontlinesMenuOpen") == true
 end
@@ -368,14 +385,29 @@ local function canComeBack(): boolean
 	return info ~= nil and info.canRevive == true and not busy
 end
 
+-- Free revives are used up, but one can be bought (or an owned Extra Revive spent).
+local function canBuy(): boolean
+	return info ~= nil and info.canRevive ~= true and info.canBuy == true and not busy
+end
+
+local function buyBadge(): string
+	if buy.tokens > 0 then
+		return "x" .. buy.tokens
+	elseif MetaConfig.REVIVE.id ~= 0 then
+		return if buy.price then "R$ " .. buy.price else "R$"
+	end
+	return short(MetaConfig.REVIVE.coins) .. " medals"
+end
+
 local function render()
 	local canRevive = canComeBack()
+	local buyable = canBuy()
 	local troops, gold, secs = 0, 0, 0
 	if info then
 		troops, gold, secs = info.reviveTroops or 0, info.reviveGold or 0, info.shieldSeconds or 0
 		subtitle.Text = if info.by then "Your land was taken by " .. info.by else "Your country has fallen"
 	end
-	if canRevive then
+	if canRevive or buyable then
 		reviveDetail.Text = string.format("%s troops  ·  %s gold  ·  %ds shield", short(troops), short(gold), secs)
 	elseif busy then
 		reviveDetail.Text = "Finding free land..."
@@ -383,12 +415,15 @@ local function render()
 		reviveDetail.Text = (info and info.reason) or "Not available"
 	end
 	-- o-button disabled: bg-gray-600 text-gray-300 opacity-70
-	reviveBtn.BackgroundColor3 = if canRevive or busy then C.BLUE else C.GRAY_DARK
+	local on = canRevive or buyable or busy
+	reviveBtn.BackgroundColor3 = if on then C.BLUE else C.GRAY_DARK
 	reviveBtn:SetAttribute("Base", reviveBtn.BackgroundColor3)
-	reviveBtn.Selectable = canRevive
-	reviveBtn.BackgroundTransparency = if canRevive or busy then 0 else 0.3
-	reviveTitle.TextColor3 = if canRevive or busy then C.WHITE else C.GRAY
-	freeBadge.Visible = canRevive
+	reviveBtn.Selectable = canRevive or buyable
+	reviveBtn.BackgroundTransparency = if on then 0 else 0.3
+	reviveTitle.TextColor3 = if on then C.WHITE else C.GRAY
+	freeBadge.Visible = canRevive or buyable
+	freeBadge.Text = if canRevive then "FREE" else buyBadge()
+	freeBadge.BackgroundColor3 = if canRevive then C.YELLOW elseif buy.tokens > 0 then K.EMERALD300 else K.EMERALD500
 	newBtn.BackgroundColor3 = if canRevive then C.BLUE else C.GRAY_DARK
 	newBtn:SetAttribute("Base", newBtn.BackgroundColor3)
 	newBtn.Selectable = canRevive
@@ -399,6 +434,9 @@ local function render()
 	local parts = {}
 	if info and canRevive then
 		parts[1] = "New country starts far away and also uses your revive"
+	elseif info and buyable then
+		local left = tonumber(info.buyLeft) or 0
+		parts[1] = "Free revives used. Buy up to " .. left .. " more this round"
 	end
 	if gamepad then
 		parts[#parts + 1] = "B  Spectate"
@@ -407,7 +445,7 @@ local function render()
 	footer.Visible = #parts > 0
 
 	local gp = if gamepad then '<font color="#ffd700">D-pad up</font>  ' else ""
-	pill.Text = gp .. "SPECTATING  ·  " .. (if canRevive then '<font color="#ffd700">REVIVE</font>' else "OPTIONS")
+	pill.Text = gp .. "SPECTATING  ·  " .. (if canRevive or buyable then '<font color="#ffd700">REVIVE</font>' else "OPTIONS")
 end
 
 local function bindKeys()
@@ -514,8 +552,53 @@ local function leave()
 	end
 end
 
+-- Bought revive: spend an owned Extra Revive, else buy one (Robux; coins while there's no product).
+local function buyRevive()
+	if not canBuy() then
+		return
+	end
+	busy = true
+	render()
+	local function done()
+		task.delay(6, function()
+			if busy then
+				busy = false
+				render()
+			end
+		end)
+	end
+	if buy.tokens > 0 then
+		net:FireServer("buyRevive")
+		done()
+	elseif MetaConfig.REVIVE.id ~= 0 then
+		busy = false -- the purchase prompt is up; the server revives us when it's paid
+		render()
+		MarketplaceService:PromptProductPurchase(localPlayer, MetaConfig.REVIVE.id)
+	else
+		task.spawn(function()
+			local ok, success, msg = pcall(function()
+				return Shared:WaitForChild("MetaFn"):InvokeServer("buyBoost", MetaConfig.REVIVE.key)
+			end)
+			if ok and success then
+				net:FireServer("buyRevive")
+				done()
+			else
+				busy = false
+				if info then
+					reviveDetail.Text = if ok and type(msg) == "string" then msg else "Couldn't buy a revive"
+				end
+				task.delay(2.5, render)
+			end
+		end)
+	end
+end
+
 reviveBtn.Activated:Connect(function()
-	request("revive")
+	if canComeBack() then
+		request("revive")
+	else
+		buyRevive()
+	end
 end)
 newBtn.Activated:Connect(function()
 	request("newCountry")
@@ -524,7 +607,9 @@ watchBtn.Activated:Connect(DefeatScreen.watch)
 leaveBtn.Activated:Connect(leave)
 pill.Activated:Connect(DefeatScreen.showPanel)
 
+--------------------------------------------------------------------------------
 -- Shields
+--------------------------------------------------------------------------------
 -- Prefix for a player's map name label while their spawn shield is up.
 function DefeatScreen.shieldTag(id: number): string
 	local ends = shields[id]
@@ -541,7 +626,7 @@ end
 local function updateShieldPill()
 	local ends = shields[myId]
 	local left = if ends then ends - SimClock.now() else 0
-	if left > 0 then
+	if left > 0 and buy.phase == "Play" then
 		local s = math.ceil(left)
 		if math.abs(ends - shieldSpan.ends) > 0.5 then
 			shieldSpan.ends, shieldSpan.len = ends, math.max(left, 1) -- a new or extended shield
@@ -562,7 +647,9 @@ local function updateShieldPill()
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Setup
+--------------------------------------------------------------------------------
 -- opts: { net: RemoteEvent, focusTile: ((tile: number) -> ())? }
 function DefeatScreen.setup(opts)
 	net = opts.net
@@ -571,6 +658,9 @@ function DefeatScreen.setup(opts)
 	net.OnClientEvent:Connect(function(kind: string, data: any)
 		if kind == "init" then
 			myId = if type(data) == "table" then tonumber(data.myId) or 0 else 0
+			if type(data) == "table" and type(data.phase) == "table" then
+				buy.phase = data.phase.phase or buy.phase
+			end
 			table.clear(shields)
 			DefeatScreen.hide()
 		elseif kind == "me" then
@@ -578,9 +668,13 @@ function DefeatScreen.setup(opts)
 				myId = data.id
 			end
 		elseif kind == "phase" then
+			if type(data) == "table" then
+				buy.phase = data.phase or buy.phase
+			end
 			if type(data) == "table" and data.phase ~= "Play" and mode ~= "hidden" then
 				DefeatScreen.hide()
 			end
+			updateShieldPill()
 		elseif kind == "defeated" then
 			if type(data) == "table" then
 				info = data
@@ -592,6 +686,7 @@ function DefeatScreen.setup(opts)
 			if info and type(data) == "table" then
 				info.canRevive = false
 				info.reason = data.reason
+				info.canBuy = data.canBuy == true and info.canBuy == true
 			end
 			render()
 			selectDefault()
@@ -631,6 +726,36 @@ function DefeatScreen.setup(opts)
 	gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(layout)
 	layout()
 	apply()
+
+	-- Extra Revives owned (profile.boosts.revive) and the product's Robux price.
+	local function setTokens(boosts: any)
+		if type(boosts) == "table" then
+			buy.tokens = tonumber(boosts[MetaConfig.REVIVE.key]) or 0
+			render()
+		end
+	end
+	Shared:WaitForChild("Meta").OnClientEvent:Connect(function(kind: string, data: any)
+		if kind == "profile" and type(data) == "table" then
+			setTokens(data.boosts)
+		end
+	end)
+	task.spawn(function()
+		local ok, success, p = pcall(function()
+			return Shared:WaitForChild("MetaFn"):InvokeServer("get")
+		end)
+		if ok and success and type(p) == "table" then
+			setTokens(p.boosts)
+		end
+		if MetaConfig.REVIVE.id ~= 0 then
+			local okInfo, pinfo = pcall(function()
+				return MarketplaceService:GetProductInfo(MetaConfig.REVIVE.id, Enum.InfoType.Product)
+			end)
+			if okInfo and type(pinfo) == "table" then
+				buy.price = tonumber(pinfo.PriceInRobux)
+				render()
+			end
+		end
+	end)
 
 	task.spawn(function()
 		while true do

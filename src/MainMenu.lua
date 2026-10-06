@@ -10,6 +10,7 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.MainMenu (LocalScript)
+--
 -- Desktop (>= 1024 px, OpenFront's lg): nav bar (WAR FRONT wordmark + version, PLAY / STORE /
 -- INVENTORY / LEADERBOARD / CLANS, news bell, help, settings, account menu), then the play page:
 -- news banner, identity row, featured round card + UPCOMING column, PLAY / TUTORIAL, CREATE LOBBY /
@@ -17,6 +18,7 @@
 -- and the phone stacking order. Pages (settings, help, release notes, language, profile,
 -- inventory, leaderboard, clans, upcoming maps) open inline in the main area like OpenFront's
 -- inline modals (MenuPages / MenuKit). Matchmaking buttons say "Coming Soon".
+--
 -- Talks to:
 --   Shared.Net        "play", "vote" (client -> server); "init", "phase", "roster", "joined" (server -> client)
 --   Shared.Meta/MetaFn profile (level, xp, coins, games...)
@@ -41,7 +43,9 @@ local playerGui = localPlayer:WaitForChild("PlayerGui")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local net = Shared:WaitForChild("Net")
 
+--------------------------------------------------------------------------------
 -- Round state (listen as early as possible so the first "init"/"phase" isn't missed)
+--------------------------------------------------------------------------------
 local state = {
 	phase = nil :: string?,
 	phaseEnd = 0, -- os.clock() when the current phase timer runs out
@@ -175,6 +179,7 @@ local DeviceLayout = require(script.Parent:WaitForChild("DeviceLayout"))
 local PauseMenu = require(script.Parent:WaitForChild("PauseMenu")) -- MENU / Start open it during a round
 TICK = Config.TICK
 
+--------------------------------------------------------------------------------
 
 local MenuKit = require(script.Parent:WaitForChild("MenuKit"))
 local MenuPages = require(script.Parent:WaitForChild("MenuPages"))
@@ -183,7 +188,9 @@ local LobbyPages = require(script.Parent:WaitForChild("LobbyPages")) -- Create /
 -- match server skips the menu and drops the player straight into the round.
 local Place = require(Shared:WaitForChild("Place"))
 
+--------------------------------------------------------------------------------
 -- Style (MenuKit holds OpenFront's colour tokens and component looks)
+--------------------------------------------------------------------------------
 local C, F = MenuKit.C, MenuKit.F
 local WHITE = C.WHITE
 local BLACK = C.BLACK
@@ -228,7 +235,9 @@ local function setSelectionGroup(o: GuiObject)
 	end)
 end
 
+--------------------------------------------------------------------------------
 -- Maps
+--------------------------------------------------------------------------------
 local function catalogInfo(id: string?)
 	if not id then
 		return nil
@@ -385,7 +394,9 @@ local function requestPreview(id: string, width: number)
 	end)
 end
 
+--------------------------------------------------------------------------------
 -- Avatars
+--------------------------------------------------------------------------------
 local thumbs: { [number]: string | boolean } = {}
 local function setAvatar(img: ImageLabel, initial: TextLabel, userId: number, name: string)
 	initial.Text = string.upper(string.sub(name, 1, 1))
@@ -409,7 +420,9 @@ local function setAvatar(img: ImageLabel, initial: TextLabel, userId: number, na
 	end
 end
 
+--------------------------------------------------------------------------------
 -- GUI
+--------------------------------------------------------------------------------
 local gui = make("ScreenGui", {
 	Name = "FrontlinesMenu",
 	DisplayOrder = 10,
@@ -969,7 +982,9 @@ local menuBtn = MenuKit.button("secondary", { Name = "Menu", Text = "MENU", Text
 MenuKit.icon("Menu", { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, -20, 0.5, 0), Size = UDim2.fromOffset(18, 18), Parent = menuBtn })
 MenuKit.pad(menuBtn, 30, 10, 0, 0)
 
+--------------------------------------------------------------------------------
 -- Rendering
+--------------------------------------------------------------------------------
 local profile: any = nil
 
 local function setPreview(c)
@@ -1229,7 +1244,9 @@ refresh = function()
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Layout
+--------------------------------------------------------------------------------
 local function layoutMenuButton()
 	-- Top-right, next to the profile chip (the in-match leaderboard owns the top-left).
 	local st = DeviceLayout.state
@@ -1461,7 +1478,9 @@ local function queueLayout()
 	end)
 end
 
+--------------------------------------------------------------------------------
 -- Show / hide, pages, actions
+--------------------------------------------------------------------------------
 local menuVisible = false
 local B_ACTION = "FrontlinesMainMenuB"
 local START_ACTION = "FrontlinesMainMenuStart"

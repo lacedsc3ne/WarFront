@@ -4,6 +4,7 @@
 ]]
 
 -- ReplicatedStorage.Shared.Perf (ModuleScript), used by GameClient and GameServer.
+--
 -- Perf.start(name) / Perf.stop(name)   time a section (os.clock); nesting different names is fine
 -- Perf.wrap(name, fn) -> fn            the same around a function call
 -- Every 5 s the totals are written as text to an attribute and reset:

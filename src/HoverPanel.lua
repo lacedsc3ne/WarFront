@@ -6,6 +6,7 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.HoverPanel (ModuleScript), used by GameClient.
+--
 -- While the pointer (mouse, gamepad virtual cursor, or a recent touch) is over a player's
 -- territory, OpenFront's PlayerInfoOverlay replaces the slim top banner (bg-gray-800/92, 500 px):
 --   left column (w-36):  [coin gold]  (soldier) ↑ attacking troops
@@ -13,6 +14,7 @@
 --   right column:        flag  Name  Nation  [alliance icon + time] [traitor icon]
 --                        [city n] [factory n] [port n] [silo n] [SAM n] [warship n]  unit chips
 -- Scaled down on narrow screens (phones).
+--
 -- HoverPanel.init(ctx)
 --   ctx.gui, ctx.banner, ctx.roster, ctx.fmt(n), ctx.getMyId(), ctx.getStructures() -> list of
 --   {id, kind, tile, owner, done}, ctx.getUnits() -> { [id]: { owner } }, ctx.contextMenu

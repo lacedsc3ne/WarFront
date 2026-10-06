@@ -6,6 +6,7 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.Leaderboard (ModuleScript), used by GameClient.
+--
 -- Mirrors src/client/hud/layers/GameLeftSidebar.ts + PlayerStats.ts + components/StatsTable.ts:
 --   * an <aside> flush in the top-left corner (bg-gray-800/92, rounded-br-lg, p-2) holding the
 --     leaderboard toggle (20 px icon in a bg-gray-700/50, border-slate-500 rounded box; the solid
@@ -22,6 +23,7 @@
 --     troops, max troops, cities, ports, factories, silos, SAMs, warships (unit columns sum
 --     levels like totalUnitLevels). Not ported: clan, trade/piracy gold rates, allies, betrayals
 --     (the client doesn't know other players' alliances), and the game id text.
+--
 -- Leaderboard.create(ctx) -> api
 --   ctx.gui, ctx.roster, ctx.fmt(n), ctx.fmtTroops(n)?, ctx.getMyId(), ctx.getLandTiles(),
 --   ctx.getStructures()? (rows: id, kind, tile, owner, done, ..., [10] level), ctx.getUnits()?

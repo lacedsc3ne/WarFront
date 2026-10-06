@@ -72,12 +72,14 @@ local gui = make("ScreenGui", {
 
 local profile = nil
 
+--------------------------------------------------------------------------------
 -- Profile chip (top-left)
+--------------------------------------------------------------------------------
 local chip = make("Frame", { Name = "ProfileChip", Position = UDim2.fromOffset(12, 12), Size = UDim2.fromOffset(250, 92), BackgroundColor3 = PANEL, BackgroundTransparency = 0.1, BorderSizePixel = 0, Active = true, Parent = gui })
 corner(chip, 12)
 MenuKit.stroke(chip, 0.9)
 local levelText = label({ Position = UDim2.fromOffset(12, 8), Size = UDim2.fromOffset(150, 20), FontFace = FONT_BOLD, TextXAlignment = Enum.TextXAlignment.Left, Text = "Level 1", Parent = chip })
-local coinsText = label({ Position = UDim2.new(1, -112, 0, 8), Size = UDim2.fromOffset(100, 20), FontFace = FONT_BOLD, TextColor3 = GOLD, TextXAlignment = Enum.TextXAlignment.Right, Text = "0 coins", Parent = chip })
+local coinsText = label({ Position = UDim2.new(1, -112, 0, 8), Size = UDim2.fromOffset(100, 20), FontFace = FONT_BOLD, TextColor3 = GOLD, TextXAlignment = Enum.TextXAlignment.Right, Text = "0 medals", Parent = chip })
 local xpBg = make("Frame", { Position = UDim2.fromOffset(12, 32), Size = UDim2.new(1, -24, 0, 8), BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 0.9, BorderSizePixel = 0, Parent = chip })
 corner(xpBg, 99)
 local xpFill = make("Frame", { Size = UDim2.fromScale(0, 1), BackgroundColor3 = MenuKit.C.MALIBU, BorderSizePixel = 0, Parent = xpBg })
@@ -85,7 +87,9 @@ corner(xpFill, 99)
 local shopButton = button({ Position = UDim2.fromOffset(12, 50), Size = UDim2.fromOffset(110, 32), Text = "STORE", Parent = chip })
 local statsButton = button({ Position = UDim2.fromOffset(128, 50), Size = UDim2.fromOffset(110, 32), BackgroundColor3 = MenuKit.C.GRAY700, Text = "STATS", Parent = chip })
 
+--------------------------------------------------------------------------------
 -- Toast (rewards, level ups, daily)
+--------------------------------------------------------------------------------
 local toast = make("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, -140), Size = UDim2.fromOffset(380, 110), BackgroundColor3 = PANEL, BorderSizePixel = 0, Visible = false, Parent = gui })
 corner(toast, 10)
 make("UIStroke", { Color = GOLD, Thickness = 2, Parent = toast })
@@ -116,8 +120,10 @@ local function showToast(title: string, body: string)
 	end)
 end
 
+--------------------------------------------------------------------------------
 -- Store / stats window: an OpenFront o-modal (MenuKit.modal) showing the same pages as the
 -- main menu (MenuPages "store" and "profile"), so the store looks identical everywhere.
+--------------------------------------------------------------------------------
 local MenuPages = require(localPlayer:WaitForChild("PlayerScripts"):WaitForChild("MenuPages"))
 local modal = MenuKit.modal(gui, "MetaWindow")
 local window = modal.holder -- "MetaWindow": MainMenu / PauseMenu watch its Visible
@@ -177,7 +183,9 @@ statsButton.Activated:Connect(function()
 	openTab("stats")
 end)
 
+--------------------------------------------------------------------------------
 -- Devices: gamepad (B closes, LB/RB switch the page's tab) and per-device layout
+--------------------------------------------------------------------------------
 local WINDOW_ACTION = "FrontlinesMetaWindow"
 window:GetPropertyChangedSignal("Visible"):Connect(function()
 	if window.Visible then
@@ -277,14 +285,16 @@ DeviceLayout.attachScreenGui(gui)
 DeviceLayout.Changed:Connect(applyMetaLayout)
 applyMetaLayout()
 
+--------------------------------------------------------------------------------
 -- Server messages
+--------------------------------------------------------------------------------
 local function applyProfile(p)
 	if not p then
 		return
 	end
 	profile = p
 	levelText.Text = (if p.vip then "VIP · " else "") .. "Level " .. p.level
-	coinsText.Text = p.coins .. " coins"
+	coinsText.Text = p.coins .. " medals"
 	xpFill.Size = UDim2.fromScale(math.clamp(p.xpInto / math.max(1, p.xpNeed), 0, 1), 1)
 	if currentTab == "stats" then
 		render()
@@ -298,11 +308,11 @@ metaEvent.OnClientEvent:Connect(function(kind: string, data: any)
 		local place = data.placement
 		local suffix = if place == 1 then "st" elseif place == 2 then "nd" elseif place == 3 then "rd" else "th"
 		local title = if data.won then "Victory!" else string.format("You placed %d%s", place, suffix)
-		showToast(title, string.format("+%d XP   +%d coins%s", data.xp, data.coins, if data.vip then "  (VIP bonus)" else ""))
+		showToast(title, string.format("+%d XP   +%d medals%s", data.xp, data.coins, if data.vip then "  (VIP bonus)" else ""))
 	elseif kind == "levelUp" then
 		showToast("Level up!", "You reached level " .. data .. ". New colours may be unlocked in the shop.")
 	elseif kind == "daily" then
-		showToast("Daily reward - day " .. data.day, string.format("+%d coins. Come back tomorrow to keep your streak!", data.coins))
+		showToast("Daily reward - day " .. data.day, string.format("+%d medals. Come back tomorrow to keep your streak!", data.coins))
 	end
 end)
 

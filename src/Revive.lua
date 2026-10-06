@@ -6,17 +6,22 @@
 ]]
 
 -- ServerScriptService.Revive (ModuleScript), driven by GameServer.
--- Client -> server kinds: "revive", "newCountry", "leave" (no arguments).
+--
+-- Client -> server kinds: "revive", "newCountry", "leave", "buyRevive" (no arguments).
 -- Server -> client kinds:
 --   "defeated" (personal) { by = killer name?, canRevive, reason?, reviveTroops, reviveGold,
---                           shieldSeconds, revivesLeft }
+--                           shieldSeconds, revivesLeft, canBuy, buyLeft }
 --   "revived"  (personal) { tile, shieldSeconds }
 --   "reviveDenied" (personal) { reason }
 --   "left"     (personal) {}
 --   "shields"  (all)      { { playerId, endsAt (workspace:GetServerTimeNow() time) }, ... }
+--
 -- REVIVE respawns near the old spawn (random if nothing free nearby); NEW COUNTRY always picks a
 -- random spawn far from the old one. Both use the same per-round allowance
 -- (Config.REVIVES_PER_ROUND), so a player gets one comeback per round either way.
+-- Once the free revives are used, the defeat screen offers a bought one (MetaConfig.REVIVE: an
+-- "revive" item from the player's inventory, bought with Robux or coins), at most
+-- MetaConfig.REVIVE_BUY_MAX per round and never in ranked. "buyRevive" spends one and revives.
 -- A revived player is shielded for Config.REVIVE_SHIELD_SECONDS: land attacks and boat landings
 -- by other players are refused (boats bring their troops home); nukes still hit. Attacking another
 -- non-bot player drops your own shield.
@@ -24,16 +29,18 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
+local MetaConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MetaConfig"))
 local SimClock = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("SimClock")) -- game clock (speed / pause)
 
 local Revive = {}
 
 local ctx: any = nil
 local used: { [number]: number } = {} -- userId -> comebacks used this round
+local bought: { [number]: number } = {} -- userId -> bought revives added this round
 local shields: { [number]: number } = {} -- player id -> tick the shield ends
 local shieldsDirty = false
 
-local KINDS = { revive = true, newCountry = true, leave = true }
+local KINDS = { revive = true, newCountry = true, leave = true, buyRevive = true }
 
 function Revive.init(c)
 	ctx = c
@@ -45,7 +52,16 @@ end
 
 local function revivesLeft(p): number
 	local extra = if ctx.extraRevives then ctx.extraRevives(p) else 0 -- Perks: Second Chance
-	return math.max(0, Config.REVIVES_PER_ROUND + extra - (used[p.userId or 0] or 0))
+	local uid = p.userId or 0
+	return math.max(0, Config.REVIVES_PER_ROUND + extra + (bought[uid] or 0) - (used[uid] or 0))
+end
+
+-- How many more revives this player may buy this round (0 in ranked).
+local function buyLeft(p): number
+	if (ctx.isRanked and ctx.isRanked()) or not ctx.progression then
+		return 0
+	end
+	return math.max(0, MetaConfig.REVIVE_BUY_MAX - (bought[p.userId or 0] or 0))
 end
 
 -- Returns nil if the player may come back now, else a short reason for the UI.
@@ -60,13 +76,14 @@ local function denyReason(plr: Player, p): string?
 		return "You left this battle"
 	end
 	if revivesLeft(p) <= 0 then
-		return "Revive already used this round"
+		return if buyLeft(p) > 0 then "Free revive already used this round" else "No revives left this round"
 	end
 	return nil
 end
 
 function Revive.reset()
 	table.clear(used)
+	table.clear(bought)
 	table.clear(shields)
 	shieldsDirty = true
 end
@@ -96,6 +113,9 @@ function Revive.blocks(p, targetId: number): boolean
 		if target and target.kind ~= "Bot" then
 			shields[p.id] = nil
 			shieldsDirty = true
+			if ctx.notify then
+				ctx.notify(p.id, "Your shield is down: you attacked a player.", "info")
+			end
 		end
 	end
 	return false
@@ -154,6 +174,8 @@ function Revive.onKilled(p, killer)
 		reviveGold = Config.REVIVE_GOLD,
 		shieldSeconds = Config.REVIVE_SHIELD_SECONDS,
 		revivesLeft = revivesLeft(p),
+		canBuy = reason ~= nil and revivesLeft(p) <= 0 and buyLeft(p) > 0 and ctx.phase() == "Play" and ctx.wantsPlay[plr.UserId] == true,
+		buyLeft = buyLeft(p),
 	})
 end
 
@@ -262,8 +284,40 @@ local function comeBack(plr: Player, p, near: boolean)
 	ctx.net:FireClient(plr, "revived", { tile = t, shieldSeconds = Config.REVIVE_SHIELD_SECONDS })
 end
 
+-- Spend one bought revive from the inventory and come back (near the old spawn). Returns true if
+-- it was used. Also called right after a Robux purchase (GameServer, Progression.onItemBought).
+function Revive.buyRevive(plr: Player, p): boolean
+	if not p or p.alive or ctx.phase() ~= "Play" or not ctx.wantsPlay[plr.UserId] then
+		return false
+	end
+	if revivesLeft(p) > 0 then
+		comeBack(plr, p, true) -- a free one is still there: use that first
+		return true
+	end
+	if buyLeft(p) <= 0 then
+		ctx.net:FireClient(plr, "reviveDenied", { reason = "No more revives this round" })
+		return false
+	end
+	if not ctx.progression.takeBoost(plr, MetaConfig.REVIVE.key) then
+		ctx.net:FireClient(plr, "reviveDenied", { reason = "You don't have an Extra Revive", canBuy = true })
+		return false
+	end
+	local uid = p.userId or 0
+	bought[uid] = (bought[uid] or 0) + 1
+	if not findSpawn(p, true) then
+		bought[uid] -= 1
+		ctx.progression.returnBoost(plr, MetaConfig.REVIVE.key)
+		ctx.net:FireClient(plr, "reviveDenied", { reason = "No free land left", canBuy = true })
+		return false
+	end
+	comeBack(plr, p, true)
+	return true
+end
+
 function Revive.handle(plr: Player, p, kind: string)
-	if kind == "leave" then
+	if kind == "buyRevive" then
+		Revive.buyRevive(plr, p)
+	elseif kind == "leave" then
 		ctx.wantsPlay[plr.UserId] = nil
 		ctx.net:FireClient(plr, "left", {})
 	elseif kind == "revive" or kind == "newCountry" then

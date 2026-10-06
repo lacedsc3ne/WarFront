@@ -8,12 +8,15 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.PauseMenu (ModuleScript), required by MainMenu and HudSidebars.
+--
 -- The in-game gear button (HudSidebars), the MENU button and gamepad Start open this menu during
 -- a round. It is an OpenFront modal: round back button + uppercase title, then rows. Settings,
 -- Help, Store and Stats open the same pages as the main menu (MenuPages) inside the modal; the
 -- back button returns to the menu rows.
+--
 -- PauseMenu.init(ctx)   ctx.showMainMenu(), ctx.isMainMenuOpen() -> boolean, ctx.onLeave()
 -- PauseMenu.open(), PauseMenu.close(), PauseMenu.isOpen(), PauseMenu.showMainMenu()
+--
 -- The match keeps running (it's multiplayer): PlayerGui attribute FrontlinesMenuOpen = true while
 -- open so the gamepad match controls stop.
 
@@ -140,7 +143,7 @@ renderMain = function()
 	helpRow.Activated:Connect(function()
 		openSub("help", helpRow)
 	end)
-	local storeRow = MenuKit.navRow(body, 5, "Building", "Store", "Territory colours, passes and coins")
+	local storeRow = MenuKit.navRow(body, 5, "Building", "Store", "Territory colours, passes and medals")
 	storeRow.Activated:Connect(function()
 		openSub("store", storeRow)
 	end)

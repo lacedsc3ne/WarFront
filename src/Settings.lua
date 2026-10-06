@@ -6,6 +6,7 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.Settings (ModuleScript), used by GameClient and PauseMenu.
+--
 -- Settings.values[key]            current value (read freely; write only through Settings.set)
 -- Settings.set(key, value)        validates, applies, fires Changed, saves ~2 s after the last change
 -- Settings.Changed(key, value)    RBXScriptSignal
@@ -13,8 +14,10 @@
 -- Settings.buildUI(parent) -> { first: GuiObject, refresh() }   the settings page (PauseMenu hosts it)
 -- Helpers for GameClient's renderer: flatTerrainRGB(byte), nearOtherOwner(map, owners, t, o),
 -- growTouched(map, touched).
+--
 -- Persistence: loaded once from MetaFn "get" (profile.settings), saved with MetaFn "saveSettings".
 -- Progression.lua (server) validates against its own copy of the keys below - keep them in sync.
+--
 -- Applied here directly: UI scale (DeviceLayout.setUserScale), leaderboard default
 -- (DeviceLayout.setBoardDefault) and audio: SoundService.Master (SoundGroup) holds the
 -- SoundGroup "Effects"; future sounds should use SoundGroup = SoundService.Master.Effects.
@@ -106,7 +109,9 @@ local function clean(key: string, v: any): any
 	return math.clamp(math.floor(v / r[3] + 0.5) * r[3], r[1], r[2])
 end
 
+--------------------------------------------------------------------------------
 -- Applying (things not owned by GameClient)
+--------------------------------------------------------------------------------
 local master = SoundService:FindFirstChild("Master")
 if not (master and master:IsA("SoundGroup")) then
 	master = Instance.new("SoundGroup")
@@ -172,7 +177,9 @@ local function apply(key: string)
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Persistence
+--------------------------------------------------------------------------------
 local loaded = false
 local dirty: { [string]: boolean } = {} -- keys the player changed before the profile arrived
 local saveToken = 0
@@ -270,7 +277,9 @@ end)
 
 applyAudio()
 
+--------------------------------------------------------------------------------
 -- Renderer helpers (used by GameClient)
+--------------------------------------------------------------------------------
 -- Terrain shading off: one land colour, one water colour (impassable mountains stay grey).
 function Settings.flatTerrainRGB(b: number): (number, number, number)
 	if b >= 128 then
@@ -313,7 +322,9 @@ function Settings.growTouched(map, touched: { [number]: boolean })
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Settings page
+--------------------------------------------------------------------------------
 local FONT = Font.fromEnum(Enum.Font.GothamMedium)
 local FONT_BOLD = Font.fromEnum(Enum.Font.GothamBold)
 local FONT_BLACK = Font.fromEnum(Enum.Font.GothamBlack)

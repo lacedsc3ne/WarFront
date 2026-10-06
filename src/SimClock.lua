@@ -6,13 +6,16 @@
 ]]
 
 -- ReplicatedStorage.Shared.SimClock (ModuleScript), used by the server and the client.
+--
 -- In a solo round the player can pause or change the game speed (OpenFront's single-player
 -- ReplayPanel: x0.5, x1, x2, Max). Everything that is timed in seconds (boats, nukes, trains,
 -- build bars, alliance / shield countdowns) uses SimClock.now() instead of
 -- workspace:GetServerTimeNow(), so it follows the game speed and stops while paused.
+--
 --   SimClock.now()        game-clock seconds (equal to server time until the speed first changes)
 --   SimClock.speed()      current speed (0 while paused)
 --   SimClock.set(speed)   server only: re-anchor the clock at a new speed (0 = paused)
+--
 -- The anchor (game time, server time, speed) replicates as the workspace attribute "WFSimClock"
 -- ("anchorGame,anchorServer,speed" as text, so the doubles keep their precision).
 

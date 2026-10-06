@@ -22,11 +22,13 @@
 -- 7 px each): HudSidebars.topOffset() and DeviceLayout.topOffset.
 -- The War Front profile chip / MENU button (MetaClient / MainMenu) also live top-right; while they
 -- are visible the bar sits under them.
+--
 --   ReplayPanel.ts       solo rounds (only player in the server, like OpenFront single player):
 --                        fast-forward button -> "Game speed" panel (x0.5 / x1 / x2 / Max) and a
 --                        pause / play button (also the P key) - Net "gameSpeed" / "pause".
 -- The timer counts game time (phase.elapsed + SimClock), so it follows the speed and pauses.
 -- Hidden while a replay is playing (PlayerGui attribute "WFReplay").
+--
 -- HudSidebars.setup(ctx)  ctx: gui, net, roster, getMyId(), toast(text, color)?
 -- HudSidebars.openMenu(), HudSidebars.closeMenu(), HudSidebars.topOffset()
 
@@ -122,7 +124,9 @@ local function hms(d: number): string
 	return string.format("%02d:%02d", m, s)
 end
 
+--------------------------------------------------------------------------------
 -- UI
+--------------------------------------------------------------------------------
 local ui: any = {}
 
 local function iconButton(parent: Instance, icon: string, order: number)
@@ -468,7 +472,9 @@ function HudSidebars.menuOpen(): boolean
 	return ui.menu ~= nil and ui.menu.dim.Visible
 end
 
+--------------------------------------------------------------------------------
 -- State
+--------------------------------------------------------------------------------
 local function applyPhase(ph)
 	if type(ph) ~= "table" then
 		return

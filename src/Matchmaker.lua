@@ -9,6 +9,7 @@
 ]]
 
 -- ServerScriptService.Matchmaker (ModuleScript), used by GameServer.
+--
 -- Every lobby server shares the queues through MemoryStoreService (sorted maps, prefix WF1_):
 --   WF1_Public   "ffa" | "team" | "special" -> that public lobby { id, type, map, mode, max, settings,
 --                startsAt, state, access, recent }
@@ -20,6 +21,7 @@
 -- A lobby is started by whichever server claims it first (UpdateAsync); it reserves a match server,
 -- stores the settings, and marks the lobby started with the access code. Every server then
 -- teleports its own players that belong to that lobby.
+--
 -- Net (client -> server), lobby place:
 --   "play" [, "ffa" | "team" | "special" | "solo" | "tutorial"]   join that public lobby
 --                           (solo / tutorial: a single-player match right away; "solo" may carry
@@ -29,6 +31,7 @@
 --   "lobbyCreate", "lobbyJoin" code, "lobbyLeave", "lobbySettings" table, "lobbyStart",
 --   "lobbyKick" userId
 -- Net (server -> client): "mm" { kind = "ranked" | "lobby" | "public" | "notice" | "teleport", ... }
+--
 -- Studio: MemoryStore works, teleports don't. A match that would start is announced with an
 -- "mm" teleport notice and its settings are stored in the workspace attribute WFMatchConfigLast
 -- (copy it into WFMatchConfig, set WFRole = "match" and press Play to test that match).
@@ -95,7 +98,9 @@ local function notice(plr: Player, text: string, color: string?)
 	send(plr, { kind = "notice", text = text, color = color })
 end
 
+--------------------------------------------------------------------------------
 -- Map sizes (MapPlaylist.calculateMapPlayerCounts / lobbyMaxPlayers)
+--------------------------------------------------------------------------------
 local function mapInfo(id: string)
 	for _, info in ctx.mapPool() do
 		if info.id == id then
@@ -116,7 +121,9 @@ local function mapPlayerCounts(id: string): (number, number, number)
 	return base, r5(base * 0.75), r5(base * 0.5)
 end
 
+--------------------------------------------------------------------------------
 -- Teleports
+--------------------------------------------------------------------------------
 local function handOff(plr: Player)
 	-- Save the profile now and stop this server from saving it again, so the next server reads
 	-- the up-to-date profile (Progression.handOff).
@@ -222,7 +229,9 @@ local function reserveMatch(cfg): string?
 	return access
 end
 
+--------------------------------------------------------------------------------
 -- Settings (HostLobbyModal / GameConfig subset)
+--------------------------------------------------------------------------------
 local DIFFICULTIES = { Easy = true, Medium = true, Hard = true, Impossible = true }
 local TEAM_CHOICES = {
 	[2] = true, [3] = true, [4] = true, [5] = true, [6] = true, [7] = true,
@@ -335,9 +344,11 @@ local function modeFromSettings(s)
 	return { kind = "FFA" }
 end
 
+--------------------------------------------------------------------------------
 -- Public lobbies (MasterLobbyService + MapPlaylist): an FFA, a Teams and a Special lobby run
 -- side by side. Each picks its map from its own playlist; Special lobbies roll FFA or Teams and
 -- one to three modifiers. The countdown starts with the first player.
+--------------------------------------------------------------------------------
 local PUB_TYPES = { "ffa", "team", "special" }
 Matchmaker.PUB_TYPES = PUB_TYPES
 
@@ -781,7 +792,9 @@ local function syncPublic()
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Ranked 1v1 (Matchmaking.ts / MapPlaylist.get1v1Config)
+--------------------------------------------------------------------------------
 local ranked = {
 	queued = {} :: { [Player]: number }, -- os.time() they joined
 	refreshedAt = {} :: { [Player]: number },
@@ -938,7 +951,9 @@ local function leaveRanked(plr: Player)
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Private lobbies (HostLobbyModal / JoinLobbyModal)
+--------------------------------------------------------------------------------
 local private = {
 	codeOf = {} :: { [Player]: string },
 }
@@ -1183,7 +1198,9 @@ local function syncPrivate()
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Requests (lobby place)
+--------------------------------------------------------------------------------
 local KINDS = {
 	play = true, leave = true,
 	rankedJoin = true, rankedLeave = true,
@@ -1315,7 +1332,9 @@ function Matchmaker.handle(plr: Player, kind: string, a1: any, a2: any)
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Match place
+--------------------------------------------------------------------------------
 -- The settings of this match server (nil = none found: a default public FFA game).
 function Matchmaker.matchConfig(): any
 	if IS_STUDIO then
@@ -1344,6 +1363,7 @@ function Matchmaker.matchConfig(): any
 	return nil
 end
 
+--------------------------------------------------------------------------------
 function Matchmaker.init(c)
 	ctx = c
 	if not Matchmaker.active then

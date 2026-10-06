@@ -8,8 +8,11 @@
 -- boost with its icon, how many you own and Use / Robux buy; hovering a tile shows what it does.
 -- Server rules are in ServerScriptService.Perks; this only asks ("boost", key) and shows the answer
 -- ("boostResult"). Shown in every match (hidden only while watching a replay); a boost that can't
--- be used right now has a greyed-out button that says why ("Ranked", "In 12s", "Used"). The crown
+-- be used right now has a greyed-out button that says why ("Ranked", "In 12s" = unlock delay or
+-- cooldown). Boosts can be used again and again (one per BOOST_COOLDOWN each); with none left the
+-- button buys one with Robux, and the server uses it as soon as the purchase goes through. The crown
 -- button in the top-right bar folds the strip away and back.
+--
 -- BoostsPanel.setup({ button = GuiButton, gui = ScreenGui, net = RemoteEvent }) -> strip Frame
 --   (HudSidebars stacks the strip under the top-right bar, with the speed and clock panels)
 
@@ -35,7 +38,7 @@ local playerGui = localPlayer:WaitForChild("PlayerGui")
 
 local state = {
 	counts = {} :: { [string]: number },
-	used = {} :: { [string]: boolean },
+	readyAt = {} :: { [string]: number }, -- key -> game seconds of fighting when it's usable again
 	prices = {} :: { [string]: number },
 	phase = "Lobby",
 	ranked = false,
@@ -69,6 +72,10 @@ local function visible(): boolean
 	return (state.phase == "Spawn" or state.phase == "Play") and playerGui:GetAttribute("WFReplay") ~= true
 end
 
+local function elapsedNow(): number
+	return state.elapsed + (os.clock() - state.elapsedAt) * state.speed
+end
+
 -- Why boosts can't be used right now (short, fits the button), or nil.
 local function blocked(): string?
 	if state.ranked then
@@ -77,7 +84,7 @@ local function blocked(): string?
 	if state.phase ~= "Play" then
 		return if state.phase == "Spawn" then "In " .. MetaConfig.BOOST_DELAY .. "s" else "Not now"
 	end
-	local left = MetaConfig.BOOST_DELAY - (state.elapsed + (os.clock() - state.elapsedAt) * state.speed)
+	local left = MetaConfig.BOOST_DELAY - elapsedNow()
 	if left > 0 then
 		return "In " .. math.ceil(left) .. "s"
 	end
@@ -105,10 +112,12 @@ local function refresh()
 		row.count.Visible = n > 0
 		local act = row.action
 		local why = blocked()
+		local cool = (state.readyAt[b.key] or 0) - elapsedNow()
+		if not why and cool > 0 then
+			why = math.ceil(cool) .. "s"
+		end
 		act.TextTransparency = 0
-		if state.used[b.key] then
-			grey(act, "Used")
-		elseif state.ranked then
+		if state.ranked then
 			grey(act, "Ranked")
 		elseif n > 0 and why then
 			grey(act, why)
@@ -138,7 +147,7 @@ local function refresh()
 end
 
 local function onAction(b)
-	if state.used[b.key] or state.ranked then
+	if state.ranked then
 		return
 	end
 	if (state.counts[b.key] or 0) > 0 then
@@ -264,7 +273,7 @@ function BoostsPanel.setup(c)
 		state.elapsedAt = os.clock()
 		state.speed = tonumber(data.speed) or 1
 		if state.phase == "Spawn" and was ~= "Spawn" then
-			table.clear(state.used) -- new round
+			table.clear(state.readyAt) -- new round
 		end
 	end
 	c.net.OnClientEvent:Connect(function(kind: string, data: any)
@@ -272,21 +281,23 @@ function BoostsPanel.setup(c)
 			applyPhase(data)
 			refresh()
 		elseif kind == "init" then
-			table.clear(state.used)
+			table.clear(state.readyAt)
 			if type(data) == "table" and type(data.phase) == "table" then
 				applyPhase(data.phase)
 			end
 			refresh()
 		elseif kind == "boostResult" and type(data) == "table" then
-			if data.ok then
-				state.used[data.key] = true
-				state.msg = ""
-			else
-				state.msg = tostring(data.text or "")
-				if tostring(data.text or ""):find("already used") then
-					state.used[data.key] = true
-				end
+			state.msg = tostring(data.text or "")
+			if data.ok and tonumber(data.cooldown) then
+				state.readyAt[data.key] = elapsedNow() + tonumber(data.cooldown)
 			end
+			local msg = state.msg
+			task.delay(6, function()
+				if state.msg == msg then
+					state.msg = ""
+					refresh()
+				end
+			end)
 			refresh()
 		end
 	end)
