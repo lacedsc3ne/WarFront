@@ -10,6 +10,7 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.MenuPages (ModuleScript), used by MainMenu.
+--
 -- MenuPages.TITLES[kind]                       page title (kind = "settings" | "help" | "news" |
 --                                              "language" | "profile" | "inventory" |
 --                                              "leaderboard" | "clans" | "store")
@@ -45,6 +46,7 @@ MenuPages.TITLES = {
 	leaderboard = "Leaderboard", -- main.leaderboard
 	clans = "Clans", -- main.clans
 	store = "Store", -- store.title
+	friends = "Friends", -- friends.your_friends
 }
 
 local function touchOnly(): boolean
@@ -60,7 +62,9 @@ local function numberText(n: any): string
 	return out
 end
 
+--------------------------------------------------------------------------------
 -- Settings (UserSettingModal: tabs Gameplay / Graphics / Audio / Keybinds)
+--------------------------------------------------------------------------------
 local function boolSetter(key: string)
 	return function(): boolean
 		return Settings.values[key] == true
@@ -81,27 +85,142 @@ local function percent(v: number): string
 	return tostring(math.floor(v + 0.5)) .. "%"
 end
 
-local KEYBINDS = {
-	{ "Build City", "Build a City under your cursor.", "1" },
-	{ "Build Port", "Build a Port under your cursor.", "3" },
-	{ "Build Defense Post", "Build a Defense Post under your cursor.", "4" },
-	{ "Build Missile Silo", "Build a Missile Silo under your cursor.", "5" },
-	{ "Build SAM Launcher", "Build a SAM Launcher under your cursor.", "6" },
-	{ "Build Warship", "Build a Warship under your cursor.", "7" },
-	{ "Build Atom Bomb", "Build an Atom Bomb under your cursor.", "8" },
-	{ "Build Hydrogen Bomb", "Build a Hydrogen Bomb under your cursor.", "9" },
-	{ "Boat Attack", "Send a boat attack to the tile under your cursor.", "B" },
-	{ "Ground Attack", "Send a ground attack to the tile under your cursor.", "G" },
-	{ "Retaliate", "Send a retaliation attack to blunt/negate the force of the most recent active attacker. Only available when you are being attacked.", "Shift + R" },
-	{ "Request Alliance", "Send an alliance request to the player whose tile is under your cursor.", "K" },
-	{ "Break Alliance (Betray)", "Break alliance with the player whose tile is under your cursor.", "L" },
-	{ "Decrease Attack Ratio", "Decrease attack ratio by 10%", "T" },
-	{ "Increase Attack Ratio", "Increase attack ratio by 10%", "Y" },
-	{ "Center Camera", "Center camera on player", "C" },
-	{ "Zoom Out", "Zoom out the map", "Q" },
-	{ "Zoom In", "Zoom in the map", "E" },
-	{ "Move Camera", "Move the camera", "W A S D" },
-}
+-- A small outlined button (audio Test, keybind Reset / Unbind).
+local function smallButton(parent: Instance, text: string, order: number?): TextButton
+	local b = MenuKit.button("gray", {
+		LayoutOrder = order or 0,
+		AutomaticSize = Enum.AutomaticSize.X,
+		Size = UDim2.fromOffset(0, 28),
+		TextSize = 13,
+		Text = text,
+		Parent = parent,
+	})
+	b.BackgroundTransparency = 0.95
+	b.BackgroundColor3 = C.WHITE
+	MenuKit.stroke(b, 0.9)
+	MenuKit.pad(b, 10, 10, 0, 0)
+	return b
+end
+
+local function playSound(name: string)
+	pcall(function()
+		require(script.Parent:WaitForChild("SoundKit")).play(name)
+	end)
+end
+
+-- Keybinds tab (UserSettingModal.renderKeybindSettings): one row per action, grouped in
+-- OpenFront's sections. Click the key to rebind (single key or Shift + key), Reset, Unbind.
+local rebinding: { action: string?, conn: RBXScriptConnection?, err: string? } = { action = nil, conn = nil, err = nil }
+
+local function stopRebinding()
+	if rebinding.conn then
+		rebinding.conn:Disconnect()
+	end
+	rebinding.action, rebinding.conn = nil, nil
+	local ok, KeybindData = pcall(require, script.Parent:WaitForChild("KeybindData"))
+	if ok then
+		task.defer(function()
+			KeybindData.capturing = rebinding.action ~= nil -- let this key press finish first
+		end)
+	end
+end
+
+local function keybindDesc(action: string): string
+	local KeybindData = require(script.Parent:WaitForChild("KeybindData"))
+	local d = KeybindData.INFO[action].desc
+	d = string.gsub(d, "{amount}", tostring(Settings.values.attackRatioIncrement or 10))
+	d = string.gsub(d, "{key}", KeybindData.label("resetGfx"))
+	return d
+end
+
+local function renderKeybinds(body: Instance, nextOrder: () -> number, rerender: () -> ())
+	local KeybindData = require(script.Parent:WaitForChild("KeybindData"))
+	MenuKit.paragraph(body, nextOrder(), "Click a key to rebind it. You can assign a single key or Shift + key combination.", { TextColor3 = C.WHITE, TextTransparency = 0.5 })
+	if rebinding.err then
+		MenuKit.paragraph(body, nextOrder(), rebinding.err, { TextColor3 = Color3.fromRGB(248, 113, 113) })
+	end
+	for _, section in KeybindData.SECTIONS do
+		MenuKit.paragraph(body, nextOrder(), section.title, { FontFace = F.BOLD, TextSize = 18, TextColor3 = C.WHITE })
+		for _, action in section.actions do
+			local info = KeybindData.INFO[action]
+			local card = make("Frame", { LayoutOrder = nextOrder(), BackgroundColor3 = C.WHITE, BackgroundTransparency = 0.95, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Parent = body })
+			MenuKit.corner(card, 12)
+			MenuKit.stroke(card, 0.9)
+			MenuKit.pad(card, 16, 16, 14, 14)
+			local col = make("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, -250, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Parent = card })
+			MenuKit.list(col, false, 4)
+			MenuKit.paragraph(col, 1, info.label, { FontFace = F.BOLD, TextSize = 16, TextColor3 = C.WHITE })
+			MenuKit.paragraph(col, 2, keybindDesc(action), { TextSize = 14, TextColor3 = C.WHITE, TextTransparency = 0.5 })
+			local right = make("Frame", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.fromScale(1, 0.5), Size = UDim2.fromOffset(240, 28), BackgroundTransparency = 1, Parent = card })
+			MenuKit.list(right, true, 6, { HorizontalAlignment = Enum.HorizontalAlignment.Right, VerticalAlignment = Enum.VerticalAlignment.Center })
+			local current = KeybindData.label(action)
+			local listening = rebinding.action == action
+			local key = MenuKit.keycap(right, if listening then "Press a key" elseif current == "" then "—" else current, 1)
+			local hit = make("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "", Parent = key })
+			if listening then
+				key.BackgroundColor3 = C.BLUE600
+			end
+			hit.Activated:Connect(function()
+				stopRebinding()
+				rebinding.err = nil
+				rebinding.action = action
+				KeybindData.capturing = true
+				rebinding.conn = UserInputService.InputBegan:Connect(function(input)
+					if input.UserInputType ~= Enum.UserInputType.Keyboard then
+						return
+					end
+					local k = input.KeyCode
+					if k == Enum.KeyCode.Escape then
+						stopRebinding()
+						rerender()
+						return
+					end
+					if (k == Enum.KeyCode.LeftShift or k == Enum.KeyCode.RightShift) and not KeybindData.MODIFIERS[action] then
+						return -- wait for the key that goes with Shift
+					end
+					local b = KeybindData.fromInput(input)
+					if not b then
+						return
+					end
+					stopRebinding()
+					local other = KeybindData.owner(b, action)
+					if other then
+						rebinding.err = "The key " .. KeybindData.keyName(b) .. " is already bound to another action."
+						rerender()
+						return
+					end
+					KeybindData.set(action, b)
+					rerender()
+				end)
+				rerender()
+			end)
+			local reset = smallButton(right, "Reset", 2)
+			reset.Activated:Connect(function()
+				stopRebinding()
+				rebinding.err = nil
+				KeybindData.reset(action)
+				rerender()
+			end)
+			local unbind = smallButton(right, "Unbind", 3)
+			unbind.Activated:Connect(function()
+				stopRebinding()
+				rebinding.err = nil
+				KeybindData.set(action, "Null")
+				rerender()
+			end)
+		end
+	end
+	local row = make("Frame", { LayoutOrder = nextOrder(), BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 40), Parent = body })
+	local all = smallButton(row, "Reset to defaults")
+	all.AnchorPoint = Vector2.new(1, 0.5)
+	all.Position = UDim2.new(1, 0, 0.5, 0)
+	all.Activated:Connect(function()
+		stopRebinding()
+		rebinding.err = nil
+		KeybindData.resetAll()
+		rerender()
+	end)
+end
 
 local function renderSettingsTab(page: any, tab: string)
 	page:clear()
@@ -111,19 +230,55 @@ local function renderSettingsTab(page: any, tab: string)
 		o += 1
 		return o
 	end
+	if tab ~= "keybinds" then
+		stopRebinding()
+		rebinding.err = nil
+	end
 	if tab == "gameplay" then
-		local g, s = boolSetter("boardOpen")
+		-- UserSettingModal.renderGameplaySettings order, then War Front's own HUD toggles.
+		local g, s = boolSetter("alertFrame")
+		MenuKit.toggleRow(body, nextOrder(), "Alert Frame", "Toggle the alert frame. When enabled, the frame will be displayed when you are betrayed or attacked over land.", g, s)
+		g, s = boolSetter("cursorCostLabel")
+		MenuKit.toggleRow(body, nextOrder(), "Cursor Build Cost", "Show a cost pill under the build cursor icon", g, s)
+		g, s = boolSetter("leftClickMenu")
+		MenuKit.toggleRow(body, nextOrder(), "Left Click to Open Menu", "When ON, left-click opens menu and sword button attacks. When OFF, left-click attacks directly.", g, s)
+		g, s = boolSetter("anonymousNames")
+		MenuKit.toggleRow(body, nextOrder(), "Hidden Names", "Hide real player names with random ones on your screen.", g, s)
+		g, s = boolSetter("hiddenLobbyIds")
+		MenuKit.toggleRow(body, nextOrder(), "Hidden Lobby IDs", "Hide Lobby ID in private lobby creation", g, s)
+		g, s = boolSetter("lobbyStartAlerts")
+		MenuKit.toggleRow(body, nextOrder(), "Lobby Start Alerts", "Play the start chime when your lobby or match starts.", g, s)
+		g, s = boolSetter("goToPlayer")
+		MenuKit.toggleRow(body, nextOrder(), "Go to player on start", "Toggle zooming in on the player in the beginning of a game.", g, s)
+		g, s = boolSetter("attackingTroopsOverlay")
+		MenuKit.toggleRow(body, nextOrder(), "Attacking Troops Overlay", "Show attacker vs defender troop counts on active front lines.", g, s)
+		local gn, sn = numSetter("attackRatio")
+		MenuKit.sliderRow(body, nextOrder(), "Attack Ratio", "What percentage of your troops to send in an attack (1–100%)", 1, 100, 1, gn, sn, percent)
+		MenuKit.selectRow(body, nextOrder(), "Attack Ratio Keybind Increment", "How much the attack ratio keybinds change per press/scroll.", { { 1, "1%" }, { 2, "2%" }, { 5, "5%" }, { 10, "10%" }, { 20, "20%" } }, function()
+			return tonumber(Settings.values.attackRatioIncrement) or 10
+		end, function(v)
+			Settings.set("attackRatioIncrement", v)
+		end)
+		gn, sn = numSetter("nukeAllySafety")
+		MenuKit.sliderRow(body, nextOrder(), "Ally friendly-fire safety", "Prevents accidental nuke strikes on newly formed allies.", 0, 30, 1, gn, sn, function(v)
+			local n = math.floor(v + 0.5)
+			if n == 0 then
+				return "Off"
+			end
+			return string.format("%d (%.1fs)", n, n / 10)
+		end)
+		g, s = boolSetter("boardOpen")
 		MenuKit.toggleRow(body, nextOrder(), "Leaderboard open by default", "Show the full leaderboard table instead of just its header.", g, s)
 		g, s = boolSetter("eventFeed")
 		MenuKit.toggleRow(body, nextOrder(), "Event feed", "Show the latest events, requests and Quick Chat messages on the right side of the screen.", g, s)
 		g, s = boolSetter("nameLabels")
 		MenuKit.toggleRow(body, nextOrder(), "Name labels", "Player names and troop counts over territories.", g, s)
-		g, s = boolSetter("attackingTroopsOverlay")
-		MenuKit.toggleRow(body, nextOrder(), "Attacking Troops Overlay", "Show attacker vs defender troop counts on active front lines.", g, s)
-		g, s = boolSetter("cursorCostLabel")
-		MenuKit.toggleRow(body, nextOrder(), "Cursor Build Cost", "Show a cost pill under the build cursor icon", g, s)
 	elseif tab == "graphics" then
-		local g, s = boolSetter("terrainShading")
+		local g, s = boolSetter("emojis")
+		MenuKit.toggleRow(body, nextOrder(), "Emojis", "Toggle whether emojis are shown in game", g, s)
+		g, s = boolSetter("perfOverlay")
+		MenuKit.toggleRow(body, nextOrder(), "Performance Overlay", "Toggle the performance overlay. When enabled, the performance overlay will be displayed. Press shift-D during game to toggle.", g, s)
+		g, s = boolSetter("terrainShading")
 		MenuKit.toggleRow(body, nextOrder(), "Terrain shading", "Coloured hills, beaches and deep water. Off: flat land and water.", g, s)
 		g, s = boolSetter("structureIcons")
 		MenuKit.toggleRow(body, nextOrder(), "Structure icons", "Cities, ports, silos and defences on the map.", g, s)
@@ -155,6 +310,20 @@ local function renderSettingsTab(page: any, tab: string)
 		refreshers[#refreshers + 1] = MenuKit.sliderRow(body, nextOrder(), "Interface", "Clicks, ticks and other menu sounds.", 0, 100, 5, gn, sn, percent)
 		local g, s = boolSetter("muted")
 		refreshers[#refreshers + 1] = MenuKit.toggleRow(body, nextOrder(), "Mute all", "Silence every sound.", g, s)
+		g, s = boolSetter("muteOnBlur")
+		refreshers[#refreshers + 1] = MenuKit.toggleRow(body, nextOrder(), "Mute when the window is not focused", "Silence the game while you are working in another window.", g, s)
+		g, s = boolSetter("alertsWhenUnfocused")
+		refreshers[#refreshers + 1] = MenuKit.toggleRow(body, nextOrder(), "Keep alerts audible when unfocused", "Let warnings and alliance requests still play while the game is muted in the background.", g, s)
+		-- AudioMixer.previewCue: build-city / nuke-warning / click.
+		local tests = make("Frame", { LayoutOrder = nextOrder(), BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 32), Parent = body })
+		MenuKit.list(tests, true, 8, { VerticalAlignment = Enum.VerticalAlignment.Center })
+		MenuKit.paragraph(tests, 0, "Test", { AutomaticSize = Enum.AutomaticSize.XY, Size = UDim2.fromOffset(0, 0), FontFace = F.BOLD, TextSize = 14, TextColor3 = C.WHITE })
+		for i, t in { { "Sound Effects", "build-city" }, { "Alerts", "nuke-warning" }, { "Interface", "click" } } do
+			local b = smallButton(tests, t[1], i)
+			b.Activated:Connect(function()
+				playSound(t[2])
+			end)
+		end
 		local row = make("Frame", { LayoutOrder = nextOrder(), BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 40), Parent = body })
 		local reset = MenuKit.button("gray", {
 			Name = "AudioReset",
@@ -183,20 +352,13 @@ local function renderSettingsTab(page: any, tab: string)
 			end
 		end)
 	elseif tab == "keybinds" then
-		MenuKit.paragraph(body, nextOrder(), "Default OpenFront keybinds. Rebinding is not available yet.", { TextColor3 = C.WHITE, TextTransparency = 0.5 })
-		for _, k in KEYBINDS do
-			local card = make("Frame", { LayoutOrder = nextOrder(), BackgroundColor3 = C.WHITE, BackgroundTransparency = 0.95, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Parent = body })
-			MenuKit.corner(card, 12)
-			MenuKit.stroke(card, 0.9)
-			MenuKit.pad(card, 16, 16, 14, 14)
-			local col = make("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, -120, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Parent = card })
-			MenuKit.list(col, false, 4)
-			MenuKit.paragraph(col, 1, k[1], { FontFace = F.BOLD, TextSize = 16, TextColor3 = C.WHITE })
-			MenuKit.paragraph(col, 2, k[2], { TextSize = 14, TextColor3 = C.WHITE, TextTransparency = 0.5 })
-			local key = MenuKit.keycap(card, k[3])
-			key.AnchorPoint = Vector2.new(1, 0.5)
-			key.Position = UDim2.fromScale(1, 0.5)
-		end
+		renderKeybinds(body, nextOrder, function()
+			local y = if body:IsA("ScrollingFrame") then body.CanvasPosition else nil
+			renderSettingsTab(page, "keybinds")
+			if y and body:IsA("ScrollingFrame") then
+				body.CanvasPosition = y
+			end
+		end)
 	end
 end
 
@@ -215,7 +377,9 @@ local function renderSettings(page: any)
 	end)
 end
 
+--------------------------------------------------------------------------------
 -- Help (HelpModal)
+--------------------------------------------------------------------------------
 local HOTKEYS = {
 	{ "Esc", "Closes menu. Cancels unit build preview." },
 	{ "Space (hold)", "Alternate view" },
@@ -231,6 +395,14 @@ local HOTKEYS = {
 	{ "W A S D", "Move camera" },
 	{ "T / Y", "Decrease/Increase attack ratio" },
 	{ "Shift + Wheel", "Decrease/Increase attack ratio" },
+	{ "Ctrl + Click", "Open the build menu" },
+	{ "Alt + Click", "Open the emoji menu" },
+	{ "Shift + Drag", "Select multiple warships" },
+	{ "F", "Select all of your warships" },
+	{ "U", "Swap rocket direction (up/down)" },
+	{ "P", "Pause or resume (single player)" },
+	{ ", / .", "Game speed down/up (single player)" },
+	{ "Shift + D", "Performance overlay" },
 }
 
 local PAD_KEYS = {
@@ -411,7 +583,9 @@ local function renderHelp(page: any, ctx: any)
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Release notes (NewsModal renders changelog.md: h1 / h2 / bullets)
+--------------------------------------------------------------------------------
 local CHANGELOG = {
 	{ "h1", "War Front Changelog" },
 	{ "p", "War Front is a Roblox port of OpenFront. These notes list what has been ported so far." },
@@ -449,7 +623,9 @@ local function renderNews(page: any)
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Language (LanguageModal: grid of flag + native + English name; English only here)
+--------------------------------------------------------------------------------
 local function renderLanguage(page: any, ctx: any)
 	page:setTabs({})
 	page:clear()
@@ -475,7 +651,9 @@ local function renderLanguage(page: any, ctx: any)
 	MenuKit.paragraph(page.body, 2, "More languages coming soon.", { TextColor3 = C.WHITE, TextTransparency = 0.6 })
 end
 
+--------------------------------------------------------------------------------
 -- Player profile (PlayerProfileModal: tabs Stats / Games / Clans)
+--------------------------------------------------------------------------------
 local function statCard(parent: Instance, order: number, label: string, value: string)
 	local c = make("Frame", { LayoutOrder = order, BackgroundColor3 = C.WHITE, BackgroundTransparency = 0.95, BorderSizePixel = 0, Parent = parent })
 	MenuKit.corner(c, 12)
@@ -531,8 +709,54 @@ local function renderProfileTab(page: any, ctx: any, tab: string)
 		for i, r in rows do
 			statCard(grid, i, r[1], r[2])
 		end
+	elseif tab == "games" then
+		-- Game history (account modal "Games"): newest first; a row opens that game's stats.
+		local loading = MenuKit.paragraph(body, 2, "Loading games...", { TextXAlignment = Enum.TextXAlignment.Center, TextColor3 = C.WHITE, TextTransparency = 0.6 })
+		task.spawn(function()
+			local ok, success, list = pcall(function()
+				return Shared:WaitForChild("MetaFn"):InvokeServer("history")
+			end)
+			if not loading.Parent then
+				return
+			end
+			if not (ok and success and type(list) == "table") or #list == 0 then
+				loading.Text = if ok and success then "No games yet. Finished games show up here with their stats." else "Couldn't load your games. Try again in a moment."
+				return
+			end
+			loading:Destroy()
+			local GameStatsView = require(script.Parent:WaitForChild("GameStatsView"))
+			for i = #list, 1, -1 do
+				local g = list[i]
+				local row = make("TextButton", { LayoutOrder = 3 + (#list - i), Text = "", AutoButtonColor = false, BackgroundColor3 = C.WHITE, BackgroundTransparency = 0.95, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 60), Parent = body })
+				MenuKit.corner(row, 12)
+				local st = MenuKit.stroke(row, 0.9)
+				MenuKit.hover(row, function(s)
+					row.BackgroundTransparency = if s == "idle" then 0.95 else 0.9
+					st.Transparency = if s == "idle" then 0.9 else 0.7
+				end)
+				local won = g.won == true
+				local badge = MenuKit.text({ AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 12, 0.5, 0), Size = UDim2.fromOffset(64, 36), BackgroundTransparency = 0, BackgroundColor3 = if won then C.CYBER else C.GRAY700, FontFace = F.BOLD, TextSize = 14, TextColor3 = if won then C.BLACK else C.WHITE, Text = if won then "WIN" else (if tonumber(g.place) then GameStatsView.ordinal(g.place) else "-"), Parent = row })
+				MenuKit.corner(badge, 8)
+				MenuKit.text({ Position = UDim2.fromOffset(88, 10), Size = UDim2.new(1, -180, 0, 20), FontFace = F.BOLD, TextSize = 15, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Text = tostring(g.map or "?") .. "  ·  " .. tostring(g.mode or ""), Parent = row })
+				local age = os.time() - (tonumber(g.t) or os.time())
+				local when = if age < 3600 then math.max(1, age // 60) .. " min ago" elseif age < 86400 then age // 3600 .. " h ago" else age // 86400 .. " d ago"
+				MenuKit.text({ Position = UDim2.fromOffset(88, 32), Size = UDim2.new(1, -180, 0, 16), TextSize = 12, TextTransparency = 0.5, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Text = table.concat({ GameStatsView.KIND_NAMES[g.kind] or tostring(g.kind or ""), (tonumber(g.players) or 0) .. " players", GameStatsView.duration(g.secs), when }, "  ·  "), Parent = row })
+				if tonumber(g.elo) then
+					local d = tonumber(g.elo)
+					MenuKit.text({ AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -16, 0.5, 0), Size = UDim2.fromOffset(80, 20), FontFace = F.BOLD, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Right, TextColor3 = if d >= 0 then C.EMERALD300 else C.RED400, Text = (if d >= 0 then "+" else "") .. d .. " ELO", Parent = row })
+				else
+					MenuKit.text({ AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -16, 0.5, 0), Size = UDim2.fromOffset(80, 20), FontFace = F.BOLD, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Right, TextColor3 = C.AQUARIUS, Text = "Stats ›", Parent = row })
+				end
+				row.Activated:Connect(function()
+					local gui = row:FindFirstAncestorWhichIsA("LayerCollector")
+					if gui then
+						GameStatsView.open(gui, g.stats, g)
+					end
+				end)
+			end
+		end)
 	else
-		MenuKit.comingSoon(body, 2, if tab == "games" then "PlayTri" else "People", if tab == "games" then "Game history needs OpenFront's account servers." else "Clans need OpenFront's account servers.")
+		MenuKit.comingSoon(body, 2, "People", "Clans are coming soon.")
 	end
 end
 
@@ -546,7 +770,9 @@ local function renderProfile(page: any, ctx: any)
 	end)
 end
 
+--------------------------------------------------------------------------------
 -- Inventory (skins / territory patterns, flags, crowns, effects): locked, coming soon
+--------------------------------------------------------------------------------
 local function lockedTile(parent: Instance, order: number, fill: (Frame) -> ())
 	local t = make("TextButton", { LayoutOrder = order, Text = "", AutoButtonColor = false, BackgroundColor3 = C.SURFACE, BorderSizePixel = 0, Parent = parent })
 	MenuKit.corner(t, 12)
@@ -633,10 +859,12 @@ local function renderInventory(page: any, ctx: any)
 	end)
 end
 
+--------------------------------------------------------------------------------
 -- Store (Store.ts layout: modalHeader with the currency on the right, tab strip, grid of
 -- cosmetic cards with a full-width action; owned = emerald status box). Our store sells
 -- territory colours for coins, passes and coin packs (MetaConfig); purchases go through
 -- Shared.MetaFn like MetaClient did.
+--------------------------------------------------------------------------------
 local MarketplaceService = game:GetService("MarketplaceService")
 local MetaConfig = require(Shared:WaitForChild("MetaConfig"))
 local metaFn = Shared:WaitForChild("MetaFn")
@@ -652,6 +880,45 @@ local function refreshStores()
 			renderStoreTab(page, page.active)
 		end
 	end
+end
+
+-- Robux price and icon of a pass / developer product (MarketplaceService:GetProductInfo), fetched
+-- once; the store re-renders when it arrives. nil until then (or if the lookup failed).
+local marketCache: { [string]: any } = {}
+local function marketInfo(isPass: boolean, id: number): any?
+	local k = (if isPass then "pass" else "prod") .. id
+	local v = marketCache[k]
+	if v == nil then
+		marketCache[k] = false
+		task.spawn(function()
+			local ok, info = pcall(function()
+				return MarketplaceService:GetProductInfo(id, if isPass then Enum.InfoType.GamePass else Enum.InfoType.Product)
+			end)
+			if ok and type(info) == "table" then
+				marketCache[k] = info
+				refreshStores()
+			end
+		end)
+	end
+	return v or nil
+end
+
+local function robuxText(info: any?): string
+	local price = info and tonumber(info.PriceInRobux)
+	return if price then "R$ " .. tostring(price) else "Buy"
+end
+
+-- The icon uploaded with the pass / product on the Creator Hub, if there is one.
+local function marketIcon(art: Instance, info: any?): boolean
+	local icon = info and tonumber(info.IconImageAssetId)
+	-- 133448903949274 / 88963008124478 = Roblox's "Pass / Developer Product Default Thumbnail".
+	if not icon or icon == 0 or icon == 133448903949274 or icon == 88963008124478 then
+		return false
+	end
+	local img = make("ImageLabel", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.4), Size = UDim2.fromScale(0.66, 0.66), BackgroundTransparency = 1, Image = "rbxassetid://" .. icon, ScaleType = Enum.ScaleType.Fit, Parent = art })
+	make("UIAspectRatioConstraint", { Parent = img })
+	MenuKit.round(img)
+	return true
 end
 metaEvent.OnClientEvent:Connect(function(kind: string, data: any)
 	if kind == "profile" and type(data) == "table" then
@@ -825,31 +1092,75 @@ renderStoreTab = function(page: any, tab: string)
 			end
 		end
 	elseif tab == "passes" then
-		local passes = {
-			{ id = MetaConfig.GAMEPASS.VIP, name = "VIP", desc = "1.5x XP and coins, VIP tag on the leaderboard", owned = p.vip, icon = "User" },
-			{ id = MetaConfig.GAMEPASS.AllColors, name = "All Colours", desc = "Unlock every territory colour", owned = p.allColors, icon = "Layout" },
-		}
-		local any = false
-		local grid = storeGrid(body, 2, 240)
-		for i, pass in passes do
-			if pass.id ~= 0 then
-				any = true
-				local card = storeCard(grid, i, pass.name, function(art)
-					MenuKit.icon(pass.icon, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.4), Size = UDim2.fromOffset(36, 36), ImageColor3 = C.AQUARIUS, Parent = art })
-					MenuKit.paragraph(art, 0, pass.desc, { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -6), Size = UDim2.new(1, -12, 0, 0), TextSize = 12, TextXAlignment = Enum.TextXAlignment.Center, TextColor3 = C.WHITE, TextTransparency = 0.4 })
-				end)
-				if pass.owned then
-					cardAction(card, "Owned", "owned")
-				else
-					cardAction(card, "Buy", "primary", function()
-						MarketplaceService:PromptGamePassPurchase(localPlayer, pass.id)
+		local function passGrid(order: number, list: { any })
+			local grid = storeGrid(body, order, 240)
+			for i, pass in list do
+				if pass.id ~= 0 then
+					local info = marketInfo(true, pass.id)
+					local card = storeCard(grid, i, pass.name, function(art)
+						if not marketIcon(art, info) then
+							if pass.gameIcon then
+								IconKit.image(pass.gameIcon, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.4), Size = UDim2.fromOffset(44, 44), Parent = art })
+							else
+								MenuKit.icon(pass.icon, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.4), Size = UDim2.fromOffset(36, 36), ImageColor3 = C.AQUARIUS, Parent = art })
+							end
+						end
+						MenuKit.paragraph(art, 0, pass.desc, { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -6), Size = UDim2.new(1, -12, 0, 0), TextSize = 12, TextXAlignment = Enum.TextXAlignment.Center, TextColor3 = C.WHITE, TextTransparency = 0.4 })
 					end)
+					if pass.owned then
+						cardAction(card, "Owned", "owned")
+					else
+						cardAction(card, robuxText(info), "primary", function()
+							MarketplaceService:PromptGamePassPurchase(localPlayer, pass.id)
+						end)
+					end
 				end
 			end
 		end
-		if not any then
-			grid:Destroy()
-			MenuKit.comingSoon(body, 3, "Layout")
+		passGrid(2, {
+			{ id = MetaConfig.GAMEPASS.VIP, name = "VIP", desc = "1.5x XP and coins, VIP tag on the leaderboard", owned = p.vip, icon = "User" },
+			{ id = MetaConfig.GAMEPASS.AllColors, name = "All Colours", desc = "Unlock every territory colour", owned = p.allColors, icon = "Layout" },
+		})
+		MenuKit.paragraph(body, 3, "Gameplay perks: work in solo, private and public games, never in ranked.", { FontFace = F.BOLD, TextColor3 = C.WHITE, TextTransparency = 0.3 })
+		local perks = {}
+		local ownedPerks = if type(p.perks) == "table" then p.perks else {}
+		for _, perk in MetaConfig.PERKS do
+			perks[#perks + 1] = { id = perk.id, name = perk.name, desc = perk.desc, owned = ownedPerks[perk.key] == true, gameIcon = perk.icon }
+		end
+		passGrid(4, perks)
+	elseif tab == "boosts" then
+		MenuKit.paragraph(body, 1, "One-use boosts for a match. Use them from the Boosts button at the top right during a game: each once per match, from " .. MetaConfig.BOOST_DELAY .. " s after the spawn phase, never in ranked.", { TextColor3 = C.WHITE, TextTransparency = 0.5 })
+		local grid = storeGrid(body, 2, 270)
+		local owned = if type(p.boosts) == "table" then p.boosts else {}
+		for i, b in MetaConfig.BOOSTS do
+			local info = if b.id ~= 0 then marketInfo(false, b.id) else nil
+			local n = tonumber(owned[b.key]) or 0
+			local card = storeCard(grid, i, b.name .. (if n > 0 then "  ·  x" .. n else ""), function(art)
+				if not marketIcon(art, info) then
+					IconKit.image(b.icon or "Gold", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.4), Size = UDim2.fromOffset(44, 44), Parent = art })
+				end
+				MenuKit.paragraph(art, 0, b.desc, { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -6), Size = UDim2.new(1, -12, 0, 0), TextSize = 12, TextXAlignment = Enum.TextXAlignment.Center, TextColor3 = C.WHITE, TextTransparency = 0.4 })
+			end)
+			local afford = (tonumber(p.coins) or 0) >= b.coins
+			local coinBtn = cardAction(card, numberText(b.coins) .. " coins", if afford then "primary" else "gray", function()
+				if afford then
+					storeInvoke(page, "buyBoost", b.key)
+				else
+					storeStatus(page, "Not enough coins.")
+				end
+			end)
+			coinBtn.Size = UDim2.new(1, 0, 0, 32)
+			if b.id ~= 0 then
+				local robux = cardAction(card, robuxText(info), "primary", function()
+					if not p.saving then
+						storeStatus(page, "Purchases are paused: your progress can't be saved right now.")
+						return
+					end
+					MarketplaceService:PromptProductPurchase(localPlayer, b.id)
+				end)
+				robux.Size = UDim2.new(1, 0, 0, 32)
+				robux.LayoutOrder = 10
+			end
 		end
 	else
 		local grid = storeGrid(body, 2, 200)
@@ -857,10 +1168,14 @@ renderStoreTab = function(page: any, tab: string)
 		for i, prod in MetaConfig.PRODUCTS do
 			if prod.id ~= 0 then
 				any = true
+				local info = marketInfo(false, prod.id)
 				local card = storeCard(grid, i, prod.label, function(art)
+					if marketIcon(art, info) then
+						return
+					end
 					MenuKit.text({ AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromScale(1, 0.5), FontFace = F.BOLD, TextSize = 26, TextColor3 = C.CYBER, Text = numberText(prod.coins), Parent = art })
 				end)
-				cardAction(card, "Buy", "primary", function()
+				cardAction(card, robuxText(info), "primary", function()
 					if not p.saving then
 						storeStatus(page, "Purchases are paused: your progress can't be saved right now.")
 						return
@@ -874,7 +1189,7 @@ renderStoreTab = function(page: any, tab: string)
 			MenuKit.comingSoon(body, 3, "Layout")
 		end
 	end
-	MenuKit.paragraph(body, 20, "Everything here is cosmetic or a progress boost - nothing gives an advantage inside a match.", { TextSize = 12, TextXAlignment = Enum.TextXAlignment.Center, TextColor3 = C.WHITE, TextTransparency = 0.6 })
+	MenuKit.paragraph(body, 20, if tab == "colours" or tab == "coins" then "Colours are cosmetic. Coins buy colours and boosts." else "Perks and boosts never work in ranked games.", { TextSize = 12, TextXAlignment = Enum.TextXAlignment.Center, TextColor3 = C.WHITE, TextTransparency = 0.6 })
 end
 
 local function renderStore(page: any)
@@ -901,6 +1216,7 @@ local function renderStore(page: any)
 	page:setTabs({
 		{ key = "colours", label = "Colours" },
 		{ key = "passes", label = "Passes" },
+		{ key = "boosts", label = "Boosts" },
 		{ key = "coins", label = "Coins" },
 	}, "colours", function(key)
 		page.storeMsg = ""
@@ -908,6 +1224,180 @@ local function renderStore(page: any)
 	end)
 end
 
+--------------------------------------------------------------------------------
+-- Leaderboard (LeaderboardModal): 1v1 Ranked by ELO, and most wins. The server keeps the top 100
+-- of each in a DataStore (Progression lbUpdate) and refreshes its copy every minute.
+--------------------------------------------------------------------------------
+local function renderLeaderboardTab(page: any, board: string)
+	page:clear()
+	local body = page.body
+	local youCard = MenuKit.card(body, 1, 16, 12, 4)
+	local youText = MenuKit.paragraph(youCard, 1, "Your Ranking: ...", { FontFace = F.BOLD, TextSize = 16 }) -- leaderboard_modal.your_ranking
+	MenuKit.paragraph(body, 2, "Refreshed every minute", { TextSize = 12, TextTransparency = 0.6 })
+	local cols = if board == "elo" then { "Rank", "Player", "ELO", "Games", "Win/Loss" } else { "Rank", "Player", "Wins", "Games", "Win rate" }
+	local widths = { 0.1, 0.42, 0.16, 0.14, 0.18 }
+	local function rowFrame(order: number, values: { string }, header: boolean, mine: boolean?)
+		local r = make("Frame", { LayoutOrder = order, BackgroundColor3 = if mine then C.MALIBU else C.WHITE, BackgroundTransparency = if header then 1 elseif mine then 0.75 else 0.96, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, if header then 28 else 40), Parent = body })
+		MenuKit.corner(r, 8)
+		local x = 0
+		for i, v in values do
+			MenuKit.text({ Position = UDim2.new(x, 12, 0, 0), Size = UDim2.new(widths[i], -12, 1, 0), FontFace = if header or i == 2 then F.BOLD else F.MEDIUM, TextSize = if header then 11 else 14, TextTransparency = if header then 0.5 else 0, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Text = if header then string.upper(v) else v, Parent = r })
+			x += widths[i]
+		end
+	end
+	rowFrame(3, cols, true)
+	local loading = MenuKit.paragraph(body, 4, "Loading leaderboard...", { TextXAlignment = Enum.TextXAlignment.Center, TextTransparency = 0.6 })
+	task.spawn(function()
+		local ok, success, data = pcall(function()
+			return Shared:WaitForChild("MetaFn"):InvokeServer("leaderboard", board)
+		end)
+		if not loading.Parent then
+			return
+		end
+		if not (ok and success and type(data) == "table") then
+			loading.Text = "Error loading leaderboard" -- leaderboard_modal.error
+			return
+		end
+		local list = data.list or {}
+		local you = data.you or {}
+		local function ratio(e): string
+			local g, w = tonumber(e.g) or 0, tonumber(e.w) or 0
+			if board == "elo" then
+				local l = g - w
+				return if l > 0 then string.format("%.2f", w / l) elseif w > 0 then tostring(w) .. ".00" else "-"
+			end
+			return if g > 0 then string.format("%.0f%%", w / g * 100) else "-"
+		end
+		if you.rank then
+			youText.Text = "Your Ranking: #" .. you.rank .. "  ·  " .. (if board == "elo" then "ELO " else "Wins ") .. numberText(you.v)
+		elseif you.v then
+			youText.Text = "Your Ranking: not in the top 100  ·  " .. (if board == "elo" then "ELO " else "Wins ") .. numberText(you.v)
+		else
+			youText.Text = if board == "elo" then "Your Ranking: play a 1v1 Ranked game to get an ELO" else "Your Ranking: win a game to get on this board"
+		end
+		if #list == 0 then
+			loading.Text = if board == "elo" then "No ranked games have been played on this ladder yet" else "No Data Yet"
+			return
+		end
+		loading:Destroy()
+		for i, e in list do
+			rowFrame(4 + i, { "#" .. i, tostring(e.n or "?"), numberText(e.v), numberText(e.g), ratio(e) }, false, e.u == localPlayer.UserId)
+		end
+	end)
+end
+
+local function renderLeaderboard(page: any)
+	page:setTabs({
+		{ key = "elo", label = "1v1 Ranked" }, -- leaderboard_modal.ranked_tab
+		{ key = "wins", label = "Most Wins" },
+	}, "elo", function(key)
+		renderLeaderboardTab(page, key)
+	end)
+end
+
+--------------------------------------------------------------------------------
+-- Friends (FriendsList): your Roblox friends, who is online and where; join a friend in the
+-- lobby, invite friends. In team games friends are placed on the same team (Teams.assign).
+--------------------------------------------------------------------------------
+local function renderFriends(page: any)
+	page:setTabs({})
+	page:clear()
+	local body = page.body
+	local top = make("Frame", { LayoutOrder = 1, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 44), Parent = body })
+	local invite = MenuKit.button("primary", { Size = UDim2.new(0, 200, 1, 0), FontFace = F.BOLD, Text = "INVITE FRIENDS", Parent = top })
+	invite.Activated:Connect(function()
+		pcall(function()
+			local SocialService = game:GetService("SocialService")
+			if SocialService:CanSendGameInviteAsync(localPlayer) then
+				SocialService:PromptGameInvite(localPlayer)
+			end
+		end)
+	end)
+	MenuKit.paragraph(body, 2, "Friends are placed on the same team.", { TextSize = 14, TextTransparency = 0.4 }) -- friends.team_info
+	MenuKit.heading(body, 3, "People", "Online")
+	local onlineList = make("Frame", { LayoutOrder = 4, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Parent = body })
+	MenuKit.list(onlineList, false, 8)
+	local onlineNote = MenuKit.paragraph(onlineList, 0, "Loading...", { TextSize = 14, TextTransparency = 0.6 })
+	MenuKit.heading(body, 5, nil, "Your Friends") -- friends.your_friends
+	local allList = make("Frame", { LayoutOrder = 6, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Parent = body })
+	local grid = make("UIGridLayout", { CellSize = UDim2.new(0.5, -4, 0, 48), CellPadding = UDim2.fromOffset(8, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = allList })
+	allList:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+		grid.CellSize = UDim2.new(if allList.AbsoluteSize.X < 520 then 1 else 0.5, -4, 0, 48)
+	end)
+	local function friendRow(parent: Instance, order: number, userId: number, name: string, sub: string?, dim: boolean?): Frame
+		local r = make("Frame", { LayoutOrder = order, BackgroundColor3 = C.WHITE, BackgroundTransparency = 0.95, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 48), Parent = parent })
+		MenuKit.corner(r, 10)
+		MenuKit.stroke(r, 0.9)
+		local av = make("ImageLabel", { Position = UDim2.fromOffset(8, 6), Size = UDim2.fromOffset(36, 36), BackgroundColor3 = C.WHITE, BackgroundTransparency = 0.9, Image = "rbxthumb://type=AvatarHeadShot&id=" .. userId .. "&w=48&h=48", ImageTransparency = if dim then 0.5 else 0, Parent = r })
+		MenuKit.round(av)
+		MenuKit.text({ Position = UDim2.fromOffset(54, if sub then 6 else 0), Size = UDim2.new(1, -150, 0, if sub then 20 else 48), FontFace = F.BOLD, TextSize = 14, TextTransparency = if dim then 0.5 else 0, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Text = name, Parent = r })
+		if sub then
+			MenuKit.text({ Position = UDim2.fromOffset(54, 26), Size = UDim2.new(1, -150, 0, 16), TextSize = 12, TextTransparency = 0.4, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Text = sub, Parent = r })
+		end
+		return r
+	end
+	task.spawn(function()
+		local okOnline, online = pcall(function()
+			return localPlayer:GetFriendsOnline(200)
+		end)
+		if not onlineNote.Parent then
+			return
+		end
+		local count = 0
+		local onlineIds = {} -- GetFriendsAsync's IsOnline lags; GetFriendsOnline is the live list
+		if okOnline and type(online) == "table" then
+			for _, f in online do
+				onlineIds[f.VisitorId] = true
+			end
+			local matchPlace = tonumber(require(Shared:WaitForChild("Config")).MATCH_PLACE_ID) or 0
+			for i, f in online do
+				local here = f.PlaceId == game.PlaceId and f.GameId ~= nil
+				local inMatch = matchPlace ~= 0 and f.PlaceId == matchPlace
+				local status = if here then "Playing War Front" elseif inMatch then "In a War Front match" else (f.LastLocation or "Online")
+				local r = friendRow(onlineList, i, f.VisitorId, f.DisplayName or f.UserName or "?", status)
+				count += 1
+				if here and f.GameId ~= game.JobId then
+					local join = MenuKit.button("primary", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0), Size = UDim2.fromOffset(80, 32), FontFace = F.BOLD, TextSize = 13, Text = "JOIN", Parent = r })
+					local placeId, jobId = f.PlaceId, f.GameId
+					join.Activated:Connect(function()
+						join.Text = "..."
+						pcall(function()
+							game:GetService("TeleportService"):TeleportToPlaceInstance(placeId, jobId, localPlayer)
+						end)
+					end)
+				elseif here then
+					MenuKit.text({ AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(100, 20), FontFace = F.BOLD, TextSize = 12, TextColor3 = C.EMERALD300, TextXAlignment = Enum.TextXAlignment.Right, Text = "In this server", Parent = r })
+				end
+			end
+		end
+		onlineNote.Text = if count == 0 then "None of your friends are online right now." else ""
+		onlineNote.Visible = count == 0
+		-- Everyone (Players:GetFriendsAsync), first 100.
+		local okAll, pages = pcall(function()
+			return Players:GetFriendsAsync(localPlayer.UserId)
+		end)
+		local n = 0
+		if okAll and pages then
+			for _ = 1, 2 do
+				for _, f in pages:GetCurrentPage() do
+					n += 1
+					local on = onlineIds[f.Id] == true
+					friendRow(allList, if on then n else n + 1000, f.Id, f.DisplayName or f.Username or "?", if on then "Online" else "Offline", not on)
+				end
+				if pages.IsFinished or not pcall(function()
+					pages:AdvanceToNextPageAsync()
+				end) then
+					break
+				end
+			end
+		end
+		if n == 0 then
+			MenuKit.paragraph(allList, 1, "You haven't added any friends yet.", { TextSize = 14, TextTransparency = 0.6 }) -- friends.no_friends
+		end
+	end)
+end
+
+--------------------------------------------------------------------------------
 function MenuPages.render(kind: string, page: any, ctx: any)
 	page.title.Text = string.upper(MenuPages.TITLES[kind] or kind)
 	page.storeShowing = kind == "store"
@@ -929,6 +1419,10 @@ function MenuPages.render(kind: string, page: any, ctx: any)
 		renderProfile(page, ctx)
 	elseif kind == "inventory" then
 		renderInventory(page, ctx)
+	elseif kind == "leaderboard" then
+		renderLeaderboard(page)
+	elseif kind == "friends" then
+		renderFriends(page)
 	else
 		page:setTabs({})
 		page:clear()

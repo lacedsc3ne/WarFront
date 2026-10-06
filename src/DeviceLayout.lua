@@ -6,6 +6,7 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.DeviceLayout (ModuleScript), used by GameClient and MetaClient.
+--
 -- DeviceLayout.state (live, shared by every client script):
 --   input   "KeyboardMouse" | "Touch" | "Gamepad"   (last input actually used)
 --   size    "Phone" | "Tablet" | "Desktop"           (from the screen size)
@@ -184,7 +185,9 @@ probe:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
 	recompute(false)
 end)
 
+--------------------------------------------------------------------------------
 -- Helpers
+--------------------------------------------------------------------------------
 function DeviceLayout.usingGamepad(): boolean
 	return state.input == "Gamepad"
 end
@@ -271,7 +274,9 @@ function DeviceLayout.attachScreenGui(gui: ScreenGui)
 	DeviceLayout.Changed:Connect(apply)
 end
 
+--------------------------------------------------------------------------------
 -- In-match HUD layout (GameClient's FrontlinesUI)
+--------------------------------------------------------------------------------
 local FONT = Font.fromEnum(Enum.Font.GothamMedium)
 local FONT_BOLD = Font.fromEnum(Enum.Font.GothamBold)
 local PANEL = Color3.fromRGB(10, 22, 40)

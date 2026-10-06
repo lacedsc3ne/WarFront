@@ -11,12 +11,14 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.UnitFx (ModuleScript), used by GameClient.
+--
 -- UnitFx.init(ctx)    ctx = { unitLayer, fxLayer, roster, getMyId(), isAlly(id), mapSize() -> W, H,
 --                             markTile(t), map }
 -- UnitFx.setMap(map)  new map: rail buffers are rebuilt and handed to MapRender.setRails
 -- UnitFx.reset()      new round: drops rails, trains, warheads, missiles
 -- UnitFx.handle(kind, data) -> boolean   "rails", "trains", "warheads", "warheadEnd", "samMissile"
 -- UnitFx.step(serverTime, zoom)          every frame
+--
 -- Rails are painted into the map image by MapRender (one of our tiles = 3 x 3 pixels, which is
 -- exactly OpenFront's detailed 3 x 3 rail sprite). OpenFront hides rails below zoom 3 and fades
 -- them in; our map image is static, so they are always drawn.
@@ -67,8 +69,10 @@ local function scalePos(x: number, y: number): UDim2
 	return UDim2.fromScale(x / W, y / H)
 end
 
+--------------------------------------------------------------------------------
 -- Rails (RailroadPass orientation codes + 1: 1 vertical, 2 horizontal, 3 top-left, 4 top-right,
 -- 5 bottom-left, 6 bottom-right)
+--------------------------------------------------------------------------------
 local VERTICAL, HORIZONTAL, TOP_LEFT, TOP_RIGHT, BOTTOM_LEFT, BOTTOM_RIGHT = 0, 1, 2, 3, 4, 5
 
 local function railExtremity(tile: number, nxt: number): number
@@ -247,7 +251,9 @@ local function clearRails()
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Trains
+--------------------------------------------------------------------------------
 local function destroyTrain(id: number)
 	local tr = trains[id]
 	if tr then
@@ -292,7 +298,9 @@ local function pathPos(tr, d: number): (number, number)
 	return ax + (bx - ax) * f, ay + (by - ay) * f
 end
 
+--------------------------------------------------------------------------------
 -- MIRV warheads and SAM missiles
+--------------------------------------------------------------------------------
 local function relationColor(owner: number): Color3
 	local me = ctx.getMyId()
 	if me ~= 0 and owner == me then
@@ -395,7 +403,9 @@ local function addMissile(d)
 	}
 end
 
+--------------------------------------------------------------------------------
 -- Public API
+--------------------------------------------------------------------------------
 function UnitFx.handle(kind: string, data: any): boolean
 	if kind == "rails" then
 		if data.reset then

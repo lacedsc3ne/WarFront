@@ -63,6 +63,23 @@ function TribeNames.picker(folder: string?, rng: Random): () -> string
 	end
 end
 
+-- createRandomName (Util.ts, "Hidden Names" setting): a stable fake name for a human player,
+-- "👤 <prefix> <suffix>" from the default theme, picked by simpleHash(name).
+function TribeNames.anonymous(name: string): string
+	local hash = 0
+	for _, c in utf8.codes(name) do
+		hash = (hash * 31 + c) % 4294967296
+	end
+	if hash >= 2147483648 then
+		hash -= 4294967296 -- 32-bit signed, like JS
+	end
+	hash = math.abs(hash)
+	local prefixes, suffixes = THEMES.default.prefixes, THEMES.default.suffixes
+	local p = hash % #prefixes
+	local s = (hash // #prefixes) % #suffixes
+	return "👤 " .. prefixes[p + 1] .. " " .. suffixes[s + 1]
+end
+
 return TribeNames
 ''')
 open('/home/claude/frontlines/rules_flow/TribeNames.lua','w').write('\n'.join(L))

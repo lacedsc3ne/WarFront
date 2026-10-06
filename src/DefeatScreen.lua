@@ -6,6 +6,7 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.DefeatScreen (ModuleScript), set up by GameClient.
+--
 -- Listens on Shared.Net for "defeated", "revived", "reviveDenied", "shields", "init", "me",
 -- "phase" and sends "revive" / "newCountry" / "leave" (see ServerScriptService.Revive).
 -- EXIT GAME fires PlayerGui.FrontlinesMenuShow (BindableEvent; MainMenu listens and shows itself).
@@ -83,7 +84,9 @@ local function short(n: number): string
 	return tostring(math.floor(n))
 end
 
+--------------------------------------------------------------------------------
 -- State
+--------------------------------------------------------------------------------
 local net: RemoteEvent
 local focusTile: ((number) -> ())? = nil
 local myId = 0
@@ -92,7 +95,9 @@ local mode = "hidden" -- hidden | panel | watching
 local shields: { [number]: number } = {} -- player id -> server time the shield ends
 local busy = false -- request sent, waiting for the server
 
+--------------------------------------------------------------------------------
 -- GUI
+--------------------------------------------------------------------------------
 local gui = make("ScreenGui", {
 	Name = "FrontlinesDefeat",
 	IgnoreGuiInset = true,
@@ -290,28 +295,37 @@ stroke(pill, C.WHITE, 1, 0.9)
 make("UIPadding", { PaddingLeft = UDim.new(0, 18), PaddingRight = UDim.new(0, 18), Parent = pill })
 
 -- Own spawn shield countdown (top centre, under the banner).
-local shieldPill = make("TextLabel", {
+-- Shield badge: shield icon, "Protected" + countdown, and a bar that drains as it runs out.
+local SKY = Color3.fromRGB(125, 211, 252) -- sky-300
+local shieldPill = make("Frame", {
 	AnchorPoint = Vector2.new(0.5, 0),
 	Position = UDim2.new(0.5, 0, 0, 92),
-	Size = UDim2.fromOffset(0, 30),
+	Size = UDim2.fromOffset(0, 36),
 	AutomaticSize = Enum.AutomaticSize.X,
 	BackgroundColor3 = C.NAVY,
-	BackgroundTransparency = 0.12,
+	BackgroundTransparency = 0.08,
 	BorderSizePixel = 0,
-	FontFace = FONT_BOLD,
-	Text = "",
-	TextColor3 = C.YELLOW,
-	TextSize = 14,
+	ClipsDescendants = true,
 	Visible = false,
 	Parent = gui,
 })
 corner(shieldPill, 8)
-stroke(shieldPill, C.YELLOW, 1.2, 0.4)
-make("UIPadding", { PaddingLeft = UDim.new(0, 14), PaddingRight = UDim.new(0, 14), Parent = shieldPill })
+stroke(shieldPill, SKY, 1, 0.5)
+local shieldRow = make("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(0, 36), AutomaticSize = Enum.AutomaticSize.X, Parent = shieldPill })
+make("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 12), Parent = shieldRow })
+make("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, VerticalAlignment = Enum.VerticalAlignment.Center, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 8), Parent = shieldRow })
+require(script.Parent:WaitForChild("IconKit")).image("Defense", { Size = UDim2.fromOffset(20, 20), ImageColor3 = SKY, LayoutOrder = 1, Parent = shieldRow })
+local shieldText = make("TextLabel", { BackgroundTransparency = 1, Size = UDim2.fromOffset(0, 36), AutomaticSize = Enum.AutomaticSize.X, FontFace = FONT_BOLD, TextSize = 14, TextColor3 = C.WHITE, Text = "Protected", LayoutOrder = 2, Parent = shieldRow })
+local shieldTime = make("TextLabel", { BackgroundTransparency = 1, Size = UDim2.fromOffset(0, 36), AutomaticSize = Enum.AutomaticSize.X, FontFace = FONT_BOLD, TextSize = 14, TextColor3 = SKY, Text = "", LayoutOrder = 3, Parent = shieldRow })
+local shieldBar = make("Frame", { AnchorPoint = Vector2.new(0, 1), Position = UDim2.fromScale(0, 1), Size = UDim2.new(1, 0, 0, 3), BackgroundColor3 = SKY, BorderSizePixel = 0, Parent = shieldPill })
+make("UIGradient", { Parent = shieldBar }) -- (Transparency drives the drain, see updateShieldPill)
+local shieldSpan = { ends = 0, len = 1 }
 
 DeviceLayout.attachScreenGui(gui)
 
+--------------------------------------------------------------------------------
 -- Layout per device
+--------------------------------------------------------------------------------
 local function layout()
 	local profile = DeviceLayout.state.profile
 	local screen = gui.AbsoluteSize
@@ -345,7 +359,9 @@ local function layout()
 	rowLayout.Padding = UDim.new(0, if compact then 6 else 10)
 end
 
+--------------------------------------------------------------------------------
 -- Show / hide
+--------------------------------------------------------------------------------
 local function menuOpen(): boolean
 	return playerGui:GetAttribute("FrontlinesMenuOpen") == true
 end
@@ -517,7 +533,9 @@ watchBtn.Activated:Connect(DefeatScreen.watch)
 leaveBtn.Activated:Connect(leave)
 pill.Activated:Connect(DefeatScreen.showPanel)
 
+--------------------------------------------------------------------------------
 -- Shields
+--------------------------------------------------------------------------------
 -- Prefix for a player's map name label while their spawn shield is up.
 function DefeatScreen.shieldTag(id: number): string
 	local ends = shields[id]
@@ -536,14 +554,28 @@ local function updateShieldPill()
 	local left = if ends then ends - SimClock.now() else 0
 	if left > 0 then
 		local s = math.ceil(left)
-		shieldPill.Text = string.format("🛡  Spawn shield  %d:%02d", s // 60, s % 60)
+		if math.abs(ends - shieldSpan.ends) > 0.5 then
+			shieldSpan.ends, shieldSpan.len = ends, math.max(left, 1) -- a new or extended shield
+		end
+		shieldText.Text = "Protected from attacks"
+		shieldTime.Text = string.format("%d:%02d", s // 60, s % 60)
+		-- Drain the bar from the right: hide the part past the remaining fraction.
+		local f = math.clamp(left / shieldSpan.len, 0, 1)
+		shieldBar:FindFirstChildOfClass("UIGradient").Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0),
+			NumberSequenceKeypoint.new(math.clamp(f, 0.001, 0.998), 0),
+			NumberSequenceKeypoint.new(math.clamp(f + 0.001, 0.002, 0.999), 1),
+			NumberSequenceKeypoint.new(1, 1),
+		})
 		shieldPill.Visible = true
 	else
 		shieldPill.Visible = false
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Setup
+--------------------------------------------------------------------------------
 -- opts: { net: RemoteEvent, focusTile: ((tile: number) -> ())? }
 function DefeatScreen.setup(opts)
 	net = opts.net

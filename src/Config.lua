@@ -19,7 +19,7 @@ Config.CREDIT = "© OpenFront and Contributors"
 Config.ASSET_CREDIT = "Map data, flags & icons © OpenFront and Contributors, CC BY-SA 4.0"
 -- AGPL-3.0 requires offering players the source of this modified version.
 -- Put the public repository link here once the code is published.
-Config.SOURCE_URL = "github.com/openfrontio/OpenFrontIO (original) - port source: add your repo link"
+Config.SOURCE_URL = "github.com/lacedsc3ne/WarFront"
 
 Config.TICK = 0.1 -- seconds per simulation tick (10 tps)
 

@@ -253,6 +253,11 @@ function Diplomacy.breakAlliance(p, q, tick: number): boolean
 	if ctx.onAllianceBroken then
 		ctx.onAllianceBroken(p, q)
 	end
+	-- OpenFront BrokeAllianceUpdate: the betrayed player's screen flashes red (AlertFrame).
+	local victim = ctx.playerOf(q)
+	if victim then
+		ctx.net:FireClient(victim, "betrayed", p.id)
+	end
 	-- OpenFront: leaving a traitor or a disconnected ally is not a betrayal.
 	if Diplomacy.isTraitor(q.id, tick) or q.disconnected then
 		ctx.feed("The alliance between " .. p.name .. " and " .. q.name .. " ended", "ally", p.id)

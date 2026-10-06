@@ -6,19 +6,20 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.Keybinds (ModuleScript), used by GameClient (via Interact).
--- Defaults from OpenFront src/core/game/UserSettings.ts getDefaultKeybinds / InputHandler.ts:
---   1 City  3 Port  4 Defense Post  5 Missile Silo  6 SAM  7 Warship  8 Atom Bomb  9 Hydrogen Bomb
---   2 Factory  0 MIRV (only once the rules lanes add them to Config / actionList)        T / Y  attack ratio -10% / +10%
---   B  boat attack at the cursor    G  ground attack at the cursor    Shift+R  retaliate (latest
---   incoming attack)    K  request / renew alliance at the cursor    L  break alliance at the cursor
---   C  centre the camera on us    W A S D / arrows  pan (held)    Q / E, - / =  zoom out / in (held)
---   Shift + mouse wheel  attack ratio    Esc  cancel / close    Space (hold)  alternate view
---   M  coordinate grid
+-- Keys come from KeybindData (OpenFront getDefaultKeybinds, rebindable in Settings > Keybinds):
+--   1-9, 0 build City / Factory / Port / Defense Post / Silo / SAM / Warship / Atom / Hydrogen / MIRV
+--   T / Y  attack ratio -/+ (Settings "attackRatioIncrement", default 10%)    B boat attack
+--   G ground attack    Shift+R retaliate    U swap rocket direction    K request / renew alliance
+--   L break alliance    C centre camera    W A S D pan (held; arrows too)    Q / E zoom (held; - / = too)
+--   Space (hold) alternate view    M coordinate grid    Alt + R reset graphics    F select all warships
+--   P pause, . / , game speed up / down (solo rounds)    Shift + wheel attack ratio    Esc cancel
+--
 -- Keybinds.setup(ctx)
 --   ctx.net, ctx.actionList, ctx.setMode({type, kind}), ctx.getRatio(), ctx.setRatio(r),
 --   ctx.zoomAt(factor, sx, sy), ctx.pan(dx, dy), ctx.fitMap(), ctx.centerCamera(), ctx.cancel(),
 --   ctx.tileAtMouse() -> tile?, ctx.ownerOf(tile), ctx.getMyId(), ctx.getMe(), ctx.getPhase(),
---   ctx.roster, ctx.contextMenu, ctx.overlaysChanged(), ctx.viewCenter() -> Vector2
+--   ctx.roster, ctx.contextMenu, ctx.overlaysChanged(), ctx.viewCenter() -> Vector2,
+--   ctx.selectAllWarships(), ctx.toast(text)?
 -- Keybinds.keyDown(input) -> boolean   call from GameClient's keyboard InputBegan (unprocessed)
 -- Keybinds.wheel(input) -> boolean     true when Shift + wheel changed the attack ratio
 -- Keybinds.hotkey(kind) -> string      label for the build bar ("" if unbound)
@@ -33,57 +34,61 @@ local SimClock = require(game:GetService("ReplicatedStorage"):WaitForChild("Shar
 
 local Keybinds = {}
 
+local KeybindData = require(script.Parent:WaitForChild("KeybindData"))
+local Settings = require(script.Parent:WaitForChild("Settings"))
+local HudSidebars = require(script.Parent:WaitForChild("HudSidebars"))
+
 local K = Enum.KeyCode
-local BUILD_KEYS = {
-	[K.One] = "City",
-	[K.Two] = "Factory",
-	[K.Zero] = "MIRV",
-	[K.KeypadTwo] = "Factory",
-	[K.KeypadZero] = "MIRV",
-	[K.Three] = "Port",
-	[K.Four] = "DefensePost",
-	[K.Five] = "MissileSilo",
-	[K.Six] = "SAM",
-	[K.Seven] = "Warship",
-	[K.Eight] = "AtomBomb",
-	[K.Nine] = "HydrogenBomb",
-	[K.KeypadOne] = "City",
-	[K.KeypadThree] = "Port",
-	[K.KeypadFour] = "DefensePost",
-	[K.KeypadFive] = "MissileSilo",
-	[K.KeypadSix] = "SAM",
-	[K.KeypadSeven] = "Warship",
-	[K.KeypadEight] = "AtomBomb",
-	[K.KeypadNine] = "HydrogenBomb",
+local BUILD_ACTIONS = {
+	buildCity = "City",
+	buildFactory = "Factory",
+	buildPort = "Port",
+	buildDefensePost = "DefensePost",
+	buildMissileSilo = "MissileSilo",
+	buildSamLauncher = "SAM",
+	buildWarship = "Warship",
+	buildAtomBomb = "AtomBomb",
+	buildHydrogenBomb = "HydrogenBomb",
+	buildMIRV = "MIRV",
 }
-local HOTKEY = { City = "1", Factory = "2", MIRV = "0", Port = "3", DefensePost = "4", MissileSilo = "5", SAM = "6", Warship = "7", AtomBomb = "8", HydrogenBomb = "9" }
+local ACTION_OF = {}
+for action, kind in BUILD_ACTIONS do
+	ACTION_OF[kind] = action
+end
 -- UnitDisplay.ts order: City, Factory, Port, Defense Post, Missile Silo, SAM, Warship, Atom, Hydrogen, MIRV.
 local ORDER = { City = 1, Factory = 2, MIRV = 10, Port = 3, DefensePost = 4, MissileSilo = 5, SAM = 6, Warship = 7, AtomBomb = 8, HydrogenBomb = 9 }
 
-local RATIO_STEP = 0.10 -- OpenFront attackRatioIncrement default (10%)
 local PAN_SPEED = 900 -- px / s for held W A S D / arrows
 local ZOOM_RATE = 2.2 -- zoom factor per second for held Q / E / - / =
 
 local ctx: any = nil
 local MapRender = require(script.Parent:WaitForChild("MapRender"))
 local MapFx = require(script.Parent:WaitForChild("MapFx"))
-local spaceHeld = false
+local viewHeld: Enum.KeyCode? = nil
 local altBefore = false
 local gridOn = false
 
+-- uiState.rocketDirectionUp lives in KeybindData.rocketUp (BuildMenu.fireNuke sends it).
+KeybindData.rocketUp = true
+
 UserInputService.InputEnded:Connect(function(input)
-	if input.KeyCode == Enum.KeyCode.Space and spaceHeld then
-		spaceHeld = false
+	if viewHeld and input.KeyCode == viewHeld then
+		viewHeld = nil
 		MapRender.setAltView(altBefore)
 	end
 end)
 
 function Keybinds.hotkey(kind: string): string
-	return HOTKEY[kind] or ""
+	local action = ACTION_OF[kind]
+	return if action then KeybindData.label(action) else ""
 end
 
 function Keybinds.order(kind: string): number?
 	return ORDER[kind]
+end
+
+local function ratioStep(): number
+	return (tonumber(Settings.values.attackRatioIncrement) or 10) / 100
 end
 
 -- AttackRatioEvent handling in ControlPanel.ts: clamp to 1..100 %, and 1% + 10% snaps to 10%.
@@ -126,60 +131,93 @@ local function playerAtCursor(): (number?, number?)
 	return o, tile
 end
 
+local function is(action: string, input: InputObject): boolean
+	return KeybindData.matches(action, input)
+end
+
 -- Returns true when the key was one of ours.
 function Keybinds.keyDown(input: InputObject): boolean
-	if not ctx then
-		return false
+	if not ctx or KeybindData.capturing then
+		return false -- the settings Keybinds tab is waiting for a new key
 	end
-	local k = input.KeyCode
-	local kind = BUILD_KEYS[k]
-	if kind then
-		buildByKind(kind)
-		return true
-	end
-	if k == K.Escape then
+	if input.KeyCode == K.Escape then
 		ctx.cancel()
 		return true
-	elseif k == K.T then
-		nudgeRatio(-RATIO_STEP)
+	end
+	-- Alt + R (graphics refresh modifier + resetGfx): rebuild the whole map image.
+	if is("resetGfx", input) and KeybindData.held("altKey") then
+		MapRender.buildBase()
+		MapRender.invalidate()
+		MapRender.markAll()
+		ctx.overlaysChanged()
 		return true
-	elseif k == K.Y then
-		nudgeRatio(RATIO_STEP)
+	end
+	for action, kind in BUILD_ACTIONS do
+		if is(action, input) then
+			buildByKind(kind)
+			return true
+		end
+	end
+	if is("attackRatioDown", input) then
+		nudgeRatio(-ratioStep())
 		return true
-	elseif k == K.Space then
-		-- InputHandler: hold Space for the alternate view (territory by relation to us).
-		if not spaceHeld then
-			spaceHeld = true
+	elseif is("attackRatioUp", input) then
+		nudgeRatio(ratioStep())
+		return true
+	elseif is("toggleView", input) then
+		-- InputHandler: hold for the alternate view (territory by relation to us).
+		if not viewHeld then
+			viewHeld = input.KeyCode
 			altBefore = MapRender.altView()
 			MapRender.setAltView(not altBefore)
 		end
 		return true
-	elseif k == K.M then
+	elseif is("coordinateGrid", input) then
 		gridOn = not gridOn
 		pcall(MapFx.setGrid, gridOn)
 		return true
-	elseif k == K.C then
+	elseif is("centerCamera", input) then
 		ctx.centerCamera()
+		return true
+	elseif is("pauseGame", input) then
+		HudSidebars.togglePause()
+		return true
+	elseif is("gameSpeedUp", input) then
+		HudSidebars.stepSpeed(1)
+		return true
+	elseif is("gameSpeedDown", input) then
+		HudSidebars.stepSpeed(-1)
+		return true
+	elseif is("swapDirection", input) then
+		KeybindData.rocketUp = not KeybindData.rocketUp
+		if ctx.toast then
+			ctx.toast(if KeybindData.rocketUp then "Rocket direction: up" else "Rocket direction: down")
+		end
 		return true
 	end
 	if not inPlay() then
 		return false
 	end
 	local net = ctx.net
-	if k == K.B then
+	if is("selectAllWarships", input) then
+		if ctx.selectAllWarships then
+			ctx.selectAllWarships()
+		end
+		return true
+	elseif is("boatAttack", input) then
 		-- Boat attack under the cursor (the server picks the landing and checks boats left).
 		local tile = ctx.tileAtMouse()
 		if tile and ctx.ownerOf(tile) ~= ctx.getMyId() then
 			net:FireServer("boat", tile, ctx.getRatio())
 		end
 		return true
-	elseif k == K.G then
+	elseif is("groundAttack", input) then
 		local tile = ctx.tileAtMouse()
 		if tile and ctx.ownerOf(tile) ~= ctx.getMyId() and not ctx.contextMenu.isAlly(ctx.ownerOf(tile)) then
 			net:FireServer("attack", tile, ctx.getRatio())
 		end
 		return true
-	elseif k == K.R and shiftDown() then
+	elseif is("retaliateAttack", input) then
 		-- Retaliate against the most recent incoming (non-bot) attack.
 		local incoming = ctx.getMe().incoming or {}
 		local last = incoming[#incoming]
@@ -187,7 +225,7 @@ function Keybinds.keyDown(input: InputObject): boolean
 			net:FireServer("retaliate", last[1], ctx.getRatio())
 		end
 		return true
-	elseif k == K.K then
+	elseif is("requestAlliance", input) then
 		local id = playerAtCursor()
 		local CM = ctx.contextMenu
 		if id and ctx.roster[id].kind ~= "Bot" then
@@ -202,7 +240,7 @@ function Keybinds.keyDown(input: InputObject): boolean
 			end
 		end
 		return true
-	elseif k == K.L then
+	elseif is("breakAlliance", input) then
 		local id = playerAtCursor()
 		if id and ctx.contextMenu.isAlly(id) then
 			net:FireServer("allyBreak", id)
@@ -216,7 +254,7 @@ function Keybinds.wheel(input: InputObject): boolean
 	if not ctx or not shiftDown() then
 		return false
 	end
-	nudgeRatio(if input.Position.Z > 0 then RATIO_STEP else -RATIO_STEP)
+	nudgeRatio(if input.Position.Z > 0 then ratioStep() else -ratioStep())
 	return true
 end
 
@@ -227,7 +265,10 @@ function Keybinds.setup(c)
 		if UserInputService:GetFocusedTextBox() then
 			return
 		end
-		local function down(...): boolean
+		local function down(action: string, ...): boolean
+			if KeybindData.held(action) then
+				return true
+			end
 			for _, key in { ... } do
 				if UserInputService:IsKeyDown(key) then
 					return true
@@ -236,16 +277,16 @@ function Keybinds.setup(c)
 			return false
 		end
 		local dx, dy = 0, 0
-		if down(K.W, K.Up) then
+		if down("moveUp", K.Up) then
 			dy += 1
 		end
-		if down(K.S, K.Down) then
+		if down("moveDown", K.Down) then
 			dy -= 1
 		end
-		if down(K.A, K.Left) then
+		if down("moveLeft", K.Left) then
 			dx += 1
 		end
-		if down(K.D, K.Right) then
+		if down("moveRight", K.Right) then
 			dx -= 1
 		end
 		local moved = false -- zoom changed (overlays re-layout); panning needs no refresh
@@ -253,10 +294,10 @@ function Keybinds.setup(c)
 			ctx.pan(dx * PAN_SPEED * dt, dy * PAN_SPEED * dt)
 		end
 		local z = 0
-		if down(K.Q, K.Minus, K.KeypadMinus) then
+		if down("zoomOut", K.Minus, K.KeypadMinus) then
 			z -= 1
 		end
-		if down(K.E, K.Equals, K.KeypadPlus) then
+		if down("zoomIn", K.Equals, K.KeypadPlus) then
 			z += 1
 		end
 		if z ~= 0 then

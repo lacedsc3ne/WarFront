@@ -7,6 +7,7 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.FlagKit (ModuleScript), used by NameLabels.
+--
 -- FlagKit.has(code) -> boolean            true if Shared.Flags has pixels for this code
 -- FlagKit.image(code, props) -> ImageLabel?
 --   A transparent, ScaleType.Fit ImageLabel showing flag `code` (see Shared.Flags / gen_flags.py),

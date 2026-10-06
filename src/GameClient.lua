@@ -9,7 +9,6 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local AssetService = game:GetService("AssetService")
 local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")
 local GuiService = game:GetService("GuiService")
@@ -37,11 +36,12 @@ local mapsFolder = Shared:WaitForChild("Maps")
 local currentMapId = "Europe"
 local map = MapUtil.load(mapsFolder:WaitForChild(currentMapId))
 local W, H, SIZE = map.width, map.height, map.size
-local terrain = map.terrain
 local NB = table.create(4)
 local FALLOUT_OWNER = 65535
 
+--------------------------------------------------------------------------------
 -- Helpers
+--------------------------------------------------------------------------------
 -- OpenFront Utils.renderNumber (truncating, not rounding): 999, 1.23K, 12.3K, 123K, 1.23M, 12.3M, 1.23B
 local function fmt(n: number): string
 	n = math.max(0, n)
@@ -76,10 +76,6 @@ local function lerp(a, b, t)
 	return a + (b - a) * t
 end
 
-local function unpackColor(c: number)
-	return c // 65536, (c // 256) % 256, c % 256
-end
-
 local function make(className: string, props: { [string]: any })
 	local inst = Instance.new(className)
 	for k, v in props do
@@ -100,7 +96,9 @@ local function serverNow(): number
 	return SimClock.now()
 end
 
+--------------------------------------------------------------------------------
 -- Terrain colours (recomputed when the map changes)
+--------------------------------------------------------------------------------
 -- The per-tile terrain colours live in MapRender (rebuilt by MapRender.setMap / buildBase).
 local function buildBaseColors()
 	if MapRender.scale() > 0 then
@@ -108,7 +106,9 @@ local function buildBaseColors()
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Client game state
+--------------------------------------------------------------------------------
 local owners = buffer.create(SIZE * 2) -- wire owner (65535 = fallout)
 local roster: { [number]: any } = {}
 local myId = 0
@@ -118,20 +118,18 @@ local structureList = {}
 local boats: { [number]: any } = {}
 local nukes: { [number]: any } = {}
 local units: { [number]: any } = {} -- warships by id (from "units" snapshots)
-local selectedUnit: number? = nil -- id of our selected warship
-local attackRatio = 0.2
+local selectedUnit: number? = nil -- one of our selected warships (nil = none selected)
+-- Warship selection (OpenFront: click one, F selects all, Shift + drag box-selects several).
+-- ids: set of selected warship ids; rings: selection ring per id; box / boxStart: drag rectangle.
+local selection: any = { ids = {}, rings = {}, box = nil, boxStart = nil }
+local attackRatio = math.clamp((tonumber(Settings.values.attackRatio) or 20) / 100, 0.01, 1) -- OpenFront settings.attackRatio
 local mode: { type: string, kind: string }? = nil -- build / nuke placement mode
 -- Pointer in GUI space, from mouse input events (the same space clicks use). GetMouseLocation()
 -- counts the top bar inset and can sit ~50 px below the cursor on this IgnoreGuiInset GUI.
 local mouseAbs = Vector2.new(-1e4, -1e4)
 local ghost: any = { state = nil, shown = false, tile = nil, kind = nil, checkAt = 0 } -- build ghost (one table: GameClient is near the 200-local limit)
-local pixelsDirty = true
 -- Counters the tutorial watches to notice the player doing things.
 local tutorialCounters = { attacksSent = 0, playerAttacksSent = 0, ratioMoves = 0 }
-
-local function wireOwnerOf(t: number): number
-	return buffer.readu16(owners, t * 2)
-end
 
 local function ownerOf(t: number): number
 	local o = buffer.readu16(owners, t * 2)
@@ -146,14 +144,22 @@ end
 
 local function repaintAll()
 	MapRender.markAll()
-	pixelsDirty = true
+end
+
+-- OpenFront "Hidden Names": other humans show a random tribe-style name on our screen.
+local function rosterName(p): string
+	if Settings.values.anonymousNames and p.id ~= myId and p.anon and p.anon ~= "" then
+		return p.anon
+	end
+	return p.realName or p.name or ""
 end
 
 local function applyRoster(list)
 	for _, e in list do
 		local id = e[1]
 		local p = roster[id] or { stats = { alive = true, troops = 0, maxTroops = 1, gold = 0, tiles = 0, cx = 0, cy = 0, cities = 0, kills = 0 } }
-		p.id, p.name, p.kind, p.userId = id, e[2], e[3], e[5]
+		p.id, p.realName, p.anon, p.kind, p.userId = id, e[2], e[11] or "", e[3], e[5]
+		p.name = rosterName(p)
 		p.level, p.vip = e[6] or 0, e[7] or false
 		p.serverColor, p.flag = e[4], e[8] or "" -- flag: OpenFront flag code (nations), "" = none
 		p.team, p.teamKey = e[10] or "", tostring(id) -- team games: team name ("" = none)
@@ -163,9 +169,9 @@ local function applyRoster(list)
 end
 
 local function applyStats(b: buffer)
-	local n = buffer.len(b) // 27
+	local n = buffer.len(b) // 31
 	for i = 0, n - 1 do
-		local o = i * 27
+		local o = i * 31
 		local id = buffer.readu16(b, o)
 		local p = roster[id]
 		if p then
@@ -179,6 +185,7 @@ local function applyStats(b: buffer)
 			s.cy = buffer.readu16(b, o + 21) / 10
 			s.cities = buffer.readu16(b, o + 23)
 			s.kills = buffer.readu16(b, o + 25)
+			s.attacking = buffer.readu32(b, o + 27) -- troops in outgoing attacks (hover panel)
 		end
 	end
 end
@@ -208,7 +215,6 @@ local function applyTiles(b: buffer)
 	for t in touched do
 		paint(t)
 	end
-	pixelsDirty = true
 end
 
 local function applyOwnersSnapshot(b: buffer)
@@ -223,7 +229,9 @@ local function applyOwnersSnapshot(b: buffer)
 	end
 end
 
+--------------------------------------------------------------------------------
 -- GUI
+--------------------------------------------------------------------------------
 local gui = make("ScreenGui", {
 	Name = "FrontlinesUI",
 	IgnoreGuiInset = true,
@@ -249,6 +257,7 @@ local Ballistics = require(Shared:WaitForChild("Ballistics")) -- OpenFront nuke 
 local Perf = require(Shared:WaitForChild("Perf")) -- built-in profiler (PlayerGui attribute FrontlinesPerf)
 local AlertsPanel = require(playerScripts:WaitForChild("AlertsPanel")) -- bottom-right events + alliance requests
 local Interact = require(playerScripts:WaitForChild("Interact")) -- radial menu, player panel, attacks display, keybinds
+local KeybindData = require(playerScripts:WaitForChild("KeybindData")) -- rebindable keys (modifier keys for clicks)
 
 local FONT = Font.fromEnum(Enum.Font.GothamMedium)
 local FONT_BOLD = Font.fromEnum(Enum.Font.GothamBold)
@@ -660,10 +669,11 @@ local overlayText = label({ Size = UDim2.fromScale(1, 1), FontFace = FONT_BOLD, 
 -- Lobby map vote (o-modal look like every menu window: MenuKit tokens)
 local MK = require(playerScripts:WaitForChild("MenuKit"))
 local vote: any = { cards = {}, ids = {}, key = "", mine = nil } -- lobby map vote state (one table: 200-local limit)
-vote.panel = panel({ AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(0.92, 0, 0, 196), BackgroundColor3 = MK.C.GRAY900, BackgroundTransparency = 0.08, Visible = false, Parent = gui })
+vote.preview = require(playerScripts:WaitForChild("MapPreview")) -- terrain thumbnails of the options
+vote.panel = panel({ AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(0.92, 0, 0, 300), BackgroundColor3 = MK.C.GRAY900, BackgroundTransparency = 0.08, Visible = false, Parent = gui })
 vote.panel:FindFirstChildWhichIsA("UICorner").CornerRadius = UDim.new(0, 16)
 MK.stroke(vote.panel, 0.9)
-make("UISizeConstraint", { MaxSize = Vector2.new(680, 196), Parent = vote.panel })
+make("UISizeConstraint", { MaxSize = Vector2.new(720, 300), Parent = vote.panel })
 label({ Position = UDim2.fromOffset(0, 12), Size = UDim2.new(1, 0, 0, 26), FontFace = MK.F.BOLD, TextSize = 20, Text = "VOTE FOR THE NEXT MAP", Parent = vote.panel })
 vote.row = make("Frame", { Position = UDim2.fromOffset(16, 52), Size = UDim2.new(1, -32, 1, -68), BackgroundTransparency = 1, Parent = vote.panel })
 make("UIListLayout", {
@@ -689,9 +699,12 @@ for i = 1, Config.MAP_VOTE_OPTIONS do
 	corner(card, 12)
 	local stroke = MK.stroke(card, 0.9)
 	local nameText = label({ Position = UDim2.fromOffset(8, 12), Size = UDim2.new(1, -16, 0, 26), FontFace = MK.F.BOLD, TextSize = 18, TextScaled = false, TextTruncate = Enum.TextTruncate.AtEnd, Text = "", Parent = card })
-	local sizeText = label({ Position = UDim2.fromOffset(8, 40), Size = UDim2.new(1, -16, 0, 20), FontFace = MK.F.MEDIUM, TextSize = 13, TextTransparency = 0.5, Text = "", Parent = card })
-	local countText = label({ Position = UDim2.new(0, 8, 1, -36), Size = UDim2.new(1, -16, 0, 26), FontFace = MK.F.BOLD, TextSize = 16, TextColor3 = MK.C.AQUARIUS, Text = "", Parent = card })
-	vote.cards[i] = { button = card, stroke = stroke, name = nameText, size = sizeText, count = countText }
+	-- Terrain preview of the map (MapPreview), like the main menu's map cards.
+	local img = make("ImageLabel", { Position = UDim2.fromOffset(8, 42), Size = UDim2.new(1, -16, 1, -98), BackgroundColor3 = MK.C.BLACK, BackgroundTransparency = 0.6, ScaleType = Enum.ScaleType.Fit, ResampleMode = Enum.ResamplerMode.Pixelated, Parent = card })
+	corner(img, 6)
+	local sizeText = label({ Position = UDim2.new(0, 8, 1, -52), Size = UDim2.new(1, -16, 0, 18), FontFace = MK.F.MEDIUM, TextSize = 13, TextTransparency = 0.5, Text = "", Parent = card })
+	local countText = label({ Position = UDim2.new(0, 8, 1, -32), Size = UDim2.new(1, -16, 0, 24), FontFace = MK.F.BOLD, TextSize = 16, TextColor3 = MK.C.AQUARIUS, Text = "", Parent = card })
+	vote.cards[i] = { button = card, stroke = stroke, name = nameText, size = sizeText, count = countText, img = img }
 	MK.hover(card, function(st)
 		local mine = vote.ids[i] ~= nil and vote.ids[i] == vote.mine
 		card.BackgroundColor3 = if mine then MK.C.MALIBU else MK.C.WHITE
@@ -714,7 +727,14 @@ for i = 1, Config.MAP_VOTE_OPTIONS do
 	end)
 end
 
-local function refreshVotePanel()
+local refreshVotePanel
+vote.preview.onReady(function()
+	if vote.panel.Visible then
+		refreshVotePanel()
+	end
+end)
+
+function refreshVotePanel()
 	local pv = if phase.phase == "Lobby" then phase.vote else nil
 	local show = pv ~= nil and #pv.options > 0
 	vote.panel.Visible = show
@@ -744,6 +764,13 @@ local function refreshVotePanel()
 			c.size.Text = string.format("%d × %d", o.width, o.height)
 			c.count.Text = if o.votes == 1 then "1 vote" else (o.votes .. " votes")
 			c.name.Text = string.upper(o.name)
+			local e = vote.preview.get(o.id, 220)
+			if e and c.imgFor ~= o.id then
+				c.imgFor = o.id
+				c.img.ImageContent = Content.fromObject(e)
+			elseif not e and c.imgFor ~= o.id then
+				c.img.ImageContent = Content.none
+			end
 			c.stroke.Color = if mine then MK.C.MALIBU else MK.C.WHITE
 			c.stroke.Transparency = if mine then 0 else 0.9
 			c.stroke.Thickness = if mine then 2 else 1
@@ -756,7 +783,9 @@ local function refreshVotePanel()
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Camera (pan / zoom of the map image)
+--------------------------------------------------------------------------------
 local zoom, panX, panY = 1, 0, 0
 local camAnim = nil -- smooth "Go to" camera move (tutorial)
 
@@ -845,7 +874,9 @@ local function xyPos(x: number, y: number): UDim2
 	return UDim2.fromScale((x + 0.5) / W, (y + 0.5) / H)
 end
 
+--------------------------------------------------------------------------------
 -- Labels, structures, HUD refresh
+--------------------------------------------------------------------------------
 local nameLabels: { [number]: TextLabel } = {}
 
 NameLabels.setup({
@@ -1064,7 +1095,11 @@ local function refreshHud()
 		parts[#parts + 1] = DeviceLayout.verb() .. (if mode.type == "build" then " your land to place a " else " a target for your ") .. def.name .. "  " .. DeviceLayout.cancelHint()
 	else
 		if selectedUnit then
-			parts[#parts + 1] = "Warship selected: click water to move it  (right-click / Esc to deselect)"
+			local count = 0
+			for _ in selection.ids do
+				count += 1
+			end
+			parts[#parts + 1] = (if count > 1 then count .. " warships selected" else "Warship selected") .. ": click water to move  (right-click / Esc to deselect)"
 		end
 		-- Attacks and boats are listed by MatchHud's attacks display (OpenFront AttacksDisplay).
 	end
@@ -1129,12 +1164,16 @@ local function refreshBanner()
 	refreshVotePanel()
 end
 
+--------------------------------------------------------------------------------
 -- Event feed
+--------------------------------------------------------------------------------
 local function pushFeed(text: string, kind: string, owner: number?)
 	AlertsPanel.push(text, kind, owner)
 end
 
+--------------------------------------------------------------------------------
 -- Boats and nukes (drawn every frame from their start time)
+--------------------------------------------------------------------------------
 local function addBoat(data)
 	local path = data.path
 	local n = buffer.len(path) // 4
@@ -1170,7 +1209,7 @@ local function addNuke(data)
 	-- Target telegraph (dashed blast ring + inner disc) and trail, see MapMarkers.lua.
 	local ring = MapMarkers.addNuke(data)
 	-- OpenFront parabola (Shared.Ballistics): data.speed = tiles of arc per second.
-	local curve = if data.arc then Ballistics.curve(fx + 0.5, fy + 0.5, tx + 0.5, ty + 0.5, H) else nil
+	local curve = if data.arc then Ballistics.curve(fx + 0.5, fy + 0.5, tx + 0.5, ty + 0.5, H, nil, data.down == true) else nil
 	nukes[data.id] = { fx = fx, fy = fy, tx = tx, ty = ty, start = data.start, duration = data.duration, dot = dot, ring = ring, owner = data.owner, to = data.to, hash = (data.id * 0.618) % 1, curve = curve, speed = data.speed, mirv = data.kind == "MIRV" }
 end
 
@@ -1215,29 +1254,41 @@ local function clearUnits()
 	UnitFx.reset()
 end
 
+--------------------------------------------------------------------------------
 -- Warships (server sends "units" snapshots at ~5 Hz and "shot" effects)
+--------------------------------------------------------------------------------
 local UNIT_LERP = 0.2 -- seconds between snapshots
 local shots: { any } = {}
 
-local selectionRing = make("Frame", {
-	AnchorPoint = Vector2.new(0.5, 0.5),
-	BackgroundTransparency = 1,
-	Visible = false,
-	ZIndex = 3,
-	Parent = unitLayer,
-})
-corner(selectionRing, 9999)
-make("UIStroke", { Color = Color3.fromRGB(255, 220, 90), Thickness = 2, Parent = selectionRing })
 
 local function unitPos(u): (number, number)
 	local f = math.clamp((os.clock() - u.t0) / UNIT_LERP, 0, 1)
 	return lerp(u.fx, u.tx, f), lerp(u.fy, u.ty, f)
 end
 
-local function selectUnit(id: number?)
-	selectedUnit = id
-	selectionRing.Visible = id ~= nil
+-- Replace the selection with the given warship ids (empty / nil = deselect).
+local function selectUnits(ids: { number }?)
+	table.clear(selection.ids)
+	for id, ring in selection.rings do
+		ring:Destroy()
+		selection.rings[id] = nil
+	end
+	selectedUnit = nil
+	for _, id in ids or {} do
+		if units[id] then
+			selection.ids[id] = true
+			selectedUnit = selectedUnit or id
+			local ring = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), BackgroundTransparency = 1, ZIndex = 3, Parent = unitLayer })
+			corner(ring, 9999)
+			make("UIStroke", { Color = Color3.fromRGB(255, 220, 90), Thickness = 2, Parent = ring })
+			selection.rings[id] = ring
+		end
+	end
 	refreshHud()
+end
+
+local function selectUnit(id: number?)
+	selectUnits(if id then { id } else nil)
 end
 
 local function destroyUnit(id: number, sunk: boolean)
@@ -1251,8 +1302,12 @@ local function destroyUnit(id: number, sunk: boolean)
 	u.marker:Destroy()
 	u.bar:Destroy()
 	units[id] = nil
-	if selectedUnit == id then
-		selectUnit(nil)
+	if selection.ids[id] then
+		selection.ids[id] = nil
+		selection.rings[id]:Destroy()
+		selection.rings[id] = nil
+		selectedUnit = next(selection.ids)
+		refreshHud()
 	end
 end
 
@@ -1355,12 +1410,14 @@ end
 -- Click handling for warships in normal mode. Returns true if the click was used.
 local function warshipAct(t: number): boolean
 	local hit = ownWarshipNear(t)
-	if hit and hit ~= selectedUnit then
+	if hit and (not selection.ids[hit] or next(selection.ids, next(selection.ids)) ~= nil) then
 		selectUnit(hit)
 		return true
 	end
-	if selectedUnit and units[selectedUnit] and not MapUtil.isLand(map, t) then
-		net:FireServer("moveWarship", t, selectedUnit)
+	if selectedUnit and not MapUtil.isLand(map, t) then
+		for id in selection.ids do
+			net:FireServer("moveWarship", t, id)
+		end
 		explosion(t, 1.2, false)
 		return true
 	end
@@ -1393,11 +1450,12 @@ local function drawWarships()
 			u.bar.Size = UDim2.fromOffset(2.75 * zoom, 0.75 * zoom)
 		end
 	end
-	local sel = selectedUnit and units[selectedUnit]
-	if sel then
-		local x, y = unitPos(sel)
-		selectionRing.Position = xyPos(x, y)
-		selectionRing.Size = UDim2.fromOffset(px * 1.6, px * 1.6)
+	for id, ring in selection.rings do
+		local u = units[id]
+		if u then
+			ring.Position = xyPos(unitPos(u))
+			ring.Size = UDim2.fromOffset(px * 1.6, px * 1.6)
+		end
 	end
 	local now = os.clock()
 	local dotPx = math.max(1, zoom * 0.25)
@@ -1430,7 +1488,9 @@ local function drawWarships()
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Map switching (server picks the map each round; see 'init')
+--------------------------------------------------------------------------------
 -- Loaded map (server mapKey: id, "@c" compact, "#" revision) and how many of the round's water
 -- nuke edits we applied.
 local mapSync = { key = "Europe#0", applied = 0 }
@@ -1448,7 +1508,6 @@ local function switchMap(id: string, compact: boolean?): boolean
 	end
 	map = if compact then MapUtil.compact(result) else result
 	W, H, SIZE = map.width, map.height, map.size
-	terrain = map.terrain
 	currentMapId = id
 	mapSync.applied = 0
 	owners = buffer.create(SIZE * 2)
@@ -1459,11 +1518,12 @@ local function switchMap(id: string, compact: boolean?): boolean
 		ContextMenu.setMap(map)
 	end
 	fitMap()
-	pixelsDirty = true
 	return true
 end
 
+--------------------------------------------------------------------------------
 -- Tutorial (PlayerGui attribute FrontlinesTutorial) and the pulsing ring on our territory
+--------------------------------------------------------------------------------
 local tutorial, drawHomeRing
 do
 	local function liveTerritory(id: number)
@@ -1545,7 +1605,9 @@ do
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Network
+--------------------------------------------------------------------------------
 SoundKit.setup({
 	myId = function()
 		return myId
@@ -1578,6 +1640,7 @@ local function onNet(kind: string, data: any, quiet: boolean?)
 		me = { attacks = {}, costs = {}, boats = 0, hasSilo = false, siloReady = false }
 		mode = nil
 		AttackLabels.clear()
+		require(playerScripts:WaitForChild("AlertFrame")).reset()
 		tutorial.reset()
 		if type(data.mapKey) == "string" then
 			-- Compact maps and maps edited by water nukes reload whenever the server's copy changed.
@@ -1634,14 +1697,24 @@ local function onNet(kind: string, data: any, quiet: boolean?)
 		refreshStructures()
 		refreshBuildBar()
 	elseif kind == "phase" then
+		local was = phase and phase.phase
 		phase = data
+		local mine = roster[myId]
+		if was == "Spawn" and data.phase == "Play" and Settings.values.goToPlayer and mine and mine.stats.tiles > 0 then
+			-- OpenFront "Go to player on start": zoom to our land when the spawn phase ends.
+			focusCamera(mine.stats.cx, mine.stats.cy, math.sqrt(mine.stats.tiles) * 3 + 20)
+		end
 		refreshBanner()
 		refreshHud()
 	elseif kind == "me" then
 		myId = data.id
 		me = data
+		local mine = roster[myId]
+		require(playerScripts:WaitForChild("AlertFrame")).update(data, if mine then mine.stats.troops else 0, mine ~= nil and mine.stats.alive)
 		AttackLabels.update(data)
 		refreshHud()
+	elseif kind == "betrayed" then
+		require(playerScripts:WaitForChild("AlertFrame")).betrayed()
 	elseif kind == "boat" then
 		addBoat(data)
 	elseif kind == "boatEnd" then
@@ -1757,12 +1830,15 @@ local function openContextMenuAt(sx: number, sy: number)
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Input
+--------------------------------------------------------------------------------
 local function setRatio(r: number)
 	local old = attackRatio
 	attackRatio = math.clamp(math.floor(r * 100 + 0.5) / 100, 0.01, 1)
 	if attackRatio ~= old then
 		tutorialCounters.ratioMoves += 1
+		Settings.set("attackRatio", math.floor(attackRatio * 100 + 0.5)) -- remembered between games
 	end
 	refreshHud()
 end
@@ -1851,7 +1927,7 @@ local function act(t: number)
 			elseif mode.type == "unit" then
 				net:FireServer("buildUnit", t, mode.kind)
 			else
-				net:FireServer("nuke", t, mode.kind)
+				Interact.build.fireNuke(t, mode.kind)
 			end
 			if not keep then
 				mode = nil
@@ -1883,6 +1959,11 @@ UserInputService.InputBegan:Connect(function(input, processed)
 		return
 	end
 	local t = input.UserInputType
+	if t == Enum.UserInputType.MouseButton1 and phase.phase == "Play" and not mode and KeybindData.held("boxSelectWarships") then
+		-- OpenFront: hold Shift and drag to box-select warships.
+		selection.boxStart = Vector2.new(input.Position.X, input.Position.Y)
+		return
+	end
 	if t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch then
 		pressPos = Vector2.new(input.Position.X, input.Position.Y)
 		pressInput = input
@@ -1931,6 +2012,17 @@ UserInputService.InputChanged:Connect(function(input, processed)
 			setRatio((pos.X - slider.AbsolutePosition.X) / slider.AbsoluteSize.X)
 			return
 		end
+		local b0 = selection.boxStart
+		if b0 then
+			if not selection.box then
+				selection.box = make("Frame", { BackgroundColor3 = Color3.fromRGB(255, 220, 90), BackgroundTransparency = 0.85, BorderSizePixel = 0, ZIndex = 50, Parent = gui })
+				make("UIStroke", { Color = Color3.fromRGB(255, 220, 90), Thickness = 1, Parent = selection.box })
+			end
+			selection.box.Visible = true
+			selection.box.Position = UDim2.fromOffset(math.min(b0.X, pos.X), math.min(b0.Y, pos.Y))
+			selection.box.Size = UDim2.fromOffset(math.abs(pos.X - b0.X), math.abs(pos.Y - b0.Y))
+			return
+		end
 		if pressPos and (t == Enum.UserInputType.MouseMovement or input == pressInput) then
 			if not dragging and math.abs(pos.X - pressPos.X) + math.abs(pos.Y - pressPos.Y) >= 10 then -- OpenFront DRAG_THRESHOLD_PX
 				dragging = true
@@ -1949,16 +2041,30 @@ end)
 
 UserInputService.InputEnded:Connect(function(input)
 	local t = input.UserInputType
+	if t == Enum.UserInputType.MouseButton1 and selection.boxStart then
+		local a, b = selection.boxStart, Vector2.new(input.Position.X, input.Position.Y)
+		local lo, hi = a:Min(b), a:Max(b)
+		selection.boxStart = nil
+		if selection.box then
+			selection.box.Visible = false
+		end
+		local ids = {}
+		for id, u in units do
+			local c = u.marker.AbsolutePosition + u.marker.AbsoluteSize / 2
+			if u.owner == myId and c.X >= lo.X and c.X <= hi.X and c.Y >= lo.Y and c.Y <= hi.Y then
+				ids[#ids + 1] = id
+			end
+		end
+		selectUnits(ids)
+		return
+	end
 	if t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch then
 		sliderDragging = false
 		if pressPos and not dragging and not longPressed and (t == Enum.UserInputType.MouseButton1 or input == pressInput) then
 			local tile = screenToTile(pressPos.X, pressPos.Y)
-			local mods = if t == Enum.UserInputType.MouseButton1 and phase.phase == "Play" and not mode then UserInputService:GetKeysPressed() else {}
-			local ctrl, alt = false, false
-			for _, key in mods do
-				ctrl = ctrl or key.KeyCode == Enum.KeyCode.LeftControl or key.KeyCode == Enum.KeyCode.RightControl
-				alt = alt or key.KeyCode == Enum.KeyCode.LeftAlt or key.KeyCode == Enum.KeyCode.RightAlt
-			end
+			local mods = t == Enum.UserInputType.MouseButton1 and phase.phase == "Play" and not mode
+			local ctrl = mods and KeybindData.held("buildMenuModifier")
+			local alt = mods and KeybindData.held("emojiMenuModifier")
 			if tile and ctrl then
 				-- OpenFront: Ctrl + click (buildMenuModifier) opens the build menu grid (BuildMenu.lua).
 				Interact.openBuildMenu(tile)
@@ -1967,6 +2073,8 @@ UserInputService.InputEnded:Connect(function(input)
 				if ownerOf(tile) ~= 0 and roster[ownerOf(tile)] then
 					Interact.panel.showEmojiTable(ownerOf(tile))
 				end
+			elseif tile and Settings.values.leftClickMenu and phase.phase == "Play" and not mode and not ownWarshipNear(tile) and not selectedUnit then
+				openContextMenuAt(pressPos.X, pressPos.Y) -- OpenFront "Left Click to Open Menu"
 			elseif tile then
 				act(tile)
 			end
@@ -1995,7 +2103,9 @@ UserInputService.TouchPinch:Connect(function(positions, scale, _velocity, state,
 	end
 end)
 
+--------------------------------------------------------------------------------
 -- Devices: per-device layout (phone / tablet / console / desktop) and gamepad controls
+--------------------------------------------------------------------------------
 DeviceLayout.bindMatchUI({
 	gui = gui,
 	backdrop = backdrop,
@@ -2157,6 +2267,15 @@ Interact.setup({
 	getUnits = function()
 		return units
 	end,
+	selectAllWarships = function()
+		local ids = {}
+		for id, u in units do
+			if u.owner == myId then
+				ids[#ids + 1] = id
+			end
+		end
+		selectUnits(ids)
+	end,
 	pan = function(dx, dy)
 		camAnim = nil
 		panX += dx
@@ -2196,7 +2315,13 @@ Interact.setup({
 	end,
 })
 
+-- OpenFront AlertFrame (betrayal / land attack border) and PerformanceOverlay (Shift + D).
+require(playerScripts:WaitForChild("AlertFrame")).mount(gui)
+require(playerScripts:WaitForChild("PerfOverlay")).mount(gui)
+
+--------------------------------------------------------------------------------
 -- Player settings (Settings.lua): display toggles; other settings are read where they're used.
+--------------------------------------------------------------------------------
 do
 	local function applyDisplaySettings()
 		labelLayer.Visible = Settings.values.nameLabels
@@ -2208,6 +2333,15 @@ do
 		if key == "terrainShading" then
 			buildBaseColors()
 			repaintAll()
+		elseif key == "attackRatio" then
+			attackRatio = math.clamp((tonumber(Settings.values.attackRatio) or 20) / 100, 0.01, 1)
+			refreshHud()
+		elseif key == "anonymousNames" then
+			for _, p in roster do
+				p.name = rosterName(p)
+			end
+			refreshNameLabels()
+			refreshBoard()
 		elseif key == "borderContrast" then
 			for _, p in roster do
 				Theme.applyPlayerColors(p, Settings.values.borderContrast) -- colour-blind palette
@@ -2220,7 +2354,9 @@ do
 	end)
 end
 
+--------------------------------------------------------------------------------
 -- Frame loop
+--------------------------------------------------------------------------------
 local lastTutorialUpdate = 0
 RunService.RenderStepped:Connect(function()
 	local now = os.clock()
@@ -2236,7 +2372,6 @@ RunService.RenderStepped:Connect(function()
 	Perf.start("names")
 	NameLabels.step(now)
 	Perf.stop("names")
-	pixelsDirty = false
 	Perf.start("mapRender")
 	MapRender.step(now, zoom)
 	Perf.stop("mapRender")

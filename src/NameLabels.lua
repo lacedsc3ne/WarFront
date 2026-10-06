@@ -11,6 +11,7 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.NameLabels (ModuleScript), used by GameClient.
+--
 -- NameLabels.setup(ctx)  ctx = { layer: Frame (inside the map image, scale-positioned),
 --                                roster: table (id -> player, stable table), fmt(n) -> string,
 --                                zoom() -> px per tile, map() -> GameMap, owners() -> buffer,
@@ -19,10 +20,12 @@
 -- NameLabels.refresh()   update text / colours / visibility of every label (after stats, zoom, ...)
 -- NameLabels.step(now)   per frame: incremental placement search + smooth movement
 -- NameLabels.clear()     destroy all labels and placements (new round / map)
+--
 -- Like OpenFront, a name sits in the centre of the largest rectangle inside the player's bounding
 -- box made of their own tiles (plus shore, shallow water and fallout), and its size comes from that
 -- rectangle: fontSize = min(width / #name * 2, height / 3). The owner grid is sampled in slices
 -- across frames so the cost stays small.
+--
 -- Everything is laid out in OpenFront "em" (their atlas font size): flag 0.9 em tall
 -- (base 36/48 x 1.2) right against the name, troops 0.6 em one line (0.825 em) below, status row
 -- 1.05 em above. Roblox sizes text by the font's whole glyph bounding box, not by em, so the
@@ -64,7 +67,10 @@ local REF_TEXT = "The quick brown fox jumps over the lazy dog 0123456789"
 local REF_EM = 26.5
 local TRAITOR_FLASH = 15 -- seconds of traitor time left when its icon starts flashing
 local ALLIANCE_FLASH = (Config.ALLIANCE_RENEW_TICKS or 300) * (Config.TICK or 0.1) -- renewal window
-local ALLIANCE_LEN = (Config.ALLIANCE_TICKS or 3000) * (Config.TICK or 0.1)
+local MatchRulesMod = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("MatchRules"))
+local function allianceLen(): number
+	return MatchRulesMod.allianceTicks() * (Config.TICK or 0.1) -- custom alliance duration aware
+end
 local CULL = 0.004 -- name.cullThreshold 0.008 (clip space) as a fraction of the viewport width
 local BASE = 0.75 -- atlas base / font size (36 / 48): line height per em
 local LERP_SPEED = 10 -- name.lerpSpeed
@@ -163,7 +169,9 @@ function NameLabels.setup(c)
 	calibrate(c.layer)
 end
 
+--------------------------------------------------------------------------------
 -- Placement (NameBoxCalculator.placeName)
+--------------------------------------------------------------------------------
 local heights: { number } = {}
 local stack: { number } = {}
 
@@ -297,7 +305,9 @@ local function scanSlice(): boolean
 	return true
 end
 
+--------------------------------------------------------------------------------
 -- Labels
+--------------------------------------------------------------------------------
 local function newText(parent: Instance, z: number): TextLabel
 	local t = Instance.new("TextLabel")
 	t.BackgroundTransparency = 1
@@ -373,9 +383,11 @@ local function newEntry(id: number, p: any)
 	return e
 end
 
+--------------------------------------------------------------------------------
 -- Status row (PlayerIcons.ts / status-icon.vert.glsl). Slots in OpenFront's order; target (players
 -- we target: me.targets - allies' targets aren't sent) and embargo (players we embargo:
 -- me.embargoes) come from ctx.isTarget / ctx.hasEmbargo; "shield" (spawn protection) is ours.
+--------------------------------------------------------------------------------
 local STATUS = {
 	{ key = "crown", sprite = "StCrown", icon = "Crown" },
 	{ key = "doom", sprite = "StDoomsday", icon = "Skull", color = Color3.new(1, 1, 1) },
@@ -525,7 +537,7 @@ local function updateStatus(e, id: number, p)
 					e.flashing[icon] = { until_ = tUntil, window = TRAITOR_FLASH, k = 0.1 }
 				elseif s.key == "alliance" and allyUntil then
 					local left = allyUntil - now
-					setDrain(icon, math.clamp(left / ALLIANCE_LEN, 0, 1))
+					setDrain(icon, math.clamp(left / allianceLen(), 0, 1))
 					if left <= ALLIANCE_FLASH then
 						e.flashing[icon] = { until_ = allyUntil, window = ALLIANCE_FLASH, k = 1.5 / ALLIANCE_FLASH }
 					end

@@ -6,6 +6,7 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.RadialMenu (ModuleScript), used by GameClient (via Interact).
+--
 -- Right-click (mouse), long-press (touch) or X (gamepad) on the map opens a ring of four actions
 -- around the pointer, like OpenFront (src/client/hud/layers/RadialMenuElements.ts):
 --   centre   attack the territory (or send troops to an ally)
@@ -16,6 +17,7 @@
 -- Sub-menus open as a bigger outer ring; the centre turns into a back button.
 -- The ring is drawn into an EditableImage (annular sectors with OpenFront's gaps and colours);
 -- without EditableImage each sector falls back to a coloured disc.
+--
 -- RadialMenu.setup(ctx)
 --   ctx.gui, ctx.net, ctx.roster, ctx.getMap(), ctx.getMyId(), ctx.getRatio(), ctx.getMe(),
 --   ctx.getPhase(), ctx.ownerOf(tile), ctx.fmt(n), ctx.getStructures(), ctx.act(tile),
@@ -41,7 +43,9 @@ local Settings = require(script.Parent:WaitForChild("Settings"))
 
 local RadialMenu = {}
 
+--------------------------------------------------------------------------------
 -- Look (OpenFront RadialMenu defaults and RadialMenuElements COLORS)
+--------------------------------------------------------------------------------
 local TAU = math.pi * 2
 local CENTER_R = 30
 local ICON = 32
@@ -97,7 +101,9 @@ RadialMenu.UNIT_TEXT = UNIT_TEXT
 local BUILD_ORDER = { "Port", "MissileSilo", "SAM", "DefensePost", "City", "Factory" }
 local ATTACK_ORDER = { "AtomBomb", "MIRV", "HydrogenBomb", "Warship" }
 
+--------------------------------------------------------------------------------
 -- State
+--------------------------------------------------------------------------------
 local ctx: any = nil
 local P: any = nil -- params for the tile the menu was opened on
 local isOpen = false
@@ -147,7 +153,9 @@ local function usingGamepad(): boolean
 	return string.find(UserInputService:GetLastInputType().Name, "Gamepad") ~= nil
 end
 
+--------------------------------------------------------------------------------
 -- Game checks (what OpenFront's PlayerActions answer on the worker)
+--------------------------------------------------------------------------------
 local NB = table.create(4)
 
 -- Coast of `ownerId` within 20 tiles of `tile` (mirrors the server's boat landing search).
@@ -319,7 +327,9 @@ local function buildParams(tile: number)
 	return p
 end
 
+--------------------------------------------------------------------------------
 -- Menu elements (RadialMenuElements.ts)
+--------------------------------------------------------------------------------
 local function fire(kind: string, a1: number, a2: any)
 	ctx.net:FireServer(kind, a1, a2)
 end
@@ -441,7 +451,7 @@ local function unitItems(kinds: { string }, attack: boolean)
 						return
 					end
 					if Config.NUKES[kind] then
-						fire("nuke", P.tile, kind)
+						ctx.buildMenu.fireNuke(P.tile, kind) -- rocket direction + new-ally safety
 					elseif Config.UNITS[kind] then
 						fire("buildUnit", P.tile, kind)
 					else
@@ -631,7 +641,9 @@ local function centerAction()
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Ring geometry (d3.pie / d3.arc with padAngle 0.03) and drawing
+--------------------------------------------------------------------------------
 local geomCache: { [number]: any } = {}
 
 local function geometry(lvl: number, n: number)
@@ -820,7 +832,9 @@ local function paintLevel(lvl: number)
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Building the level frames
+--------------------------------------------------------------------------------
 local function clearLevel(lvl: number)
 	local L = levels[lvl]
 	for _, e in L.entries do
@@ -941,7 +955,9 @@ local function buildLevel(lvl: number, items: { any })
 	paintLevel(lvl)
 end
 
+--------------------------------------------------------------------------------
 -- Centre button, tooltip, hover
+--------------------------------------------------------------------------------
 local function centerEnabled(): boolean
 	if level > 0 then
 		return true -- back button
@@ -1064,7 +1080,9 @@ local function pointerPos(input: InputObject?): Vector2
 	return mouseGui()
 end
 
+--------------------------------------------------------------------------------
 -- Navigation (RadialMenu.ts)
+--------------------------------------------------------------------------------
 local function tweenScale(L, target: number, transparency: number)
 	local info = TweenInfo.new(if Settings.values.reducedMotion then 0 else TRANSITION * 0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 	TweenService:Create(L.scale, info, { Scale = target }):Play()
@@ -1264,7 +1282,9 @@ local function refresh()
 	refreshCenter()
 end
 
+--------------------------------------------------------------------------------
 -- Setup
+--------------------------------------------------------------------------------
 function RadialMenu.setup(c)
 	ctx = c
 	gui = c.gui

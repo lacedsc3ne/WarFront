@@ -22,11 +22,13 @@
 -- 7 px each): HudSidebars.topOffset() and DeviceLayout.topOffset.
 -- The War Front profile chip / MENU button (MetaClient / MainMenu) also live top-right; while they
 -- are visible the bar sits under them.
+--
 --   ReplayPanel.ts       solo rounds (only player in the server, like OpenFront single player):
 --                        fast-forward button -> "Game speed" panel (x0.5 / x1 / x2 / Max) and a
 --                        pause / play button (also the P key) - Net "gameSpeed" / "pause".
 -- The timer counts game time (phase.elapsed + SimClock), so it follows the speed and pauses.
 -- Hidden while a replay is playing (PlayerGui attribute "WFReplay").
+--
 -- HudSidebars.setup(ctx)  ctx: gui, net, roster, getMyId(), toast(text, color)?
 -- HudSidebars.openMenu(), HudSidebars.closeMenu(), HudSidebars.topOffset()
 
@@ -122,7 +124,9 @@ local function hms(d: number): string
 	return string.format("%02d:%02d", m, s)
 end
 
+--------------------------------------------------------------------------------
 -- UI
+--------------------------------------------------------------------------------
 local ui: any = {}
 
 local function iconButton(parent: Instance, icon: string, order: number)
@@ -159,9 +163,12 @@ local function buildSidebar()
 	ui.pauseBtn.Name = "PauseButton"
 	ui.pauseBtn.Visible = false
 	ui.pauseIcon = ui.pauseBtn:FindFirstChildWhichIsA("GuiObject")
-	ui.settings = iconButton(bar, "Settings", 4)
+	ui.boosts = iconButton(bar, "Crown", 4) -- one-use boosts (BoostsPanel), not OpenFront
+	ui.boosts.Name = "BoostsButton"
+	ui.boosts.Visible = false
+	ui.settings = iconButton(bar, "Settings", 5)
 	ui.settings.Name = "SettingsButton"
-	ui.exit = iconButton(bar, "Exit", 5)
+	ui.exit = iconButton(bar, "Exit", 6)
 	ui.exit.Name = "ExitButton"
 	ui.bar = bar
 
@@ -465,7 +472,9 @@ function HudSidebars.menuOpen(): boolean
 	return ui.menu ~= nil and ui.menu.dim.Visible
 end
 
+--------------------------------------------------------------------------------
 -- State
+--------------------------------------------------------------------------------
 local function applyPhase(ph)
 	if type(ph) ~= "table" then
 		return
@@ -569,6 +578,13 @@ local function step()
 		ui.speedPanel.Position = UDim2.new(1, 0, 0, below)
 		below += ui.speedPanel.AbsoluteSize.Y
 	end
+	local boosts = ui.boostsPanel
+	if boosts and boosts.Visible then
+		-- Boosts strip (BoostsPanel) right under the bar / speed panel.
+		boosts.Position = UDim2.new(1, 0, 0, below + 4)
+		DeviceLayout.setScale(boosts, (if DeviceLayout.state.profile == "console" then DeviceLayout.state.scale else 1) * DeviceLayout.userScale)
+		below += boosts.AbsoluteSize.Y + 4
+	end
 	ClockPanels.update(ctx)
 	ui.clocks.Position = UDim2.new(1, 0, 0, below + 4)
 	DeviceLayout.setScale(ui.clocks, (if DeviceLayout.state.profile == "console" then DeviceLayout.state.scale else 1) * DeviceLayout.userScale)
@@ -623,11 +639,41 @@ local function step()
 	end
 end
 
+-- keybinds.pauseGame (P): TogglePauseIntentEvent, single player only (Keybinds.lua calls this).
+local function canControlSpeed(): boolean
+	return ctx ~= nil and info.solo and playerGui:GetAttribute("WFReplay") ~= true and (info.phase == "Spawn" or info.phase == "Play")
+end
+
+function HudSidebars.togglePause()
+	if canControlSpeed() then
+		ctx.net:FireServer("pause", not info.paused)
+	end
+end
+
+-- keybinds.gameSpeedUp / gameSpeedDown (. / ,): next / previous of x0.5, x1, x2, Max.
+function HudSidebars.stepSpeed(dir: number)
+	if not canControlSpeed() then
+		return
+	end
+	local steps = { 0.5, 1, 2, 6 }
+	local i = table.find(steps, info.speedChoice) or 2
+	local n = math.clamp(i + dir, 1, #steps)
+	if n ~= i then
+		ctx.net:FireServer("gameSpeed", steps[n])
+	end
+end
+
 function HudSidebars.setup(c)
 	ctx = c
 	buildSidebar()
 	buildConfirm()
 	buildMenu()
+	local okBoosts, err = pcall(function()
+		ui.boostsPanel = require(script.Parent:WaitForChild("BoostsPanel")).setup({ button = ui.boosts, gui = c.gui, net = c.net })
+	end)
+	if not okBoosts then
+		warn("[War Front] BoostsPanel failed: " .. tostring(err))
+	end
 	ui.settings.Activated:Connect(HudSidebars.openMenu)
 	ui.speedBtn.Activated:Connect(function() -- toggleReplayPanel
 		ui.speedPanel.Visible = not ui.speedPanel.Visible
@@ -650,11 +696,6 @@ function HudSidebars.setup(c)
 	end)
 	UserInputService.InputBegan:Connect(function(input, processed)
 		local k = input.KeyCode
-		-- keybinds.pauseGame (KeyP): TogglePauseIntentEvent, single player only
-		if k == Enum.KeyCode.P and not processed and info.solo and playerGui:GetAttribute("WFReplay") ~= true and (info.phase == "Spawn" or info.phase == "Play") and not UserInputService:GetFocusedTextBox() then
-			c.net:FireServer("pause", not info.paused)
-			return
-		end
 		if k ~= Enum.KeyCode.Escape and k ~= Enum.KeyCode.ButtonB then
 			return
 		end

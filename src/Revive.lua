@@ -1,11 +1,12 @@
 --[[
-	Frontlines (working title) - free comeback after defeat (revive / new country / leave).
+	War Front - free comeback after defeat (revive / new country / leave).
 	Copyright (C) 2026 Liam (lacedsc3ne). Licensed under the GNU AGPL v3 or later.
 	Based on OpenFront: © OpenFront and Contributors - https://github.com/openfrontio/OpenFrontIO
 	Modified version re-implemented in Luau for Roblox; not affiliated with or endorsed by OpenFront.
 ]]
 
 -- ServerScriptService.Revive (ModuleScript), driven by GameServer.
+--
 -- Client -> server kinds: "revive", "newCountry", "leave" (no arguments).
 -- Server -> client kinds:
 --   "defeated" (personal) { by = killer name?, canRevive, reason?, reviveTroops, reviveGold,
@@ -14,6 +15,7 @@
 --   "reviveDenied" (personal) { reason }
 --   "left"     (personal) {}
 --   "shields"  (all)      { { playerId, endsAt (workspace:GetServerTimeNow() time) }, ... }
+--
 -- REVIVE respawns near the old spawn (random if nothing free nearby); NEW COUNTRY always picks a
 -- random spawn far from the old one. Both use the same per-round allowance
 -- (Config.REVIVES_PER_ROUND), so a player gets one comeback per round either way.
@@ -44,7 +46,8 @@ function Revive.handles(kind: string): boolean
 end
 
 local function revivesLeft(p): number
-	return math.max(0, Config.REVIVES_PER_ROUND - (used[p.userId or 0] or 0))
+	local extra = if ctx.extraRevives then ctx.extraRevives(p) else 0 -- Perks: Second Chance
+	return math.max(0, Config.REVIVES_PER_ROUND + extra - (used[p.userId or 0] or 0))
 end
 
 -- Returns nil if the player may come back now, else a short reason for the UI.
@@ -68,6 +71,15 @@ function Revive.reset()
 	table.clear(used)
 	table.clear(shields)
 	shieldsDirty = true
+end
+
+-- Shield p until untilTick (keeps a longer shield it already has). Used by Perks (Safe Landing,
+-- Shield boost); the same rules as the revive shield apply.
+function Revive.addShield(p, untilTick: number)
+	if (shields[p.id] or 0) < untilTick then
+		shields[p.id] = untilTick
+		shieldsDirty = true
+	end
 end
 
 function Revive.shielded(id: number): boolean

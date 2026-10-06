@@ -9,6 +9,7 @@
 ]]
 
 -- ServerScriptService.Matchmaker (ModuleScript), used by GameServer.
+--
 -- Every lobby server shares the queues through MemoryStoreService (sorted maps, prefix WF1_):
 --   WF1_Public   "ffa" | "team" | "special" -> that public lobby { id, type, map, mode, max, settings,
 --                startsAt, state, access, recent }
@@ -20,14 +21,17 @@
 -- A lobby is started by whichever server claims it first (UpdateAsync); it reserves a match server,
 -- stores the settings, and marks the lobby started with the access code. Every server then
 -- teleports its own players that belong to that lobby.
+--
 -- Net (client -> server), lobby place:
 --   "play" [, "ffa" | "team" | "special" | "solo" | "tutorial"]   join that public lobby
---                           (solo / tutorial: a single-player match right away)
+--                           (solo / tutorial: a single-player match right away; "solo" may carry
+--                           the single-player page's settings as a2, cleaned by cleanSettings)
 --   "leave"                 leave the public lobby
 --   "rankedJoin" / "rankedLeave"
 --   "lobbyCreate", "lobbyJoin" code, "lobbyLeave", "lobbySettings" table, "lobbyStart",
 --   "lobbyKick" userId
 -- Net (server -> client): "mm" { kind = "ranked" | "lobby" | "public" | "notice" | "teleport", ... }
+--
 -- Studio: MemoryStore works, teleports don't. A match that would start is announced with an
 -- "mm" teleport notice and its settings are stored in the workspace attribute WFMatchConfigLast
 -- (copy it into WFMatchConfig, set WFRole = "match" and press Play to test that match).
@@ -94,7 +98,9 @@ local function notice(plr: Player, text: string, color: string?)
 	send(plr, { kind = "notice", text = text, color = color })
 end
 
+--------------------------------------------------------------------------------
 -- Map sizes (MapPlaylist.calculateMapPlayerCounts / lobbyMaxPlayers)
+--------------------------------------------------------------------------------
 local function mapInfo(id: string)
 	for _, info in ctx.mapPool() do
 		if info.id == id then
@@ -115,7 +121,9 @@ local function mapPlayerCounts(id: string): (number, number, number)
 	return base, r5(base * 0.75), r5(base * 0.5)
 end
 
+--------------------------------------------------------------------------------
 -- Teleports
+--------------------------------------------------------------------------------
 local function handOff(plr: Player)
 	-- Save the profile now and stop this server from saving it again, so the next server reads
 	-- the up-to-date profile (Progression.handOff).
@@ -221,7 +229,9 @@ local function reserveMatch(cfg): string?
 	return access
 end
 
+--------------------------------------------------------------------------------
 -- Settings (HostLobbyModal / GameConfig subset)
+--------------------------------------------------------------------------------
 local DIFFICULTIES = { Easy = true, Medium = true, Hard = true, Impossible = true }
 local TEAM_CHOICES = {
 	[2] = true, [3] = true, [4] = true, [5] = true, [6] = true, [7] = true,
@@ -243,7 +253,27 @@ Matchmaker.DEFAULT_SETTINGS = {
 	infiniteGold = false,
 	infiniteTroops = false,
 	maxTimer = 0, -- minutes, 0 = no limit
+	-- GameConfigSettings extras (solo and private lobbies)
+	compact = false, -- compact map (half size, 25 % of the nations)
+	noAlliances = false, -- disable alliances
+	waterNukes = false, -- nukes turn land into water
+	overtime = false, -- the win share sinks after 30 minutes
+	doomsday = "off", -- Doomsday Clock: "off" | "slow" | "normal" | "fast" | "veryfast"
+	goldMultiplier = 1, -- 1 = off
+	startingGold = 0, -- 0 = off
+	allianceMinutes = 0, -- custom alliance duration, 0 = default (5 min)
+	immunitySeconds = 5, -- spawn immunity after the spawn phase (OpenFront default 5 s)
+	disabledUnits = {}, -- unit kinds nobody may build (Config.STRUCTURES / NUKES / UNITS keys)
 }
+local DOOMSDAY = { off = true, slow = true, normal = true, fast = true, veryfast = true }
+
+-- Number setting: a finite number clamped to [lo, hi] (rounded to `step`).
+local function num(v: any, lo: number, hi: number, step: number): number?
+	if type(v) ~= "number" or v ~= v or v == math.huge or v == -math.huge then
+		return nil
+	end
+	return math.clamp(math.floor(v / step + 0.5) * step, lo, hi)
+end
 
 -- Copies only known keys with valid values over the current settings.
 function Matchmaker.cleanSettings(incoming: any, current: any)
@@ -274,7 +304,37 @@ function Matchmaker.cleanSettings(incoming: any, current: any)
 	if type(incoming.maxTimer) == "number" and incoming.maxTimer == incoming.maxTimer then
 		out.maxTimer = math.clamp(math.floor(incoming.maxTimer + 0.5), 0, 120)
 	end
+	for _, k in { "compact", "noAlliances", "waterNukes", "overtime" } do
+		if type(incoming[k]) == "boolean" then
+			out[k] = incoming[k]
+		end
+	end
+	if type(incoming.doomsday) == "string" and DOOMSDAY[incoming.doomsday] then
+		out.doomsday = incoming.doomsday
+	end
+	out.goldMultiplier = num(incoming.goldMultiplier, 1, 10, 0.5) or out.goldMultiplier or 1
+	out.startingGold = num(incoming.startingGold, 0, 100000000, 100000) or out.startingGold or 0
+	out.allianceMinutes = num(incoming.allianceMinutes, 0, 60, 1) or out.allianceMinutes or 0
+	out.immunitySeconds = num(incoming.immunitySeconds, 0, 600, 5) or out.immunitySeconds or 5
+	if type(incoming.disabledUnits) == "table" then
+		local list = {}
+		for _, k in incoming.disabledUnits do
+			if type(k) == "string" and (Config.STRUCTURES[k] or Config.NUKES[k] or Config.UNITS[k]) and not table.find(list, k) then
+				list[#list + 1] = k
+			end
+		end
+		out.disabledUnits = list
+	end
 	return out
+end
+
+-- Settings as the match server reads them (GameServer match.rules): "off" Doomsday -> none.
+local function rulesFromSettings(s)
+	local r = table.clone(s)
+	if r.doomsday == "off" then
+		r.doomsday = nil
+	end
+	return r
 end
 
 local function modeFromSettings(s)
@@ -284,9 +344,11 @@ local function modeFromSettings(s)
 	return { kind = "FFA" }
 end
 
+--------------------------------------------------------------------------------
 -- Public lobbies (MasterLobbyService + MapPlaylist): an FFA, a Teams and a Special lobby run
 -- side by side. Each picks its map from its own playlist; Special lobbies roll FFA or Teams and
 -- one to three modifiers. The countdown starts with the first player.
+--------------------------------------------------------------------------------
 local PUB_TYPES = { "ffa", "team", "special" }
 Matchmaker.PUB_TYPES = PUB_TYPES
 
@@ -730,7 +792,9 @@ local function syncPublic()
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Ranked 1v1 (Matchmaking.ts / MapPlaylist.get1v1Config)
+--------------------------------------------------------------------------------
 local ranked = {
 	queued = {} :: { [Player]: number }, -- os.time() they joined
 	refreshedAt = {} :: { [Player]: number },
@@ -887,7 +951,9 @@ local function leaveRanked(plr: Player)
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Private lobbies (HostLobbyModal / JoinLobbyModal)
+--------------------------------------------------------------------------------
 local private = {
 	codeOf = {} :: { [Player]: string },
 }
@@ -1078,7 +1144,7 @@ local function startLobby(plr: Player)
 		map = map,
 		mode = modeFromSettings(s),
 		players = ids,
-		settings = s,
+		settings = rulesFromSettings(s),
 	})
 	if not access then
 		notice(plr, "An error occurred. Please try again or contact support.", "red")
@@ -1132,7 +1198,9 @@ local function syncPrivate()
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Requests (lobby place)
+--------------------------------------------------------------------------------
 local KINDS = {
 	play = true, leave = true,
 	rankedJoin = true, rankedLeave = true,
@@ -1145,7 +1213,8 @@ end
 
 -- Tutorial / Solo: a single-player match right away (Solo: a random map, OpenFront's
 -- single-player defaults: Medium nations, 400 bots).
-local function soloMatch(plr: Player, kind: string)
+-- custom: the single-player page's settings (SinglePlayerModal); nil = quick solo on a random map.
+local function soloMatch(plr: Player, kind: string, custom: any)
 	local pool = ctx.mapPool()
 	local map = if mapInfo("Europe") then "Europe" else pool[1].id
 	if kind == "solo" and #pool > 0 then
@@ -1154,7 +1223,16 @@ local function soloMatch(plr: Player, kind: string)
 	pub.want[plr] = nil
 	removeMember(plr)
 	local settings = if kind == "solo" then { difficulty = "Medium", bots = 400, nations = true } else {}
-	local access = reserveMatch({ kind = kind, map = map, mode = { kind = "FFA" }, players = { plr.UserId }, settings = settings })
+	local mode = { kind = "FFA" }
+	if kind == "solo" and type(custom) == "table" then
+		local s = Matchmaker.cleanSettings(custom, Matchmaker.DEFAULT_SETTINGS)
+		if not s.randomMap and mapInfo(s.map) then
+			map = s.map
+		end
+		mode = modeFromSettings(s)
+		settings = rulesFromSettings(s)
+	end
+	local access = reserveMatch({ kind = kind, map = map, mode = mode, players = { plr.UserId }, settings = settings })
 	if access then
 		task.spawn(teleportToMatch, { plr }, access, "Starting...")
 	else
@@ -1164,7 +1242,7 @@ end
 
 local lastRequestAt: { [Player]: number } = {}
 
-function Matchmaker.handle(plr: Player, kind: string, a1: any)
+function Matchmaker.handle(plr: Player, kind: string, a1: any, a2: any)
 	-- At most 5 requests a second per player (each may write to MemoryStore).
 	local now = os.clock()
 	if lastRequestAt[plr] and now - lastRequestAt[plr] < 0.2 then
@@ -1177,7 +1255,7 @@ function Matchmaker.handle(plr: Player, kind: string, a1: any)
 			return
 		end
 		if a1 == "solo" then
-			task.spawn(soloMatch, plr, "solo")
+			task.spawn(soloMatch, plr, "solo", a2) -- a2: single-player settings (optional)
 			return
 		end
 		leaveRanked(plr)
@@ -1254,7 +1332,9 @@ function Matchmaker.handle(plr: Player, kind: string, a1: any)
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Match place
+--------------------------------------------------------------------------------
 -- The settings of this match server (nil = none found: a default public FFA game).
 function Matchmaker.matchConfig(): any
 	if IS_STUDIO then
@@ -1283,6 +1363,7 @@ function Matchmaker.matchConfig(): any
 	return nil
 end
 
+--------------------------------------------------------------------------------
 function Matchmaker.init(c)
 	ctx = c
 	if not Matchmaker.active then

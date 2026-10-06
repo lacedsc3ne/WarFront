@@ -7,13 +7,59 @@
 ]]
 
 -- ServerScriptService.Teams (ModuleScript), used by GameServer.
+--
 -- Teams.rollMode(roundNumber, rng) -> mode   alternates FFA and Team rounds like OpenFront's public
 --                                             lobby schedule; Team rounds roll TEAM_WEIGHTS
 -- Teams.label(mode) -> string                 "Free for All", "4 Teams", "Duos", "Humans vs Nations"
 -- Teams.assign(mode, humans, nations, rng)    sets p.team on every human and nation
 -- Teams.checkWin(players, land, winPercent)   -> winning team name or nil
+-- Teams.loadFriends(player)                   caches a player's Roblox friends (call on join);
+--                                             Teams.assign puts friends on the same team
+--                                             (OpenFront friends.team_info)
+
+local Players = game:GetService("Players")
 
 local Teams = {}
+
+local friendsOf: { [number]: { [number]: boolean } } = {} -- userId -> set of friend userIds
+
+function Teams.loadFriends(plr: Player)
+	local uid = plr.UserId
+	task.spawn(function()
+		local set = {}
+		local ok, pages = pcall(function()
+			return Players:GetFriendsAsync(uid)
+		end)
+		if ok and pages then
+			for _ = 1, 3 do -- up to ~150 friends is plenty for grouping
+				for _, f in pages:GetCurrentPage() do
+					set[f.Id] = true
+				end
+				if pages.IsFinished then
+					break
+				end
+				if not pcall(function()
+					pages:AdvanceToNextPageAsync()
+				end) then
+					break
+				end
+			end
+		end
+		friendsOf[uid] = set
+	end)
+end
+
+function Teams.forget(uid: number)
+	friendsOf[uid] = nil
+end
+
+local function areFriends(a, b): boolean
+	if not a.userId or not b.userId then
+		return false
+	end
+	local fa, fb = friendsOf[a.userId], friendsOf[b.userId]
+	return (fa ~= nil and fa[b.userId] == true) or (fb ~= nil and fb[a.userId] == true)
+end
 
 local TEAM_ORDER = { "Red", "Blue", "Yellow", "Green", "Purple", "Orange", "Teal" }
 
@@ -187,8 +233,45 @@ function Teams.assign(mode, humans: { any }, nations: { any }, rng: Random)
 	end
 	local shuffledHumans = table.clone(humans)
 	shuffle(shuffledHumans, rng)
+	-- Friends are placed on the same team: humans go in friend groups (connected by Roblox
+	-- friendships), each group into the team with the most room for it.
+	local groupOf, groups = {}, {}
 	for _, p in shuffledHumans do
-		place(p)
+		if not groupOf[p] then
+			local g = { p }
+			groupOf[p] = g
+			local i = 1
+			while i <= #g do
+				for _, q in shuffledHumans do
+					if not groupOf[q] and areFriends(g[i], q) then
+						groupOf[q] = g
+						g[#g + 1] = q
+					end
+				end
+				i += 1
+			end
+			groups[#groups + 1] = g
+		end
+	end
+	for _, g in groups do
+		if #g == 1 then
+			place(g[1])
+		else
+			local best = list[1]
+			for _, t in list do
+				if size[t] < size[best] then
+					best = t
+				end
+			end
+			for _, p in g do
+				if size[best] < maxSize then
+					p.team = best
+					size[best] += 1
+				else
+					place(p) -- the team is full: the rest of the group goes elsewhere
+				end
+			end
+		end
 	end
 	local shuffledNations = table.clone(nations)
 	shuffle(shuffledNations, rng)

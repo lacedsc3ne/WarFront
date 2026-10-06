@@ -9,13 +9,16 @@
 ]]
 
 -- ServerScriptService.Missiles (ModuleScript), used by GameServer.
+--
 -- Missiles.init(ctx) / setMap(map) / reset() / tick()
 -- Missiles.cost(p, kind) -> gold                 (MIRV: 25M + 15M per MIRV launched this match)
 -- Missiles.launch(p, targetTile, kind) -> bool   AtomBomb | HydrogenBomb | MIRV
 -- Missiles.siloReady(p) -> (hasSilo, ready)
 -- Missiles.samRange(level) -> tiles
+--
 -- Scale: our tiles are LINEAR_SCALE (4) full-size tiles per axis, so every OpenFront distance and
 -- speed below is divided by 4 (marked "/ L").
+--
 -- Network (server -> client):
 --   "nuke"       { id, owner, kind, from, to, start, duration, speed, arc = true }  (speed in tiles/s
 --                along the Ballistics arc; start = server time the missile starts moving)
@@ -127,12 +130,14 @@ local function serverNow(): number
 	return SimClock.now()
 end
 
+--------------------------------------------------------------------------------
 -- Flights
+--------------------------------------------------------------------------------
 -- Builds the per-tick trajectory (tile at each tick) and SAM-targetable flags of a flight.
 local function plan(n, fromTile: number, toTile_: number, speed: number, ignoreBounds: boolean?)
 	local fx, fy = tileXY(fromTile)
 	local tx, ty = tileXY(toTile_)
-	local c = Ballistics.curve(fx + 0.5, fy + 0.5, tx + 0.5, ty + 0.5, H, ignoreBounds)
+	local c = Ballistics.curve(fx + 0.5, fy + 0.5, tx + 0.5, ty + 0.5, H, ignoreBounds, n.down)
 	local ticks = Ballistics.ticks(c, speed)
 	local traj = table.create(ticks + 1, 0)
 	local targetable = table.create(ticks + 1, false)
@@ -188,6 +193,9 @@ function Missiles.cost(p, kind: string): number
 	if def.costStep then
 		return def.cost + def.costStep * mirvsLaunched
 	end
+	if kind == "AtomBomb" and p and p.nukeVoucher then
+		return 0 -- Perks: Nuke Voucher boost
+	end
 	return def.cost
 end
 
@@ -207,6 +215,7 @@ local function announce(n, kind: string)
 		duration = n.ticks * Config.TICK,
 		speed = n.speed / Config.TICK,
 		arc = true,
+		down = n.down, -- arc bows down the map (Swap Rocket Direction)
 	})
 end
 
@@ -242,7 +251,7 @@ function Missiles.inboundMirv(attackerId: number, victimId: number): boolean
 	return false
 end
 
-function Missiles.launch(p, target: number, kind: string): boolean
+function Missiles.launch(p, target: number, kind: string, down: boolean?): boolean
 	local def = Config.NUKES[kind]
 	if not def or not p.alive or target < 0 or target >= W * H then
 		return false
@@ -264,11 +273,15 @@ function Missiles.launch(p, target: number, kind: string): boolean
 		return false
 	end
 	p.gold -= cost
+	if kind == "AtomBomb" and p.nukeVoucher then
+		p.nukeVoucher = nil -- the free Atom Bomb is spent
+	end
 	useSlot(silo, SILO_COOLDOWN)
 	local now = ctx.tick()
 	local id = nextId
 	nextId += 1
-	local n = { id = id, owner = p.id, kind = kind, start = now + 1, victim = victimId }
+	-- rocketDirectionUp = false: atom / hydrogen bombs may arc down the map (MIRVs always go up).
+	local n = { id = id, owner = p.id, kind = kind, start = now + 1, victim = victimId, down = if def.mirv then nil else (down == true or nil) }
 	local players = ctx.players()
 	local victim = players[victimId]
 	if def.mirv then
@@ -307,7 +320,9 @@ function Missiles.launch(p, target: number, kind: string): boolean
 	return true
 end
 
+--------------------------------------------------------------------------------
 -- MIRV warheads
+--------------------------------------------------------------------------------
 local function overlapping(grid, x: number, y: number): boolean
 	local cs = math.ceil(MIRV_SPREAD)
 	local cx, cy = x // cs, y // cs
@@ -415,7 +430,9 @@ local function spawnWarheads(n, remaining: number)
 	ctx.net:FireAllClients("warheads", { owner = n.owner, from = n.to, start = serverNow(), list = buf })
 end
 
+--------------------------------------------------------------------------------
 -- SAM launchers (SAMTargetingSystem)
+--------------------------------------------------------------------------------
 local function samTicks(samTile: number, t: number): number
 	return math.ceil(manhattan(samTile, t) / SAM_MISSILE_SPEED)
 end
@@ -545,7 +562,9 @@ local function tickSam(s, now: number, structures)
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Tick
+--------------------------------------------------------------------------------
 local UNIT_NAMES = { AtomBomb = "Atom Bomb", HydrogenBomb = "Hydrogen Bomb", MIRVWarhead = "MIRV" }
 
 local function finish(n, exploded: boolean, tile: number)

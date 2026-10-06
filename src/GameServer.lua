@@ -21,6 +21,7 @@ local Warships = require(ServerScriptService:WaitForChild("Warships"))
 local Missiles = require(ServerScriptService:WaitForChild("Missiles")) -- nukes in flight, MIRV, SAM missiles
 local Railways = require(ServerScriptService:WaitForChild("Railways")) -- factories' railroads and trains
 local Revive = require(ServerScriptService:WaitForChild("Revive"))
+local Perks = require(ServerScriptService:WaitForChild("Perks")) -- gameplay perk passes and one-use boosts
 local Emojis = require(Shared:WaitForChild("Emojis")) -- quick emoji relay (index into a fixed list)
 -- Game flow (OpenFront parity): immunity, win check, embargo/target/quick chat, stats; tribe/nation AI.
 local Flow = require(ServerScriptService:WaitForChild("GameFlow"))
@@ -83,7 +84,9 @@ local NB3 = table.create(4)
 
 local FALLOUT_OWNER = 65535 -- wire marker: unowned tile with fallout
 
+--------------------------------------------------------------------------------
 -- State
+--------------------------------------------------------------------------------
 local owner: buffer -- u16 owner id per tile (0 = nobody)
 local fallout: buffer -- u8 per tile
 local changedFlag: buffer
@@ -183,7 +186,9 @@ local function canTrade(a, b): boolean
 	return a ~= nil and b ~= nil and a ~= b and Flow.canTrade(a.id, b.id)
 end
 
+--------------------------------------------------------------------------------
 -- Tile ownership
+--------------------------------------------------------------------------------
 local function markChanged(t: number)
 	if buffer.readu8(changedFlag, t) == 0 then
 		buffer.writeu8(changedFlag, t, 1)
@@ -287,7 +292,9 @@ local function setOwner(t: number, newOwner: number)
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Players
+--------------------------------------------------------------------------------
 local function newPlayer(name: string, kind: string, userId: number?)
 	local id = nextId
 	nextId += 1
@@ -450,7 +457,9 @@ Flow.init({
 	end,
 })
 
+--------------------------------------------------------------------------------
 -- Spawning
+--------------------------------------------------------------------------------
 local function farFromSpawns(t: number, minDist: number, ignore: number?): boolean
 	local x, y = t % W, t // W
 	for _, s in spawnTiles do
@@ -539,7 +548,9 @@ local function nearestTile(x: number, y: number, maxR: number, pred: (number) ->
 	return nil
 end
 
+--------------------------------------------------------------------------------
 -- Water pathfinding (BFS over water tiles)
+--------------------------------------------------------------------------------
 local bfsStamp = buffer.create(SIZE * 2)
 local bfsParent = buffer.create(SIZE * 4)
 local bfsGen = 0
@@ -675,7 +686,9 @@ function routeJobs.step()
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Attacks
+--------------------------------------------------------------------------------
 -- Used by warships so they never fire on allied ships.
 local function isAllied(aId: number, bId: number): boolean
 	return Diplomacy.allied(aId, bId)
@@ -924,7 +937,9 @@ local function tickAttack(a)
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Boats (transport ships)
+--------------------------------------------------------------------------------
 local function launchBoat(p, clickTile: number, troops: number): boolean
 	if p.boats >= Config.MAX_BOATS then
 		return false
@@ -1042,7 +1057,9 @@ local function landBoat(b)
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Trade ships
+--------------------------------------------------------------------------------
 local function announceBoat(b)
 	local pathBuf = buffer.create(#b.path * 4)
 	for i, t in b.path do
@@ -1268,7 +1285,9 @@ local function finishTrade(b)
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Structures
+--------------------------------------------------------------------------------
 -- OpenFront costWrapper: levels owned vs levels ever built (Port and Factory share one count).
 local function structureCost(p, kind: string): number
 	return CoreRules.cost(p, kind)
@@ -1316,7 +1335,9 @@ local function tryBuild(p, t: number, kind: string): boolean
 	return true
 end
 
+--------------------------------------------------------------------------------
 -- Nukes
+--------------------------------------------------------------------------------
 -- Nuking an ally (its land at the target, or a real chunk of it in the blast) ends the alliance first.
 local function breakAlliancesForNuke(p, target: number, radius: number)
 	local hit = {}
@@ -1344,14 +1365,14 @@ local function breakAlliancesForNuke(p, target: number, radius: number)
 end
 
 -- Flight, SAM interception and MIRV splitting live in the Missiles ModuleScript.
-local function launchNuke(p, target: number, kind: string): boolean
+local function launchNuke(p, target: number, kind: string, down: boolean?): boolean
 	if not Config.NUKES[kind] or phase ~= "Play" or not p.alive or MatchRules.unitDisabled(kind) then
 		return false
 	end
 	if Flow.nukesBlocked() then
 		return false -- PlayerImpl.nukeSpawn: no nukes during spawn immunity
 	end
-	if not Missiles.launch(p, target, kind) then
+	if not Missiles.launch(p, target, kind, down) then
 		return false
 	end
 	structuresDirty = true -- clients draw the silo reload bar
@@ -1541,7 +1562,9 @@ local function detonate(n)
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Warships (logic lives in the Warships ModuleScript)
+--------------------------------------------------------------------------------
 Warships.init({
 	map = map,
 	net = net,
@@ -1658,6 +1681,33 @@ Revive.init({
 	markRoster = function()
 		rosterDirty = true
 	end,
+	extraRevives = function(p)
+		return Perks.extraRevives(p)
+	end,
+})
+
+Perks.init({
+	net = net,
+	feed = feed,
+	notify = notify,
+	playerOf = playerOf,
+	progression = Progression,
+	isRanked = function()
+		return match.cfg ~= nil and match.cfg.kind == "ranked"
+	end,
+	tick = function()
+		return tick
+	end,
+	roundStartTick = function()
+		return roundStartTick
+	end,
+	phase = function()
+		return phase
+	end,
+	players = function()
+		return players or {}
+	end,
+	addShield = Revive.addShield,
 })
 
 CoreRules.init({
@@ -1693,7 +1743,9 @@ CoreRules.init({
 	end,
 })
 
+--------------------------------------------------------------------------------
 -- AI (bots and nations)
+--------------------------------------------------------------------------------
 local function scanNeighbors(p, limit: number)
 	local hasNeutral = false
 	local found = {}
@@ -2005,11 +2057,14 @@ AiBehavior.init({
 	end,
 })
 
+--------------------------------------------------------------------------------
 -- Networking
+--------------------------------------------------------------------------------
 local function rosterPayload()
 	local list = {}
 	for id, p in players do
-		list[#list + 1] = { id, p.name, p.kind, p.color, p.userId or 0, p.level, p.vip, p.flag or "", Flow.kindName(p.kind), p.team or "" }
+		-- [11] = the "Hidden Names" stand-in for human players (createRandomName)
+		list[#list + 1] = { id, p.name, p.kind, p.color, p.userId or 0, p.level, p.vip, p.flag or "", Flow.kindName(p.kind), p.team or "", if p.kind == "Human" then TribeNames.anonymous(p.name) else "" }
 	end
 	return list
 end
@@ -2019,9 +2074,13 @@ local function statsPayload(): buffer
 	for _ in players do
 		count += 1
 	end
-	local b = buffer.create(count * 27)
+	local b = buffer.create(count * 31)
 	local o = 0
 	for id, p in players do
+		local attacking = 0 -- PlayerInfoOverlay: troops in this player's outgoing attacks
+		for a in pairs(p.outgoing) do
+			attacking += a.troops
+		end
 		buffer.writeu16(b, o, id)
 		buffer.writeu8(b, o + 2, if p.alive then 1 else 0)
 		buffer.writeu32(b, o + 3, math.clamp(math.floor(p.troops), 0, 4294967295))
@@ -2034,7 +2093,8 @@ local function statsPayload(): buffer
 		buffer.writeu16(b, o + 21, math.floor(cy * 10) % 65536)
 		buffer.writeu16(b, o + 23, p.cities)
 		buffer.writeu16(b, o + 25, p.kills)
-		o += 27
+		buffer.writeu32(b, o + 27, math.clamp(math.floor(attacking), 0, 4294967295))
+		o += 31
 	end
 	return b
 end
@@ -2156,7 +2216,9 @@ local function boatsPayload()
 	return list
 end
 
+--------------------------------------------------------------------------------
 -- Map vote
+--------------------------------------------------------------------------------
 local voteOptions: { any } = {} -- catalog entries offered in this lobby
 local votes: { [number]: string } = {} -- UserId -> map id
 
@@ -2480,7 +2542,9 @@ local function sendPersonal()
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Game flow
+--------------------------------------------------------------------------------
 local function resetWorld()
 	roundColors = Theme.newRoundColors()
 	owner = buffer.create(SIZE * 2)
@@ -2704,7 +2768,9 @@ local function startNewGame()
 			overtime = overtime,
 			goldMult = r.goldMultiplier,
 			compact = mapState.compact,
+			allianceTicks = if type(r.allianceMinutes) == "number" and r.allianceMinutes > 0 then r.allianceMinutes * 600 else 0,
 		})
+		Config.ALLIANCE_TICKS = MatchRules.allianceTicks() -- custom alliance duration (Diplomacy)
 		Config.GOLD_MULTIPLIER = if type(r.goldMultiplier) == "number" and r.goldMultiplier > 0 then r.goldMultiplier else 1
 		DoomsdayClock.start(if type(r.doomsday) == "string" then r.doomsday else nil)
 	end
@@ -2868,7 +2934,19 @@ local function endGame(winner, winnerTeam: string?)
 				}
 			end
 		end
-		task.spawn(Progression.roundEnded, results)
+		local mapName = currentMapId
+		for _, info in MapCatalog do
+			if info.id == currentMapId then
+				mapName = info.name
+			end
+		end
+		task.spawn(Progression.roundEnded, results, {
+			map = currentMapId,
+			mapName = mapName .. (if mapState.compact then " (Compact)" else ""),
+			mode = Teams.label(teamState.mode),
+			kind = if match.cfg then match.cfg.kind else "standalone",
+			players = #ranking,
+		})
 	end
 	for place, p in ranking do
 		local plr = playerOf(p)
@@ -2960,14 +3038,21 @@ local function step()
 				end
 			end
 			roundStartTick = tick
+			Perks.onPlay() -- perk passes (starting troops, gold, growth, Safe Landing shield)
 			setPhase("Play", 0)
 		end
 	elseif phase == "Play" then
 		for _, p in players do
 			if p.alive then
 				p.maxTroops = Config.maxTroops(p.kind, p.tiles, p.cities)
-				p.troops += Config.troopGrowth(p.kind, p.troops, p.maxTroops)
-				p.gold += Config.goldPerTick(p.kind)
+				local growth = Config.troopGrowth(p.kind, p.troops, p.maxTroops)
+				if growth > 0 and p.perkGrowth then
+					-- Rapid Growth: faster, but never past the cap that normal growth stops at.
+					p.troops = math.max(p.troops, math.min(p.troops + growth * p.perkGrowth, p.maxTroops))
+				else
+					p.troops += growth
+				end
+				p.gold += Config.goldPerTick(p.kind) * (p.perkGold or 1)
 				if p.kind == "Human" then
 					-- Host options infiniteGold / infiniteTroops.
 					if match.rules.infiniteGold then
@@ -3108,7 +3193,9 @@ local function step()
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Client requests
+--------------------------------------------------------------------------------
 local lastRequest: { [Player]: number } = {}
 
 net.OnServerEvent:Connect(function(plr: Player, kind: any, a1: any, a2: any, a3: any)
@@ -3125,7 +3212,7 @@ net.OnServerEvent:Connect(function(plr: Player, kind: any, a1: any, a2: any, a3:
 	end
 	if Matchmaker.handles(kind) then
 		-- Lobby place: public lobby, ranked queue and private lobbies (Matchmaker).
-		Matchmaker.handle(plr, kind, a1)
+		Matchmaker.handle(plr, kind, a1, a2)
 		return
 	end
 	if kind == "leave" and match.role == "match" then
@@ -3180,6 +3267,12 @@ net.OnServerEvent:Connect(function(plr: Player, kind: any, a1: any, a2: any, a3:
 		return
 	end
 	local p = byUser[plr.UserId]
+	if kind == "boost" then
+		if p then
+			Perks.useBoost(plr, p, a1) -- a1 = boost key (MetaConfig.BOOSTS)
+		end
+		return
+	end
 	if not p or typeof(a1) ~= "number" or a1 ~= a1 then
 		return
 	end
@@ -3321,7 +3414,7 @@ net.OnServerEvent:Connect(function(plr: Player, kind: any, a1: any, a2: any, a3:
 		end
 	elseif kind == "nuke" then
 		if typeof(a2) == "string" and Config.NUKES[a2] then
-			launchNuke(p, t, a2)
+			launchNuke(p, t, a2, a3 == true) -- a3: rocket arcs down the map
 		end
 	elseif kind == "buildUnit" then
 		if phase == "Play" and typeof(a2) == "string" and Config.UNITS[a2] then
@@ -3371,6 +3464,7 @@ end)
 
 -- New players start in the main menu; they join a round when they press Play.
 Players.PlayerAdded:Connect(function(plr)
+	Teams.loadFriends(plr) -- friends end up on the same team
 	if not gameSpeed.solo() then
 		gameSpeed.reset()
 	end
@@ -3380,7 +3474,12 @@ Players.PlayerAdded:Connect(function(plr)
 	end
 end)
 
+for _, plr in Players:GetPlayers() do
+	Teams.loadFriends(plr)
+end
+
 Players.PlayerRemoving:Connect(function(plr)
+	Teams.forget(plr.UserId)
 	-- MarkDisconnectedExecution: the nation stays on the map, marked disconnected.
 	if players and byUser[plr.UserId] then
 		Flow.setDisconnected(byUser[plr.UserId], true)
@@ -3400,11 +3499,14 @@ Players.PlayerRemoving:Connect(function(plr)
 	end
 end)
 
+--------------------------------------------------------------------------------
 -- Studio-only test hook (never exists in live servers): ServerStorage.WFDev
 -- (BindableFunction) lets Studio tools set up test situations quickly.
 --   ("info", userId) -> { id, tiles, gold, troops, cx, cy, W, H, phase }
 --   ("gold", userId, amount)   ("troops", userId, amount)
 --   ("grab", userId, cx, cy, r) take every ownable tile in a radius
+--   ("win", userId)            end the round with that player as the winner
+--------------------------------------------------------------------------------
 if RunService:IsStudio() then
 	local dev = Instance.new("BindableFunction")
 	dev.Name = "WFDev"
@@ -3433,13 +3535,17 @@ if RunService:IsStudio() then
 				end
 			end
 			return n
+		elseif cmd == "win" then
+			endGame(p)
 		end
 		return true
 	end
 	dev.Parent = game:GetService("ServerStorage")
 end
 
+--------------------------------------------------------------------------------
 -- Main loop
+--------------------------------------------------------------------------------
 resetWorld()
 players = nil :: any
 phaseEndTick = math.floor(Config.MAP_VOTE_LOBBY_SECONDS / Config.TICK)

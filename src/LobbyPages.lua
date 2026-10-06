@@ -9,11 +9,14 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.LobbyPages (ModuleScript), used by MainMenu.
+--
 -- LobbyPages.init(ctx)          ctx: net, toast(text), preview(mapId, width) -> EditableImage?,
 --                                    mapPool() -> { MapCatalog info }
 -- LobbyPages.handles(kind)      "host" | "join" | "ranked" | "public" (waiting in a public lobby)
+--                               | "solo" (SinglePlayerModal: the same game settings, then Start)
 -- LobbyPages.render(kind, page) fills a MenuKit page (MainMenu's inline page)
 -- LobbyPages.closed(kind)       the page was closed: leave the lobby / the ranked queue
+--
 -- Net: sends "lobbyCreate", "lobbyJoin", "lobbyLeave", "lobbySettings", "lobbyStart",
 -- "lobbyKick", "rankedJoin", "rankedLeave"; receives "mm" (see ServerScriptService.Matchmaker).
 
@@ -42,6 +45,21 @@ local sendAt = 0 -- when to send pendingSettings (0 = sent)
 local editedAt = 0 -- last host edit (echoes older than this are ignored for a moment)
 local refreshers: { () -> () } = {}
 local spinners: { GuiObject } = {}
+-- Single-player page settings (SinglePlayerModal DEFAULT_OPTIONS; kept while the menu is open).
+local SOLO_DEFAULTS = {
+	map = "World", randomMap = false, difficulty = "Easy", mode = "FFA", teams = 2, bots = 400,
+	nations = true, instantBuild = false, randomSpawn = false, donateGold = false, donateTroops = false,
+	infiniteGold = false, infiniteTroops = false, maxTimer = 0, compact = false, noAlliances = false,
+	waterNukes = false, overtime = false, doomsday = "off", goldMultiplier = 1, startingGold = 0,
+	allianceMinutes = 0, immunitySeconds = 5, disabledUnits = {},
+}
+local solo = { settings = table.clone(SOLO_DEFAULTS) }
+-- Units the host can switch off (GameConfigSettings "Enabled units"), in UnitDisplay order.
+local UNIT_TOGGLES = {
+	{ "City", "City" }, { "Factory", "Factory" }, { "Port", "Port" }, { "DefensePost", "Defense Post" },
+	{ "MissileSilo", "Missile Silo" }, { "SAM", "SAM Launcher" }, { "Warship", "Warship" },
+	{ "AtomBomb", "Atom Bomb" }, { "HydrogenBomb", "Hydrogen Bomb" }, { "MIRV", "MIRV" },
+}
 
 local DIFFICULTIES = { "Easy", "Medium", "Hard", "Impossible" }
 local TEAM_CHOICES = {
@@ -55,11 +73,14 @@ local function text(props)
 end
 
 local function settings(): any
+	if shown.kind == "solo" then
+		return solo.settings
+	end
 	return pendingSettings or (lobby and lobby.settings) or {}
 end
 
 local function isHost(): boolean
-	return lobby ~= nil and lobby.isHost == true
+	return shown.kind == "solo" or (lobby ~= nil and lobby.isHost == true)
 end
 
 local function mapName(id: string?): string
@@ -71,7 +92,9 @@ local function mapName(id: string?): string
 	return id or "?"
 end
 
+--------------------------------------------------------------------------------
 -- Small UI pieces
+--------------------------------------------------------------------------------
 -- Loading spinner (BaseModal renderLoadingSpinner): a ring with a coloured quarter, spinning.
 local function spinner(parent: Instance, order: number, color: Color3, label: string): TextLabel
 	local box = make("Frame", { Name = "Spinner", LayoutOrder = order, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 96), Parent = parent })
@@ -162,9 +185,20 @@ local function sectionTitle(parent: Instance, order: number, title: string)
 	MenuKit.heading(parent, order, nil, title)
 end
 
+--------------------------------------------------------------------------------
 -- Settings (GameConfigSettings subset)
+--------------------------------------------------------------------------------
 local function pushSettings(change: { [string]: any })
 	if not isHost() then
+		return
+	end
+	if shown.kind == "solo" then
+		for k, v in change do
+			solo.settings[k] = v
+		end
+		for _, f in refreshers do
+			f()
+		end
 		return
 	end
 	local s = table.clone(settings())
@@ -328,6 +362,56 @@ local function buildSettings(body: Instance, base: number, editable: boolean)
 			end)
 			order += 1
 		end
+		-- GameConfigSettings extras: modifiers, economy, alliances, spawn immunity.
+		for _, opt in {
+			{ "compact", "Compact map", "A smaller version of the map with fewer nations and tribes." },
+			{ "noAlliances", "Disable alliances", nil },
+			{ "waterNukes", "Water nukes", "Nukes turn land into water instead of leaving fallout." },
+			{ "overtime", "Overtime", "After 30 minutes the share of land needed to win keeps dropping." },
+		} do
+			local key = opt[1]
+			refreshers[#refreshers + 1] = MenuKit.toggleRow(body, order, opt[2], opt[3], function()
+				return settings()[key] == true
+			end, function(v)
+				pushSettings({ [key] = v })
+			end)
+			order += 1
+		end
+		for _, sel in {
+			{ "doomsday", "Doomsday Clock", "Hold enough land as the clock ticks or be wiped out.", { { "off", "Off" }, { "slow", "Slow" }, { "normal", "Normal" }, { "fast", "Fast" }, { "veryfast", "Very fast" } }, "off" },
+			{ "goldMultiplier", "Gold multiplier", nil, { { 1, "Off" }, { 1.5, "x1.5" }, { 2, "x2" }, { 3, "x3" }, { 5, "x5" } }, 1 },
+			{ "startingGold", "Starting gold", nil, { { 0, "Off" }, { 1000000, "1M" }, { 5000000, "5M" }, { 25000000, "25M" } }, 0 },
+			{ "allianceMinutes", "Alliance duration", "How long an alliance lasts before it must be renewed.", { { 0, "5 min" }, { 2, "2 min" }, { 3, "3 min" }, { 10, "10 min" }, { 15, "15 min" }, { 30, "30 min" } }, 0 },
+			{ "immunitySeconds", "Spawn immunity", "No attacks between players for this long after the spawn phase.", { { 5, "5 s" }, { 30, "30 s" }, { 60, "1 min" }, { 120, "2 min" }, { 300, "5 min" } }, 5 },
+		} do
+			local key, default = sel[1], sel[5]
+			refreshers[#refreshers + 1] = MenuKit.selectRow(body, order, sel[2], sel[3], sel[4], function()
+				local v = settings()[key]
+				return if v == nil then default else v
+			end, function(v)
+				pushSettings({ [key] = v })
+			end)
+			order += 1
+		end
+		sectionTitle(body, order, "Enabled units")
+		order += 1
+		for _, u in UNIT_TOGGLES do
+			local kind = u[1]
+			refreshers[#refreshers + 1] = MenuKit.toggleRow(body, order, u[2], nil, function()
+				local list = settings().disabledUnits
+				return not (type(list) == "table" and table.find(list, kind) ~= nil)
+			end, function(on)
+				local list = table.clone(settings().disabledUnits or {})
+				local i = table.find(list, kind)
+				if on and i then
+					table.remove(list, i)
+				elseif not on and not i then
+					list[#list + 1] = kind
+				end
+				pushSettings({ disabledUnits = list })
+			end)
+			order += 1
+		end
 	else
 		-- Players who joined see the host's choices.
 		local card = MenuKit.card(body, order, 16, 12, 6)
@@ -343,6 +427,26 @@ local function buildSettings(body: Instance, base: number, editable: boolean)
 					on[#on + 1] = opt[2]
 				end
 			end
+			for _, opt in { { "compact", "Compact map" }, { "noAlliances", "Alliances disabled" }, { "waterNukes", "Water nukes" }, { "overtime", "Overtime" } } do
+				if s[opt[1]] then
+					on[#on + 1] = opt[2]
+				end
+			end
+			if type(s.doomsday) == "string" and s.doomsday ~= "off" then
+				on[#on + 1] = "Doomsday Clock (" .. s.doomsday .. ")"
+			end
+			if (tonumber(s.goldMultiplier) or 1) > 1 then
+				on[#on + 1] = "x" .. s.goldMultiplier .. " gold"
+			end
+			if (tonumber(s.startingGold) or 0) > 0 then
+				on[#on + 1] = string.format("%gM starting gold", s.startingGold / 1e6)
+			end
+			if (tonumber(s.allianceMinutes) or 0) > 0 then
+				on[#on + 1] = s.allianceMinutes .. " min alliances"
+			end
+			if type(s.disabledUnits) == "table" and #s.disabledUnits > 0 then
+				on[#on + 1] = "Disabled: " .. table.concat(s.disabledUnits, ", ")
+			end
 			local bots = s.bots or 400
 			summary.Text = string.format(
 				"Tribes: %s   Nations: %s   Game length: %s%s",
@@ -356,7 +460,9 @@ local function buildSettings(body: Instance, base: number, editable: boolean)
 	return order
 end
 
+--------------------------------------------------------------------------------
 -- Players list (HostLobbyModal lobby-player-view)
+--------------------------------------------------------------------------------
 local function buildPlayers(body: Instance, order: number)
 	local title = MenuKit.heading(body, order, "People", "Players")
 	local list = make("Frame", { Name = "Players", LayoutOrder = order + 1, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Parent = body })
@@ -434,7 +540,9 @@ local function buildPlayers(body: Instance, order: number)
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Pages
+--------------------------------------------------------------------------------
 local function resetPage(page)
 	page:setTabs({})
 	page:clear()
@@ -447,9 +555,18 @@ local function lobbyIdCard(body: Instance, order: number)
 	MenuKit.paragraph(card, 1, "Lobby ID", { TextSize = 13, TextTransparency = 0.5, FontFace = F.BOLD })
 	local code = text({ LayoutOrder = 2, Size = UDim2.new(1, 0, 0, 40), TextXAlignment = Enum.TextXAlignment.Left, FontFace = Font.new(F.MONO.Family, Enum.FontWeight.Bold), TextSize = 32, Text = "", Parent = card })
 	MenuKit.paragraph(card, 3, "Friends join with JOIN LOBBY on the main menu and this ID.", { TextSize = 13, TextTransparency = 0.5 })
-	refreshers[#refreshers + 1] = function()
-		code.Text = if lobby and lobby.code then lobby.code else "......"
+	-- OpenFront "Hidden Lobby IDs": the ID shows as dots until clicked (handy when streaming).
+	local revealed = false
+	local reveal = make("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "", Parent = code })
+	local function show()
+		local id = if lobby and lobby.code then lobby.code else "......"
+		code.Text = if require(script.Parent:WaitForChild("Settings")).values.hiddenLobbyIds and not revealed then "••••••  (click to show)" else id
 	end
+	reveal.Activated:Connect(function()
+		revealed = not revealed
+		show()
+	end)
+	refreshers[#refreshers + 1] = show
 end
 
 local function renderLobby(page, hosting: boolean)
@@ -472,6 +589,33 @@ local function renderLobby(page, hosting: boolean)
 			ctx.net:FireServer("lobbyStart")
 		end)
 	end
+	for _, f in refreshers do
+		f()
+	end
+end
+
+-- Single player (SinglePlayerModal): the game settings, then START GAME.
+local function renderSolo(page)
+	resetPage(page)
+	local body = page.body
+	local order = buildSettings(body, 10, true)
+	local row = make("Frame", { LayoutOrder = order + 1, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 52), Parent = body })
+	local reset = MenuKit.button("gray", { Size = UDim2.new(0, 140, 1, 0), FontFace = F.BOLD, Text = "RESET", Parent = row })
+	reset.Activated:Connect(function()
+		solo.settings = table.clone(SOLO_DEFAULTS)
+		solo.settings.disabledUnits = {}
+		renderSolo(page)
+	end)
+	local start = MenuKit.button("primary", { Name = "StartGame", Position = UDim2.fromOffset(150, 0), Size = UDim2.new(1, -150, 1, 0), FontFace = F.BOLD, Text = "START GAME", Parent = row })
+	start.Activated:Connect(function()
+		start.Text = "STARTING…" -- game_settings.starting
+		ctx.net:FireServer("play", "solo", solo.settings)
+		task.delay(4, function()
+			if start.Parent then
+				start.Text = "START GAME"
+			end
+		end)
+	end)
 	for _, f in refreshers do
 		f()
 	end
@@ -660,7 +804,9 @@ local function renderPublic(page)
 	end
 end
 
+--------------------------------------------------------------------------------
 -- "Joining the match" screen
+--------------------------------------------------------------------------------
 local overlay: any = nil
 local function showOverlay(label: string?)
 	if not overlay then
@@ -682,11 +828,12 @@ local function hideOverlay()
 	end
 end
 
+--------------------------------------------------------------------------------
 function LobbyPages.handles(kind: string): boolean
-	return kind == "host" or kind == "join" or kind == "ranked" or kind == "public"
+	return kind == "host" or kind == "join" or kind == "ranked" or kind == "public" or kind == "solo"
 end
 
-LobbyPages.TITLES = { host = "Create Lobby", join = "Join Lobby", ranked = "1v1 Ranked Matchmaking", public = "Waiting for Game Start..." }
+LobbyPages.TITLES = { host = "Create Lobby", join = "Join Lobby", ranked = "1v1 Ranked Matchmaking", public = "Waiting for Game Start...", solo = "Solo" }
 
 function LobbyPages.render(kind: string, page)
 	shown.page, shown.kind = page, kind
@@ -710,6 +857,8 @@ function LobbyPages.render(kind: string, page)
 	elseif kind == "public" then
 		page.title.Text = "Waiting for Game Start..." -- public_lobby.title
 		renderPublic(page)
+	elseif kind == "solo" then
+		renderSolo(page)
 	end
 end
 
@@ -750,6 +899,11 @@ local function onMM(data: any)
 		ctx.toast(tostring(data.text))
 	elseif data.kind == "teleport" then
 		showOverlay(data.text)
+		if require(script.Parent:WaitForChild("Settings")).values.lobbyStartAlerts then
+			pcall(function()
+				require(script.Parent:WaitForChild("SoundKit")).play("game-start") -- OpenFront lobby start alert
+			end)
+		end
 	elseif data.kind == "public" then
 		if data.type == nil then
 			public = nil
@@ -849,7 +1003,7 @@ function LobbyPages.init(c)
 		if acc >= 0.5 then
 			acc = 0
 			-- Map previews arrive asynchronously.
-			if shown.kind == "host" or shown.kind == "join" or shown.kind == "public" then
+			if shown.kind == "host" or shown.kind == "join" or shown.kind == "public" or shown.kind == "solo" then
 				for _, f in refreshers do
 					f()
 				end

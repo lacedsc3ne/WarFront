@@ -7,6 +7,7 @@
 
 -- StarterPlayer.StarterPlayerScripts.BuildMenu (ModuleScript), used by GameClient (via Interact),
 -- RadialMenu and the unit display.
+--
 -- Mirrors src/client/hud/layers/BuildMenu.ts: Ctrl + click on the map opens a centred #1e1e1e
 -- card with one 120x140 button per buildable (buildTable order: Atom Bomb, MIRV, Hydrogen Bomb,
 -- Warship, Port, Missile Silo, SAM Launcher, Defense Post, City, Factory - kinds missing from
@@ -15,6 +16,7 @@
 -- when the player can build there OR upgrade an own structure of that kind near the tile
 -- (PlayerImpl.buildableUnits: canUpgrade wins over canBuild). Clicking sends "upgrade" (tile) or
 -- the build intent and closes. Closes on Esc / gamepad B / a click outside / any map press.
+--
 -- BuildMenu.setup(ctx)  ctx: gui, net, roster, fmt(n), getMyId(), getMe(), getMap(),
 --                       getStructures(), getUnits(), ownerOf(tile), getPhase()
 -- BuildMenu.show(tile), BuildMenu.hide(), BuildMenu.isOpen()
@@ -29,6 +31,9 @@
 --   BuildMenu.canBuildOrUpgrade(kind, tile) -> boolean
 --   BuildMenu.ghostInfo(kind, tile) -> canPlace, canUpgrade, upgradeTile?, cost, canAfford
 --   BuildMenu.perform(kind, tile)  sends "upgrade" or the build / nuke / unit intent
+--   BuildMenu.fireNuke(tile, kind) sends a nuke with the rocket direction (KeybindData.rocketUp),
+--                                  held back once if it would hit a brand-new ally (Settings
+--                                  "nukeAllySafety", BuildPreviewController.shouldBlockRecentAllyNuke)
 
 local GuiService = game:GetService("GuiService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -39,6 +44,9 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared:WaitForChild("Config"))
 local MapUtil = require(Shared:WaitForChild("MapUtil"))
 local MatchRules = require(Shared:WaitForChild("MatchRules"))
+local SimClock = require(Shared:WaitForChild("SimClock"))
+local Settings = require(script.Parent:WaitForChild("Settings"))
+local KeybindData = require(script.Parent:WaitForChild("KeybindData"))
 local IconKit = require(script.Parent:WaitForChild("IconKit"))
 
 local BuildMenu = {}
@@ -260,6 +268,80 @@ function BuildMenu.ghostInfo(kind: string, tile: number?): (boolean, boolean, nu
 	return placeable(ctx.getMap(), tile, kind), false, nil, cost, afford
 end
 
+-- Alliances already "spent" on the safety (ally id .. ":" .. formed-at), like usedSafetyAllies.
+local usedSafety: { [string]: boolean } = {}
+
+local function blockedByAllySafety(tile: number, kind: string): boolean
+	local duration = tonumber(Settings.values.nukeAllySafety) or 0
+	if duration <= 0 or not (kind == "AtomBomb" or kind == "HydrogenBomb" or kind == "MIRV") then
+		return false
+	end
+	local CM = ctx.contextMenu
+	if not CM or not CM.allyExpiry then
+		return false
+	end
+	local now = SimClock.now()
+	local fresh = {}
+	local any = false
+	for id in ctx.roster do
+		local exp = CM.allyExpiry(id)
+		if exp then
+			local created = exp - MatchRules.allianceTicks() * Config.TICK
+			local key = id .. ":" .. math.floor(created / 10) -- (expiries jitter slightly between messages)
+			if not usedSafety[key] and now - created <= duration * Config.TICK then
+				fresh[id] = key
+				any = true
+			end
+		end
+	end
+	if not any then
+		return false
+	end
+	-- Which alliances the nuke would break (MIRV: the target's owner; bombs: an ally's land at the
+	-- target, or NUKE_ALLY_BREAK_TILES of it in the blast).
+	local hits = {}
+	local o = ctx.ownerOf(tile)
+	if fresh[o] then
+		hits[o] = Config.NUKE_ALLY_BREAK_TILES
+	end
+	if kind ~= "MIRV" then
+		local map = ctx.getMap()
+		local W, H = map.width, map.height
+		local r = Config.NUKES[kind].outer
+		local cx, cy = tile % W, tile // W
+		local R = math.ceil(r)
+		for dy = -R, R do
+			for dx = -R, R do
+				local x, y = cx + dx, cy + dy
+				if dx * dx + dy * dy <= r * r and x >= 0 and x < W and y >= 0 and y < H then
+					local id = ctx.ownerOf(y * W + x)
+					if fresh[id] then
+						hits[id] = (hits[id] or 0) + 1
+					end
+				end
+			end
+		end
+	end
+	local blocked = false
+	for id, n in hits do
+		if n >= Config.NUKE_ALLY_BREAK_TILES then
+			usedSafety[fresh[id]] = true
+			blocked = true
+		end
+	end
+	if blocked and ctx.toast then
+		ctx.toast("Nuke held back: it would hit a new ally. Fire again to launch anyway.", "red", 3)
+	end
+	return blocked
+end
+
+function BuildMenu.fireNuke(tile: number, kind: string)
+	if not ctx or blockedByAllySafety(tile, kind) then
+		return
+	end
+	ctx.net:FireServer("nuke", tile, kind, KeybindData.rocketUp == false)
+end
+
 function BuildMenu.perform(kind: string, tile: number)
 	if not ctx then
 		return
@@ -269,7 +351,7 @@ function BuildMenu.perform(kind: string, tile: number)
 		net:FireServer("upgrade", tile, kind) -- kind: extra arg so the server can pick the type (OpenFront sends it)
 	elseif BuildMenu.canBuild(kind, tile) then
 		if Config.NUKES[kind] then
-			net:FireServer("nuke", tile, kind)
+			BuildMenu.fireNuke(tile, kind)
 		elseif Config.UNITS[kind] then
 			net:FireServer("buildUnit", tile, kind)
 		else
@@ -278,7 +360,9 @@ function BuildMenu.perform(kind: string, tile: number)
 	end
 end
 
+--------------------------------------------------------------------------------
 -- The grid
+--------------------------------------------------------------------------------
 local FONT = Font.fromEnum(Enum.Font.GothamMedium)
 local FONT_BOLD = Font.fromEnum(Enum.Font.GothamBold)
 local WHITE = Color3.new(1, 1, 1)

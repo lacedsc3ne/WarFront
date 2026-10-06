@@ -8,11 +8,13 @@
 ]]
 
 -- ServerScriptService.NationBuild (ModuleScript), used by GameServer through AiBehavior.
+--
 -- NationBuild.init(ctx)
 -- NationBuild.structures(p)  NationStructureBehavior.handleStructures (attack tick + 1/3 + 2/3)
 -- NationBuild.warships(p)    maybeSpawnWarship + retaliation + counterWarshipInfestation
 -- NationBuild.mirv(p)        NationMIRVBehavior.considerMIRV
 -- NationBuild.reset()
+--
 -- Scale: distances from OpenFront are divided by Config.LINEAR_SCALE (marked "/ L"), tile counts
 -- by Config.AREA_SCALE (marked "/ A").
 

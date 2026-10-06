@@ -21,6 +21,7 @@ export type Rules = {
 	overtime: boolean, -- the win share sinks after 30 minutes (public FFA)
 	goldMult: number, -- goldMultiplier
 	compact: boolean, -- compact map (half size)
+	allianceTicks: number, -- alliance duration in ticks (custom alliances; 0 = default)
 }
 
 local EMPTY: Rules = {
@@ -32,6 +33,7 @@ local EMPTY: Rules = {
 	overtime = false,
 	goldMult = 1,
 	compact = false,
+	allianceTicks = 0,
 }
 
 local ATTR = "WFMatchRules"
@@ -69,6 +71,7 @@ local function normalize(t: any): Rules
 		overtime = t.overtime == true,
 		goldMult = if type(t.goldMult) == "number" and t.goldMult > 0 then t.goldMult else 1,
 		compact = t.compact == true,
+		allianceTicks = if type(t.allianceTicks) == "number" and t.allianceTicks > 0 then math.floor(t.allianceTicks) else 0,
 	}
 end
 
@@ -104,12 +107,19 @@ function MatchRules.set(t: any)
 		overtime = rules.overtime,
 		goldMult = rules.goldMult,
 		compact = rules.compact,
+		allianceTicks = rules.allianceTicks,
 	}))
 	return MatchRules.get()
 end
 
 function MatchRules.unitDisabled(kind: string): boolean
 	return MatchRules.get().disabled[kind] == true
+end
+
+-- How long an alliance lasts this round, in ticks (host / single-player "custom alliances").
+function MatchRules.allianceTicks(): number
+	local t = MatchRules.get().allianceTicks
+	return if t > 0 then t else 3000 -- Config.ALLIANCE_TICKS default (5 min)
 end
 
 function MatchRules.alliancesOff(): boolean

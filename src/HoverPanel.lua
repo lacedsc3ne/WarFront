@@ -1,16 +1,20 @@
 --[[
-	Frontlines (working title) - hover stats panel (top-centre player info, like OpenFront's).
+	War Front - hover stats panel (top-centre player info, OpenFront's PlayerInfoOverlay).
 	Copyright (C) 2026 Liam (lacedsc3ne). Licensed under the GNU AGPL v3 or later.
 	Based on OpenFront: © OpenFront and Contributors - https://github.com/openfrontio/OpenFrontIO
 	Modified version re-implemented in Luau for Roblox; not affiliated with or endorsed by OpenFront.
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.HoverPanel (ModuleScript), used by GameClient.
+--
 -- While the pointer (mouse, gamepad virtual cursor, or a recent touch) is over a player's
--- territory, a compact panel replaces the slim top banner:
---   [coin] gold   [ troops (icon) max troops ]   <- troop bar
---   Name  Nation [Ally]
---   [city] 3  [port] 1  [defense] 0  [silo] 0  [sam] 0  [warship] 2
+-- territory, OpenFront's PlayerInfoOverlay replaces the slim top banner (bg-gray-800/92, 500 px):
+--   left column (w-36):  [coin gold]  (soldier) ↑ attacking troops
+--                        [ troops   (soldier)   max troops ]  troop bar (sky-700 + malibu)
+--   right column:        flag  Name  Nation  [alliance icon + time] [traitor icon]
+--                        [city n] [factory n] [port n] [silo n] [SAM n] [warship n]  unit chips
+-- Scaled down on narrow screens (phones).
+--
 -- HoverPanel.init(ctx)
 --   ctx.gui, ctx.banner, ctx.roster, ctx.fmt(n), ctx.getMyId(), ctx.getStructures() -> list of
 --   {id, kind, tile, owner, done}, ctx.getUnits() -> { [id]: { owner } }, ctx.contextMenu
@@ -25,30 +29,39 @@ local HoverPanel = {}
 
 local FONT = Font.fromEnum(Enum.Font.GothamMedium)
 local FONT_BOLD = Font.fromEnum(Enum.Font.GothamBold)
-local NAVY = Color3.fromRGB(10, 22, 40)
-local SLATE = Color3.fromRGB(51, 65, 85)
+local MONO_BOLD = Font.new("rbxasset://fonts/families/RobotoMono.json", Enum.FontWeight.Bold)
+local MONO = Font.new("rbxasset://fonts/families/RobotoMono.json", Enum.FontWeight.Regular)
+local GRAY800 = Color3.fromRGB(31, 41, 55)
 local GRAY600 = Color3.fromRGB(75, 85, 99)
+local GRAY500 = Color3.fromRGB(107, 114, 128)
+local GRAY400 = Color3.fromRGB(156, 163, 175)
 local GRAY900 = Color3.fromRGB(17, 24, 39)
+local SKY700 = Color3.fromRGB(3, 105, 161)
 local MALIBU = Color3.fromRGB(0, 132, 209)
+local AQUARIUS = Color3.fromRGB(63, 169, 245)
 local YELLOW = Color3.fromRGB(250, 204, 21)
+local GREEN500 = Color3.fromRGB(34, 197, 94)
+local WIDTH = 500 -- sm:w-[500px]
 
 local TOUCH_HOLD = 2.5 -- seconds the panel stays up after the last touch
 local REFRESH = 0.2 -- seconds between text refreshes for the same player
 
-local Config = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Config"))
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local Config = require(Shared:WaitForChild("Config"))
+local MatchRules = require(Shared:WaitForChild("MatchRules"))
+local SimClock = require(Shared:WaitForChild("SimClock"))
+local FlagKit = require(script.Parent:WaitForChild("FlagKit"))
 
 -- Structure / unit counters (PlayerInfoOverlay.displayUnitCount order: City, Factory, Port,
 -- Missile Silo, SAM, Warship - no Defense Post), counting total levels: { Config kind, icon name }
 local COUNTERS = {
 	{ "City", "City" },
+	{ "Factory", "Factory" },
 	{ "Port", "Port" },
 	{ "MissileSilo", "Silo" },
 	{ "SAM", "SAM" },
 	{ "Warship", "Warship" },
 }
-if Config.STRUCTURES.Factory then
-	table.insert(COUNTERS, 2, { "Factory", "Factory" })
-end
 
 local function make(className: string, props: { [string]: any })
 	local inst = Instance.new(className)
@@ -82,8 +95,27 @@ local function hlist(parent, align: Enum.HorizontalAlignment, pad: number)
 	})
 end
 
-local function escape(s: string): string
-	return (string.gsub(s, "[&<>\"]", { ["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;" }))
+local function corner(o: Instance, r: number)
+	make("UICorner", { CornerRadius = UDim.new(0, r), Parent = o })
+end
+
+local function border(o: Instance, color: Color3)
+	make("UIStroke", { Color = color, Thickness = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = o })
+end
+
+-- drop-shadow-[0_1px_1px_rgba(0,0,0,0.8)] on light text
+local function shadow(t: TextLabel)
+	t.TextStrokeColor3 = Color3.new(0, 0, 0)
+	t.TextStrokeTransparency = 0.55
+end
+
+-- OpenFront renderDuration (1:05 / 45s)
+local function duration(sec: number): string
+	sec = math.max(0, math.floor(sec))
+	if sec >= 60 then
+		return string.format("%d:%02d", sec // 60, sec % 60)
+	end
+	return sec .. "s"
 end
 
 local ctx: any = nil
@@ -92,117 +124,112 @@ local shownId = 0
 local lastRefresh = 0
 local lastTouch = -math.huge
 local hidBanner = false
-local compactNow: boolean? = nil
 
 local function build()
 	local frame = make("Frame", {
 		Name = "HoverPanel",
 		AnchorPoint = Vector2.new(0.5, 0),
-		Size = UDim2.fromOffset(300, 0),
+		Size = UDim2.fromOffset(WIDTH, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundColor3 = NAVY,
-		BackgroundTransparency = 0.1,
+		BackgroundColor3 = GRAY800,
+		BackgroundTransparency = 0.08,
 		BorderSizePixel = 0,
 		Active = false,
 		Visible = false,
 		ZIndex = 15,
 		Parent = ctx.gui,
 	})
-	make("UICorner", { CornerRadius = UDim.new(0, 8), Parent = frame })
-	make("UIStroke", { Color = SLATE, Transparency = 0.3, Thickness = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = frame })
-	local padding = make("UIPadding", { Parent = frame })
+	corner(frame, 8) -- rounded-b-lg
+	make("UIPadding", { PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6), PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6), Parent = frame })
 	local scale = make("UIScale", { Name = "HoverScale", Parent = frame })
-	local list = make("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, HorizontalAlignment = Enum.HorizontalAlignment.Center, Padding = UDim.new(0, 3), Parent = frame })
+	local content = make("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 52), ZIndex = 15, Parent = frame })
 
-	-- Row 1: gold | troop bar
-	local row1 = make("Frame", { BackgroundTransparency = 1, LayoutOrder = 1, ZIndex = 15, Parent = frame })
-	local goldBox = make("Frame", { BackgroundTransparency = 1, ZIndex = 15, Parent = row1 })
-	hlist(goldBox, Enum.HorizontalAlignment.Left, 4)
-	local goldIcon = IconKit.image("Gold", { ImageColor3 = YELLOW, LayoutOrder = 1, ZIndex = 16, Parent = goldBox })
-	local goldText = label({ Size = UDim2.fromScale(0, 1), AutomaticSize = Enum.AutomaticSize.X, FontFace = FONT_BOLD, TextColor3 = YELLOW, Text = "0", LayoutOrder = 2, ZIndex = 16, Parent = goldBox })
+	-- Left: gold + attacking troops, troop bar (w-36 = 144 px)
+	local left = make("Frame", { BackgroundTransparency = 1, Size = UDim2.new(0, 144, 1, 0), ZIndex = 15, Parent = content })
+	local gold = make("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(0, 24), AutomaticSize = Enum.AutomaticSize.X, ZIndex = 15, Parent = left })
+	corner(gold, 6)
+	border(gold, YELLOW)
+	make("UIPadding", { PaddingLeft = UDim.new(0, 5), PaddingRight = UDim.new(0, 5), Parent = gold })
+	hlist(gold, Enum.HorizontalAlignment.Center, 4)
+	IconKit.image("Gold", { Size = UDim2.fromOffset(13, 13), LayoutOrder = 1, ZIndex = 16, Parent = gold })
+	local goldText = label({ Size = UDim2.fromOffset(0, 24), AutomaticSize = Enum.AutomaticSize.X, FontFace = FONT_BOLD, TextSize = 14, TextColor3 = YELLOW, Text = "0", LayoutOrder = 2, ZIndex = 16, Parent = gold })
 
-	local bar = make("Frame", { BackgroundColor3 = GRAY900, BackgroundTransparency = 0.3, BorderSizePixel = 0, ClipsDescendants = true, ZIndex = 15, Parent = row1 })
-	make("UICorner", { CornerRadius = UDim.new(0, 5), Parent = bar })
-	make("UIStroke", { Color = GRAY600, Thickness = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = bar })
-	local fill = make("Frame", { Size = UDim2.fromScale(0, 1), BackgroundColor3 = MALIBU, BorderSizePixel = 0, ZIndex = 15, Parent = bar })
-	make("UICorner", { CornerRadius = UDim.new(0, 5), Parent = fill })
-	local barRow = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ZIndex = 16, Parent = bar })
-	hlist(barRow, Enum.HorizontalAlignment.Center, 4)
-	local troopsText = label({ Size = UDim2.fromScale(0, 1), AutomaticSize = Enum.AutomaticSize.X, FontFace = FONT_BOLD, TextStrokeTransparency = 0.5, Text = "0", LayoutOrder = 1, ZIndex = 16, Parent = barRow })
-	local troopIcon = IconKit.image("Troops", { LayoutOrder = 2, ZIndex = 16, Parent = barRow })
-	local maxText = label({ Size = UDim2.fromScale(0, 1), AutomaticSize = Enum.AutomaticSize.X, FontFace = FONT_BOLD, TextStrokeTransparency = 0.5, Text = "0", LayoutOrder = 3, ZIndex = 16, Parent = barRow })
+	-- attacking troops (soldier + ↑ over the number), white/40 when 0, aquarius otherwise
+	local atk = make("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0, 0), Size = UDim2.fromOffset(0, 24), ZIndex = 15, Parent = left })
+	local atkTop = make("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 0), Size = UDim2.fromOffset(24, 11), ZIndex = 15, Parent = atk })
+	hlist(atkTop, Enum.HorizontalAlignment.Center, 1)
+	local atkIcon = IconKit.image("Soldier", { Size = UDim2.fromOffset(10, 10), LayoutOrder = 1, ZIndex = 16, Parent = atkTop })
+	local atkArrow = label({ Size = UDim2.fromOffset(8, 11), FontFace = FONT_BOLD, TextSize = 11, Text = "↑", LayoutOrder = 2, ZIndex = 16, Parent = atkTop })
+	local atkText = label({ AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 11), Size = UDim2.new(1, 0, 0, 13), FontFace = FONT_BOLD, TextSize = 13, Text = "0", ZIndex = 16, Parent = atk })
+	shadow(atkText)
 
-	-- Row 2: name + kind / tags
-	local nameText = label({ FontFace = FONT, RichText = true, TextTruncate = Enum.TextTruncate.AtEnd, Text = "", LayoutOrder = 2, ZIndex = 16, Parent = frame })
+	local bar = make("Frame", { Position = UDim2.new(0, 0, 1, -24), Size = UDim2.new(1, 0, 0, 24), BackgroundColor3 = GRAY900, BackgroundTransparency = 0.4, BorderSizePixel = 0, ClipsDescendants = true, ZIndex = 15, Parent = left })
+	corner(bar, 6)
+	border(bar, GRAY600)
+	local troopFill = make("Frame", { Size = UDim2.fromScale(0, 1), BackgroundColor3 = SKY700, BorderSizePixel = 0, ZIndex = 15, Parent = bar })
+	local atkFill = make("Frame", { Size = UDim2.fromScale(0, 1), BackgroundColor3 = MALIBU, BorderSizePixel = 0, ZIndex = 15, Parent = bar })
+	local troopsText = label({ Position = UDim2.fromOffset(6, 0), Size = UDim2.new(0.5, -6, 1, 0), FontFace = FONT_BOLD, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, Text = "0", ZIndex = 17, Parent = bar })
+	local maxText = label({ Position = UDim2.new(0.5, 0, 0, 0), Size = UDim2.new(0.5, -6, 1, 0), FontFace = FONT_BOLD, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Right, Text = "0", ZIndex = 17, Parent = bar })
+	shadow(troopsText)
+	shadow(maxText)
+	IconKit.image("Soldier", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(14, 14), ZIndex = 17, Parent = bar })
 
-	-- Row 3: structure counters
-	local row3 = make("Frame", { BackgroundTransparency = 1, LayoutOrder = 3, ZIndex = 15, Parent = frame })
-	local row3List = hlist(row3, Enum.HorizontalAlignment.Center, 10)
+	-- Right: identity row + unit chips
+	local right = make("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(152, 0), Size = UDim2.new(1, -152, 1, 0), ZIndex = 15, Parent = content })
+	local idRow = make("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 24), ZIndex = 15, Parent = right })
+	hlist(idRow, Enum.HorizontalAlignment.Left, 8)
+	local flag = make("ImageLabel", { BackgroundTransparency = 1, Size = UDim2.fromOffset(36, 24), ScaleType = Enum.ScaleType.Fit, Visible = false, LayoutOrder = 1, ZIndex = 16, Parent = idRow })
+	local nameText = label({ Size = UDim2.fromOffset(0, 24), AutomaticSize = Enum.AutomaticSize.X, FontFace = MONO_BOLD, TextSize = 18, Text = "", LayoutOrder = 2, ZIndex = 16, Parent = idRow })
+	make("UISizeConstraint", { MaxSize = Vector2.new(200, 24), Parent = nameText })
+	nameText.TextTruncate = Enum.TextTruncate.AtEnd
+	local typeText = label({ Size = UDim2.fromOffset(0, 24), AutomaticSize = Enum.AutomaticSize.X, FontFace = MONO, TextSize = 12, TextColor3 = GRAY400, Text = "", LayoutOrder = 3, ZIndex = 16, Parent = idRow })
+	local allyBox = make("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(0, 24), AutomaticSize = Enum.AutomaticSize.X, Visible = false, LayoutOrder = 5, ZIndex = 15, Parent = idRow })
+	hlist(allyBox, Enum.HorizontalAlignment.Left, 4)
+	IconKit.image("Alliance", { Size = UDim2.fromOffset(18, 18), LayoutOrder = 1, ZIndex = 16, Parent = allyBox })
+	local allyText = label({ Size = UDim2.fromOffset(0, 24), AutomaticSize = Enum.AutomaticSize.X, FontFace = FONT_BOLD, TextSize = 12, Text = "", LayoutOrder = 2, ZIndex = 16, Parent = allyBox })
+	local traitorBox = make("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(0, 24), AutomaticSize = Enum.AutomaticSize.X, Visible = false, LayoutOrder = 4, ZIndex = 15, Parent = idRow })
+	hlist(traitorBox, Enum.HorizontalAlignment.Left, 3)
+	IconKit.image("Traitor", { Size = UDim2.fromOffset(16, 16), LayoutOrder = 1, ZIndex = 16, Parent = traitorBox })
+	local traitorText = label({ Size = UDim2.fromOffset(0, 24), AutomaticSize = Enum.AutomaticSize.X, FontFace = FONT_BOLD, TextSize = 13, TextColor3 = Color3.fromRGB(127, 29, 29), Text = "", LayoutOrder = 2, ZIndex = 16, Parent = traitorBox })
+	traitorText.TextStrokeColor3 = Color3.new(0, 0, 0)
+	traitorText.TextStrokeTransparency = 0.6
+
+	local chips = make("Frame", { BackgroundTransparency = 1, Position = UDim2.new(0, 0, 1, -28), Size = UDim2.new(1, 0, 0, 28), ZIndex = 15, Parent = right })
+	hlist(chips, Enum.HorizontalAlignment.Left, 4)
 	local counters = {}
 	for i, c in COUNTERS do
-		local cell = make("Frame", { Size = UDim2.fromScale(0, 1), AutomaticSize = Enum.AutomaticSize.X, BackgroundTransparency = 1, LayoutOrder = i, ZIndex = 15, Parent = row3 })
-		hlist(cell, Enum.HorizontalAlignment.Left, 3)
-		local icon = IconKit.image(c[2], { LayoutOrder = 1, ZIndex = 16, Parent = cell })
-		local n = label({ Size = UDim2.fromScale(0, 1), AutomaticSize = Enum.AutomaticSize.X, FontFace = FONT_BOLD, Text = "0", LayoutOrder = 2, ZIndex = 16, Parent = cell })
-		counters[c[1]] = { icon = icon, text = n }
+		-- displayUnitCount: border-gray-500 rounded-md w-12 h-7, icon w-4 + number text-xs
+		local chip = make("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(48, 28), LayoutOrder = i, ZIndex = 15, Parent = chips })
+		corner(chip, 6)
+		border(chip, GRAY500)
+		hlist(chip, Enum.HorizontalAlignment.Center, 4)
+		IconKit.image(c[2], { Size = UDim2.fromOffset(16, 16), LayoutOrder = 1, ZIndex = 16, Parent = chip })
+		local n = label({ Size = UDim2.fromOffset(0, 28), AutomaticSize = Enum.AutomaticSize.X, FontFace = FONT, TextSize = 12, Text = "0", LayoutOrder = 2, ZIndex = 16, Parent = chip })
+		counters[c[1]] = { chip = chip, text = n }
 	end
 
 	ui = {
 		frame = frame,
-		padding = padding,
 		scale = scale,
-		list = list,
-		row1 = row1,
-		goldBox = goldBox,
-		goldIcon = goldIcon,
 		goldText = goldText,
-		bar = bar,
-		fill = fill,
+		gold = gold,
+		atk = atk,
+		atkIcon = atkIcon,
+		atkArrow = atkArrow,
+		atkText = atkText,
+		troopFill = troopFill,
+		atkFill = atkFill,
 		troopsText = troopsText,
-		troopIcon = troopIcon,
 		maxText = maxText,
+		flag = flag,
 		nameText = nameText,
-		row3 = row3,
-		row3List = row3List,
+		typeText = typeText,
+		allyBox = allyBox,
+		allyText = allyText,
+		traitorBox = traitorBox,
+		traitorText = traitorText,
 		counters = counters,
 	}
-end
-
--- Sizes for the normal (desktop / tablet / console) or compact (phone) layout.
-local function applyLayout(compact: boolean)
-	if compactNow == compact then
-		return
-	end
-	compactNow = compact
-	local w = if compact then 236 else 300
-	local rowH = if compact then 18 else 22
-	local text = if compact then 11 else 13
-	local icon = if compact then 12 else 14
-	local goldW = if compact then 62 else 76
-	local p = if compact then 5 else 7
-	ui.frame.Size = UDim2.fromOffset(w, 0)
-	ui.padding.PaddingLeft = UDim.new(0, p + 2)
-	ui.padding.PaddingRight = UDim.new(0, p + 2)
-	ui.padding.PaddingTop = UDim.new(0, p)
-	ui.padding.PaddingBottom = UDim.new(0, p)
-	ui.list.Padding = UDim.new(0, if compact then 2 else 4)
-	ui.row1.Size = UDim2.new(1, 0, 0, rowH)
-	ui.goldBox.Size = UDim2.new(0, goldW, 1, 0)
-	ui.bar.Position = UDim2.fromOffset(goldW + 4, 0)
-	ui.bar.Size = UDim2.new(1, -(goldW + 4), 1, 0)
-	ui.goldIcon.Size = UDim2.fromOffset(icon, icon)
-	ui.troopIcon.Size = UDim2.fromOffset(icon - 1, icon - 1)
-	for _, t in { ui.goldText, ui.troopsText, ui.maxText } do
-		t.TextSize = text
-	end
-	ui.nameText.Size = UDim2.new(1, 0, 0, if compact then 15 else 18)
-	ui.nameText.TextSize = text + 1
-	ui.row3.Size = UDim2.new(1, 0, 0, if compact then 14 else 16)
-	ui.row3List.Padding = UDim.new(0, if compact then 7 else 11)
-	for _, c in ui.counters do
-		c.icon.Size = UDim2.fromOffset(icon - 1, icon - 1)
-		c.text.TextSize = text
-	end
 end
 
 local function kindName(p): string
@@ -221,24 +248,49 @@ local function fill(id: number)
 	end
 	local s = p.stats
 	local fmt = ctx.fmt
-	ui.goldText.Text = fmt(s.gold)
 	local fmtT = ctx.fmtTroops or fmt -- renderTroops
+	ui.goldText.Text = fmt(s.gold) -- renderNumber
+	-- The attacking-troops column fills the space right of the gold pill.
+	local gw = ui.gold.AbsoluteSize.X / math.max(0.01, ui.scale.Scale)
+	ui.atk.Position = UDim2.fromOffset(gw + 4, 0)
+	ui.atk.Size = UDim2.new(1, -(gw + 4), 0, 24)
+	local attacking = s.attacking or 0
+	local hot = attacking > 0
+	ui.atkText.Text = fmtT(attacking)
+	ui.atkText.TextColor3 = if hot then AQUARIUS else Color3.new(1, 1, 1)
+	ui.atkText.TextTransparency = if hot then 0 else 0.6
+	ui.atkArrow.TextColor3 = ui.atkText.TextColor3
+	ui.atkArrow.TextTransparency = ui.atkText.TextTransparency
+	ui.atkIcon.ImageColor3 = if hot then AQUARIUS else Color3.new(1, 1, 1)
+	ui.atkIcon.ImageTransparency = if hot then 0 else 0.6
+
+	-- renderTroopBar: troops (sky-700) then attacking troops (malibu), both out of max troops.
+	local base = math.max(1, s.maxTroops)
+	local green = math.clamp(s.troops / base, 0, 1)
+	local orange = math.clamp(attacking / base, 0, 1 - green)
+	ui.troopFill.Size = UDim2.fromScale(green, 1)
+	ui.atkFill.Position = UDim2.fromScale(green, 0)
+	ui.atkFill.Size = UDim2.fromScale(orange, 1)
 	ui.troopsText.Text = fmtT(s.troops)
 	ui.maxText.Text = fmtT(s.maxTroops)
-	ui.fill.Size = UDim2.fromScale(math.clamp(s.troops / math.max(1, s.maxTroops), 0, 1), 1)
 
-	local parts = { "<b>" .. escape(p.name) .. "</b>", '<font color="#9ca3af">' .. kindName(p) .. "</font>" }
-	if id == ctx.getMyId() then
-		parts[#parts + 1] = '<font color="#ffd700">(you)</font>'
-	end
+	-- Identity: flag, name (green when friendly), player type, traitor / alliance markers.
+	ui.flag.Visible = FlagKit.set(ui.flag, p.flag)
+	local myId = ctx.getMyId()
+	local me = ctx.roster[myId]
 	local cm = ctx.contextMenu
-	if cm and cm.isAlly(id) then
-		parts[#parts + 1] = '<font color="#6ef0a0">[Ally]</font>'
-	end
-	if cm and cm.isTraitor(id) then
-		parts[#parts + 1] = '<font color="#ff6e5a">[Traitor]</font>'
-	end
-	ui.nameText.Text = table.concat(parts, " ")
+	local allied = cm ~= nil and cm.isAlly(id)
+	local teammate = me ~= nil and id ~= myId and (p.team or "") ~= "" and p.team == me.team
+	ui.nameText.Text = p.name .. (if id == myId then " (you)" else "")
+	ui.nameText.TextColor3 = if allied or teammate then GREEN500 else Color3.new(1, 1, 1)
+	ui.typeText.Text = kindName(p) .. (if (p.team or "") ~= "" and p.kind ~= "Bot" then " [" .. p.team .. "]" else "")
+	local traitorEnds = cm and cm.traitorUntil and cm.traitorUntil(id)
+	local traitorLeft = if traitorEnds then traitorEnds - SimClock.now() else 0
+	ui.traitorBox.Visible = cm ~= nil and cm.isTraitor(id)
+	ui.traitorText.Text = if traitorLeft > 0 then duration(traitorLeft) else ""
+	local expiry = allied and cm.allyExpiry and cm.allyExpiry(id)
+	ui.allyBox.Visible = allied
+	ui.allyText.Text = if expiry then duration(expiry - SimClock.now()) else ""
 
 	local counts = {}
 	for _, st in ctx.getStructures() do
@@ -253,10 +305,9 @@ local function fill(id: number)
 		end
 	end
 	for kind, c in ui.counters do
-		local n = counts[kind] or 0
-		c.text.Text = tostring(n)
-		c.text.TextTransparency = if n > 0 then 0 else 0.45
-		c.icon.ImageTransparency = if n > 0 then 0 else 0.45
+		-- displayUnitCount hides units the round's rules disable (and Factory if it isn't in the game).
+		c.chip.Visible = not MatchRules.unitDisabled(kind) and (Config.STRUCTURES[kind] ~= nil or Config.UNITS[kind] ~= nil)
+		c.text.Text = tostring(counts[kind] or 0)
 	end
 end
 
@@ -305,21 +356,19 @@ function HoverPanel.update(ownerId: number, viaGamepad: boolean): boolean
 		return false
 	end
 
-	local dl = ctx.deviceLayout
-	local profile = if dl and dl.state then dl.state.profile else "desktop"
 	local gui = ctx.gui
-	applyLayout(profile == "phone" or gui.AbsoluteSize.X < 560)
 
-	-- Same scale as the banner (console UI scale), placed where the banner sits.
+	-- Same scale as the banner (console UI scale), smaller when 500 px doesn't fit (phones).
 	local banner = ctx.banner
 	local bs = banner:FindFirstChild("DeviceScale")
 	local s = if bs and bs:IsA("UIScale") then bs.Scale else 1
+	s = math.min(s, (gui.AbsoluteSize.X - 8) / WIDTH)
 	ui.scale.Scale = s
 	local gp = gui.AbsolutePosition
 	local bp, bz = banner.AbsolutePosition, banner.AbsoluteSize
 	local half = ui.frame.AbsoluteSize.X / 2
 	if half < 1 then
-		half = (if compactNow then 236 else 300) * s / 2
+		half = WIDTH * s / 2
 	end
 	local x = math.clamp(bp.X + bz.X / 2 - gp.X, half + 4, math.max(half + 4, gui.AbsoluteSize.X - half - 4))
 	ui.frame.Position = UDim2.fromOffset(x, bp.Y - gp.Y)

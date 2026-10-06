@@ -8,6 +8,7 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.NameInput (ModuleScript), used by MainMenu.
+--
 -- NameInput.attach(box: TextBox, toast(msg))
 --   The box shows your in-game name (your Roblox display name until you type one). On focus
 --   lost the name is checked here (3-20 letters, numbers, spaces, _ - .) and sent to the server

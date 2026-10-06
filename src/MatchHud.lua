@@ -17,6 +17,7 @@
 --                      the sender's territory for 5 s (NameLayer)
 -- Reads the "me" snapshot (attacks, incoming, boatList, boatsIn) through ctx.getMe(); listens to
 -- Shared.Net itself for "init", "phase" and "emoji".
+--
 -- MatchHud.setup(ctx)
 --   ctx.gui, ctx.net, ctx.roster, ctx.getMyId(), ctx.getMe(), ctx.getPhase(), ctx.getRatio(),
 --   ctx.fmt(n), ctx.stack (HudStack frame: the attack rows go in it), ctx.labelLayer (map overlay
@@ -94,7 +95,9 @@ local function eta(seconds: number): string
 	return (if m > 0 then m .. "m" else "") .. (if s > 0 then s .. "s" else "")
 end
 
+--------------------------------------------------------------------------------
 -- Attacks display
+--------------------------------------------------------------------------------
 local attacks = { rows = {} :: { [string]: any }, frame = nil :: any, grid = nil :: any }
 
 local ROW_H = 26
@@ -343,7 +346,9 @@ local function buildAttacks(parent: Instance)
 	})
 end
 
+--------------------------------------------------------------------------------
 -- Spawn timer + heads-up message + toast
+--------------------------------------------------------------------------------
 local phaseInfo = { phase = "Lobby", ticksLeft = 0, at = 0, winnerId = 0, winner = nil :: string?, winnerTeam = nil :: string? }
 local spawnBar: Frame
 local spawnFill: Frame
@@ -436,7 +441,9 @@ local function refreshTop()
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Win modal
+--------------------------------------------------------------------------------
 local win = { card = nil :: any, title = nil :: any, body = nil :: any, keep = nil :: any, shownFor = "" }
 
 local function hideWin()
@@ -521,6 +528,13 @@ local function buildWin()
 		Replay.start()
 	end)
 	win.replay.Visible = false
+	-- OpenFront GameStatsModal: this round's stats (server "matchStats", GameStatsView).
+	win.stats = oButton("STATS", 4, function()
+		if win.matchStats then
+			require(script.Parent:WaitForChild("GameStatsView")).open(gui, win.matchStats)
+		end
+	end)
+	win.stats.Visible = false
 	win.card = c
 end
 
@@ -565,10 +579,12 @@ local function refreshWin()
 	end
 	-- flex-1 buttons: share the row between the visible ones
 	local canReplay = Replay.available()
-	if win.replay.Visible ~= canReplay then
+	local hasStats = win.matchStats ~= nil
+	if win.replay.Visible ~= canReplay or win.stats.Visible ~= hasStats then
 		win.replay.Visible = canReplay
-		local n = if canReplay then 3 else 2
-		for _, b in { win.keep, win.replay, win.exitBtn } do
+		win.stats.Visible = hasStats
+		local n = 2 + (if canReplay then 1 else 0) + (if hasStats then 1 else 0)
+		for _, b in { win.keep, win.replay, win.exitBtn, win.stats } do
 			if b then
 				b.Size = UDim2.new(1 / n, -(10 * (n - 1)) / n, 1, 0)
 			end
@@ -576,7 +592,9 @@ local function refreshWin()
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Emoji messages
+--------------------------------------------------------------------------------
 local bubbles: { any } = {}
 
 local function onEmoji(data)
@@ -598,7 +616,9 @@ local function onEmoji(data)
 	end
 	-- Over the sender's territory for everyone it was meant for (NameLayer shows emojis sent to
 	-- us or to all players).
-	if (to == myId or to == 0) and ctx.labelLayer and sender.stats and sender.stats.tiles > 0 then
+	-- Settings "Emojis" off hides them over the map.
+	local showEmojis = require(script.Parent:WaitForChild("Settings")).values.emojis ~= false
+	if showEmojis and (to == myId or to == 0) and ctx.labelLayer and sender.stats and sender.stats.tiles > 0 then
 		local b = label({
 			AnchorPoint = Vector2.new(0.5, 1),
 			Size = UDim2.fromOffset(34, 34),
@@ -629,7 +649,9 @@ local function stepBubbles()
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Setup
+--------------------------------------------------------------------------------
 function MatchHud.setup(c)
 	ctx = c
 	gui = c.gui
@@ -643,6 +665,13 @@ function MatchHud.setup(c)
 				b.label:Destroy()
 			end
 			table.clear(bubbles)
+		end
+		if kind == "matchStats" and type(data) == "table" then
+			win.matchStats = data -- shown by the win modal's STATS button
+		elseif (kind == "phase" and type(data) == "table" and data.phase == "Spawn") or kind == "init" then
+			if not (kind == "init" and type(data) == "table" and type(data.phase) == "table" and data.phase.phase == "Ended") then
+				win.matchStats = nil -- a new round
+			end
 		end
 		if (kind == "phase" or kind == "init") and type(data) == "table" then
 			local ph = if kind == "init" then data.phase else data

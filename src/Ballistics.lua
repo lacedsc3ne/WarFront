@@ -8,11 +8,14 @@
 ]]
 
 -- ReplicatedStorage.Shared.Ballistics (ModuleScript).
+--
 -- OpenFront nukes, MIRVs and MIRV warheads fly a cubic Bezier arc that bows "up" the map
 -- (toward y = 0) by max(distance / 3, 50 tiles), clamped to the map, and advance `speed` tiles
 -- of arc length per tick. Our tiles are LINEAR_SCALE (4) times bigger, so the 50-tile minimum
 -- height becomes 12.5 here and speeds are divided by 4 by the caller.
--- Ballistics.curve(fx, fy, tx, ty, mapHeight, ignoreBounds?) -> curve
+--
+-- Ballistics.curve(fx, fy, tx, ty, mapHeight, ignoreBounds?, down?) -> curve   (down: the arc bows
+--                                             down the map instead, "Swap Rocket Direction")
 -- Ballistics.length(curve) -> arc length in tiles
 -- Ballistics.at(curve, dist) -> x, y          point after `dist` tiles of arc (clamped)
 -- Ballistics.ticks(curve, speed) -> number    ticks of flight (>= 1)
@@ -27,10 +30,13 @@ local function bez(p0, p1, p2, p3, t)
 	return u * u * u * p0 + 3 * u * u * t * p1 + 3 * u * t * t * p2 + t * t * t * p3
 end
 
-function Ballistics.curve(fx: number, fy: number, tx: number, ty: number, mapHeight: number, ignoreBounds: boolean?)
+function Ballistics.curve(fx: number, fy: number, tx: number, ty: number, mapHeight: number, ignoreBounds: boolean?, down: boolean?)
 	local dx, dy = tx - fx, ty - fy
 	local dist = math.sqrt(dx * dx + dy * dy)
 	local h = math.max(dist / 3, Ballistics.MIN_HEIGHT)
+	if down then
+		h = -h -- getParabolaControlPoints with directionUp = false
+	end
 	local p1y = fy + dy / 4 - h
 	local p2y = fy + dy * 3 / 4 - h
 	if not ignoreBounds then

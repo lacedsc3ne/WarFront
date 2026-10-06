@@ -8,10 +8,12 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.SoundKit (ModuleScript), used by GameClient and UI modules.
+--
 -- SoundKit.setup({ myId = fn, roster = fn, structures = fn -> rows })
 -- SoundKit.play(name)                 one of the cue names below (no-op until the asset is uploaded)
 -- SoundKit.onNet(kind, data)          derives OpenFront's game cues from server messages
 -- SoundKit.step(zoom, centerTile, W)  structure ambience near the screen centre when zoomed in
+--
 -- Asset ids live in ReplicatedStorage.Shared.SoundIds (name -> "rbxassetid://..."), filled in once
 -- the files in Documents/WarFront/sounds are uploaded to Roblox.
 

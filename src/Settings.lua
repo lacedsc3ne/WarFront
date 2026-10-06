@@ -6,6 +6,7 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.Settings (ModuleScript), used by GameClient and PauseMenu.
+--
 -- Settings.values[key]            current value (read freely; write only through Settings.set)
 -- Settings.set(key, value)        validates, applies, fires Changed, saves ~2 s after the last change
 -- Settings.Changed(key, value)    RBXScriptSignal
@@ -13,8 +14,10 @@
 -- Settings.buildUI(parent) -> { first: GuiObject, refresh() }   the settings page (PauseMenu hosts it)
 -- Helpers for GameClient's renderer: flatTerrainRGB(byte), nearOtherOwner(map, owners, t, o),
 -- growTouched(map, touched).
+--
 -- Persistence: loaded once from MetaFn "get" (profile.settings), saved with MetaFn "saveSettings".
 -- Progression.lua (server) validates against its own copy of the keys below - keep them in sync.
+--
 -- Applied here directly: UI scale (DeviceLayout.setUserScale), leaderboard default
 -- (DeviceLayout.setBoardDefault) and audio: SoundService.Master (SoundGroup) holds the
 -- SoundGroup "Effects"; future sounds should use SoundGroup = SoundService.Master.Effects.
@@ -50,6 +53,21 @@ local DEFAULTS = {
 	interfaceVolume = 50,
 	musicVolume = 50, -- OpenFront default music 0.5
 	muted = false,
+	-- OpenFront UserSettings (UserSettingModal Gameplay / Graphics / Audio tabs)
+	alertFrame = true, -- red / orange screen frame when betrayed or attacked over land
+	leftClickMenu = false, -- left click opens the radial menu (the sword item attacks)
+	anonymousNames = false, -- "Hidden Names": other players get fake names on your screen
+	hiddenLobbyIds = false, -- private lobby ID hidden until clicked
+	lobbyStartAlerts = false, -- start chime when your lobby / ranked match starts
+	goToPlayer = true, -- zoom to your land when the spawn phase ends
+	attackRatio = 20, -- % of troops per attack (remembered between games)
+	attackRatioIncrement = 10, -- % per T / Y press and Shift + wheel step
+	nukeAllySafety = 5, -- ticks: a nuke that would hit an alliance this new is held back once
+	emojis = true, -- show emojis in game
+	perfOverlay = false, -- performance overlay (Shift + D)
+	muteOnBlur = false, -- silence the game while the window is not focused
+	alertsWhenUnfocused = true, -- ... but keep alerts audible
+	keybinds = "", -- JSON action -> key overrides (KeybindData)
 }
 Settings.DEFAULTS = DEFAULTS
 
@@ -62,6 +80,9 @@ local RANGES = {
 	ambienceVolume = { 0, 100, 5 },
 	interfaceVolume = { 0, 100, 5 },
 	musicVolume = { 0, 100, 5 },
+	attackRatio = { 1, 100, 1 },
+	attackRatioIncrement = { 1, 20, 1 },
+	nukeAllySafety = { 0, 30, 1 },
 }
 
 local values = table.clone(DEFAULTS)
@@ -79,7 +100,7 @@ local function clean(key: string, v: any): any
 		return if type(v) == "boolean" then v else nil
 	end
 	if type(d) == "string" then
-		return if type(v) == "string" and #v <= 300 then v else nil
+		return if type(v) == "string" and #v <= (if key == "keybinds" then 2000 else 300) then v else nil
 	end
 	if type(v) ~= "number" or v ~= v or v == math.huge or v == -math.huge then
 		return nil
@@ -88,7 +109,9 @@ local function clean(key: string, v: any): any
 	return math.clamp(math.floor(v / r[3] + 0.5) * r[3], r[1], r[2])
 end
 
+--------------------------------------------------------------------------------
 -- Applying (things not owned by GameClient)
+--------------------------------------------------------------------------------
 local master = SoundService:FindFirstChild("Master")
 if not (master and master:IsA("SoundGroup")) then
 	master = Instance.new("SoundGroup")
@@ -119,17 +142,29 @@ local function gain(v: number): number
 	return (v / 100) ^ 2
 end
 
+-- AudioMixer mute-on-blur: everything but (optionally) the alerts goes quiet while the window
+-- is not focused.
+local focused = true
 local function applyAudio()
+	local blur = values.muteOnBlur and not focused
 	master.Volume = if values.muted then 0 else gain(values.masterVolume)
-	effects.Volume = gain(values.effectsVolume)
-	alerts.Volume = gain(values.alertsVolume)
-	ambienceGroup.Volume = gain(values.ambienceVolume)
-	interface.Volume = gain(values.interfaceVolume)
-	musicGroup.Volume = gain(values.musicVolume)
+	effects.Volume = if blur then 0 else gain(values.effectsVolume)
+	alerts.Volume = if blur and not values.alertsWhenUnfocused then 0 else gain(values.alertsVolume)
+	ambienceGroup.Volume = if blur then 0 else gain(values.ambienceVolume)
+	interface.Volume = if blur then 0 else gain(values.interfaceVolume)
+	musicGroup.Volume = if blur then 0 else gain(values.musicVolume)
 end
+UserInputService.WindowFocusReleased:Connect(function()
+	focused = false
+	applyAudio()
+end)
+UserInputService.WindowFocused:Connect(function()
+	focused = true
+	applyAudio()
+end)
 
 local function apply(key: string)
-	if key == "masterVolume" or key == "effectsVolume" or key == "alertsVolume" or key == "ambienceVolume" or key == "interfaceVolume" or key == "musicVolume" or key == "muted" then
+	if key == "masterVolume" or key == "effectsVolume" or key == "alertsVolume" or key == "ambienceVolume" or key == "interfaceVolume" or key == "musicVolume" or key == "muted" or key == "muteOnBlur" or key == "alertsWhenUnfocused" then
 		applyAudio()
 	elseif key == "uiScale" then
 		if DeviceLayout.setUserScale then
@@ -142,7 +177,9 @@ local function apply(key: string)
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Persistence
+--------------------------------------------------------------------------------
 local loaded = false
 local dirty: { [string]: boolean } = {} -- keys the player changed before the profile arrived
 local saveToken = 0
@@ -240,7 +277,9 @@ end)
 
 applyAudio()
 
+--------------------------------------------------------------------------------
 -- Renderer helpers (used by GameClient)
+--------------------------------------------------------------------------------
 -- Terrain shading off: one land colour, one water colour (impassable mountains stay grey).
 function Settings.flatTerrainRGB(b: number): (number, number, number)
 	if b >= 128 then
@@ -283,7 +322,9 @@ function Settings.growTouched(map, touched: { [number]: boolean })
 	end
 end
 
+--------------------------------------------------------------------------------
 -- Settings page
+--------------------------------------------------------------------------------
 local FONT = Font.fromEnum(Enum.Font.GothamMedium)
 local FONT_BOLD = Font.fromEnum(Enum.Font.GothamBold)
 local FONT_BLACK = Font.fromEnum(Enum.Font.GothamBlack)

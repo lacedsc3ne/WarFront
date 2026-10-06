@@ -10,6 +10,7 @@
 
 -- StarterPlayer.StarterPlayerScripts.MenuKit (ModuleScript), used by MainMenu, MenuPages,
 -- MetaClient and DefeatScreen.
+--
 -- MenuKit.C            colour tokens (OpenFront theme names)
 -- MenuKit.F            fonts (Builder Sans, the closest Roblox match to OpenFront's system sans)
 -- MenuKit.make / corner / stroke / pad / text / list   instance helpers
@@ -94,7 +95,9 @@ MenuKit.F = {
 }
 local F = MenuKit.F
 
+--------------------------------------------------------------------------------
 -- Instance helpers
+--------------------------------------------------------------------------------
 local function make(className: string, props: { [string]: any }?): any
 	local inst = Instance.new(className)
 	local parent = nil
@@ -180,7 +183,9 @@ function MenuKit.paragraph(parent: Instance, order: number, str: string, props: 
 	return MenuKit.text(p)
 end
 
+--------------------------------------------------------------------------------
 -- Icons (MenuIconsData, decoded once per name into a shared EditableImage)
+--------------------------------------------------------------------------------
 local B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 local DEC = table.create(256, 0)
 for i = 1, 64 do
@@ -325,7 +330,9 @@ function MenuKit.icon(name: string, props: { [string]: any }?): ImageLabel
 	return img
 end
 
+--------------------------------------------------------------------------------
 -- Interaction feedback (mouse hover, touch press, gamepad selection)
+--------------------------------------------------------------------------------
 function MenuKit.hover(b: GuiButton, fn: (string) -> ())
 	local over, sel, down = false, false, false
 	local function update()
@@ -454,8 +461,10 @@ function MenuKit.dot(parent: Instance, color: Color3?): Frame
 	return d
 end
 
+--------------------------------------------------------------------------------
 -- Inline page (o-modal inline: bg-black/70, lg:rounded-2xl, lg:border white/10) with
 -- modalHeader (round back button + uppercase title, border-b) and optional tab strip.
+--------------------------------------------------------------------------------
 export type Page = {
 	frame: Frame,
 	header: Frame,
@@ -694,7 +703,9 @@ function Page.firstSelectable(self: any): GuiObject?
 	return best or self.back
 end
 
+--------------------------------------------------------------------------------
 -- Page content pieces
+--------------------------------------------------------------------------------
 -- HelpModal section heading: blue-400 icon, text-xl bold uppercase white/90, gradient rule.
 function MenuKit.heading(parent: Instance, order: number, iconName: string?, title: string): Frame
 	local row = make("Frame", { Name = "Heading", LayoutOrder = order, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 40), Parent = parent })
@@ -947,6 +958,63 @@ function MenuKit.sliderRow(
 	return refresh
 end
 
+-- setting-select: a pill showing the current option; click (or gamepad A / left / right) cycles
+-- through the options. options = { { value, label } }.
+function MenuKit.selectRow(parent: Instance, order: number, label: string, desc: string?, options: { { any } }, get: () -> any, set: (any) -> ()): () -> ()
+	local b, right = settingRow(parent, order, label, desc, 120)
+	b.NextSelectionLeft = b
+	b.NextSelectionRight = b
+	local pill = MenuKit.text({
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.fromScale(1, 0.5),
+		Size = UDim2.fromOffset(120, 32),
+		BackgroundTransparency = 0.4,
+		BackgroundColor3 = C.BLACK,
+		FontFace = F.BOLD,
+		TextSize = 14,
+		Text = "",
+		Parent = right,
+	})
+	MenuKit.corner(pill, 8)
+	MenuKit.stroke(pill, 0.8)
+	local function index(): number
+		local v = get()
+		for i, o in options do
+			if o[1] == v then
+				return i
+			end
+		end
+		return 1
+	end
+	local function refresh()
+		pill.Text = "‹  " .. tostring(options[index()][2]) .. "  ›"
+	end
+	local function step(d: number)
+		local i = (index() - 1 + d) % #options + 1
+		set(options[i][1])
+		refresh()
+	end
+	b.Activated:Connect(function()
+		step(1)
+	end)
+	local conn = UserInputService.InputBegan:Connect(function(input)
+		if GuiService.SelectedObject ~= b then
+			return
+		end
+		local k = input.KeyCode
+		if k == Enum.KeyCode.DPadLeft or k == Enum.KeyCode.Left then
+			step(-1)
+		elseif k == Enum.KeyCode.DPadRight or k == Enum.KeyCode.Right then
+			step(1)
+		end
+	end)
+	b.Destroying:Connect(function()
+		conn:Disconnect()
+	end)
+	refresh()
+	return refresh
+end
+
 -- Navigation row (same shell as the setting rows) with an icon, label, description and a
 -- chevron; red = the danger style (SettingsModal exit row: text-red-400, hover bg-red-600/20).
 function MenuKit.navRow(parent: Instance, order: number, iconName: string?, label: string, desc: string?, red: boolean?): (TextButton, TextLabel)
@@ -981,11 +1049,13 @@ function MenuKit.navRow(parent: Instance, order: number, iconName: string?, labe
 	return b, value
 end
 
+--------------------------------------------------------------------------------
 -- Modal (o-modal, not inline): full-screen bg-black/60 backdrop that closes on click, and a
 -- centred page (w-[90%], max 900 px, max-h 100vh - 4rem, rounded-2xl). Phones get the page
 -- full screen without rounding, like OpenFront below the lg breakpoint.
 --   m = MenuKit.modal(screenGui, name)   m.page (MenuKit page), m.holder, m.onBack = fn
 --   m.open(), m.close(), m.isOpen(), m.layout()
+--------------------------------------------------------------------------------
 function MenuKit.modal(gui: Instance, name: string?): any
 	local m: any = {}
 	local holder = make("Frame", { Name = name or "Modal", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Visible = false, ZIndex = 50, Parent = gui })
