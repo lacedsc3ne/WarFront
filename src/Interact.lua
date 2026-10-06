@@ -36,8 +36,8 @@ function Interact.setup(ctx)
 	ctx.exitGame = ctx.exitGame
 		or function()
 			local ok, PauseMenu = pcall(require, script.Parent:WaitForChild("PauseMenu", 5))
-			if ok and PauseMenu and PauseMenu.showMainMenu then
-				PauseMenu.showMainMenu()
+			if ok and PauseMenu and PauseMenu.exitGame then
+				PauseMenu.exitGame() -- "leave": back to the lobby place (Studio: the menu)
 			end
 		end
 	Interact.build.setup(ctx)

@@ -29,6 +29,7 @@ local DeviceLayout = require(script.Parent:WaitForChild("DeviceLayout"))
 local MenuKit = require(script.Parent:WaitForChild("MenuKit"))
 local MenuPages = require(script.Parent:WaitForChild("MenuPages"))
 local Replay = require(script.Parent:WaitForChild("Replay"))
+local Place = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Place"))
 
 local F = MenuKit.F
 
@@ -155,11 +156,14 @@ renderMain = function()
 			Replay.start()
 		end)
 	end
-	local menuRow = MenuKit.navRow(body, 8, "Menu", "Main Menu", "Maps, voting and news (the battle keeps going)")
-	menuRow.Activated:Connect(function()
-		PauseMenu.close()
-		ctx.showMainMenu()
-	end)
+	-- A live match server has no main menu of its own (the menu is the lobby place): only Exit Game.
+	if Place.role() ~= "match" or game:GetService("RunService"):IsStudio() then
+		local menuRow = MenuKit.navRow(body, 8, "Menu", "Main Menu", "Maps, voting and news (the battle keeps going)")
+		menuRow.Activated:Connect(function()
+			PauseMenu.close()
+			ctx.showMainMenu()
+		end)
+	end
 	local exitRow, exitValue = MenuKit.navRow(body, 9, "X", "Exit Game", "Return to main menu", true)
 	exitRow.Activated:Connect(function()
 		-- First press arms it; a second press within 3 s leaves (OpenFront asks to confirm).
@@ -230,7 +234,11 @@ function PauseMenu.open()
 	renderMain()
 end
 
--- The win modal's "Exit Game" (MatchHud): back to the main menu.
+-- The win modal's "Exit Game" (MatchHud): leave the match (a match server sends us to the lobby).
+function PauseMenu.exitGame()
+	exitGame()
+end
+
 function PauseMenu.showMainMenu()
 	PauseMenu.close()
 	ctx.showMainMenu()
