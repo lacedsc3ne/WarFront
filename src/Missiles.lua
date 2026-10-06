@@ -236,6 +236,17 @@ local function mirvSpeed(fromTile: number, sepTile: number): number
 	return math.max(0.05, Ballistics.length(actual) * SCALE / target)
 end
 
+-- Nukes / MIRV warheads of one owner in flight (Studio test hook WFDev "state").
+function Missiles.countOwned(ownerId: number): number
+	local n = 0
+	for _, nk in nukes do
+		if nk.owner == ownerId then
+			n += 1
+		end
+	end
+	return n
+end
+
 -- True while a MIRV from attackerId aimed at victimId is in flight (NationMIRVBehavior).
 function Missiles.inboundMirv(attackerId: number, victimId: number): boolean
 	for _, n in nukes do

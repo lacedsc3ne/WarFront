@@ -99,8 +99,6 @@ local structureAt: { [number]: any }
 local nextStructureId: number
 local boats: { [number]: any }
 local nextBoatId: number
-local nukes: { [number]: any }
-local nextNukeId: number
 local spawnTiles: { number }
 local routeCache: { [string]: any }
 local tick = 0
@@ -2580,8 +2578,6 @@ local function resetWorld()
 	nextStructureId = 1
 	boats = {}
 	nextBoatId = 1
-	nukes = {}
-	nextNukeId = 1
 	spawnTiles = {}
 	routeCache = {}
 	routeJobs.job = nil
@@ -3539,6 +3535,8 @@ end)
 --   ("item", userId, key, n)   add n boosts (or "revive") to the player's inventory
 --   ("kill", userId)           defeat that player (defeat screen / revive tests)
 --   ("medals", userId, n)      add n medals (works outside a round too, like "item")
+--   ("state", userId)          counts for tests: structures by kind (levels), boats, nukes, warships,
+--                              alliances, phase, alive
 if RunService:IsStudio() then
 	local dev = Instance.new("BindableFunction")
 	dev.Name = "WFDev"
@@ -3575,6 +3573,26 @@ if RunService:IsStudio() then
 				end
 			end
 			return n
+		elseif cmd == "state" then
+			local out = { phase = phase, alive = p.alive, gold = p.gold, troops = p.troops, tiles = p.tiles, structures = {}, boats = 0, nukes = 0, warships = Warships.count(p.id), allies = 0 }
+			for _, st in structures do
+				if st.owner == p.id then
+					local key = st.kind .. (if st.done then "" else "(building)")
+					out.structures[key] = (out.structures[key] or 0) + (st.level or 1)
+				end
+			end
+			for _, bt in boats do
+				if bt.owner == p.id then
+					out.boats += 1
+				end
+			end
+			out.nukes = Missiles.countOwned(p.id)
+			for id in players do
+				if id ~= p.id and Diplomacy.allied(p.id, id) then
+					out.allies += 1
+				end
+			end
+			return out
 		elseif cmd == "win" then
 			endGame(p)
 		elseif cmd == "kill" then -- ("kill", userId): defeat that player now

@@ -412,6 +412,18 @@ local function onPlayerAdded(plr: Player)
 	perkCache[plr] = perks
 	claimDaily(plr)
 	claimGroup(plr)
+	-- Leaderboards only change when a game ends; put players whose wins / Elo predate the boards
+	-- (or whose last update failed) on them once.
+	local profile = profiles[plr]
+	if loaded[plr] and profile.lbSynced ~= 2 then
+		profile.lbSynced = 2
+		if (tonumber(profile.wins) or 0) > 0 then
+			lbUpdate("wins", plr.UserId, plr.DisplayName, profile.wins, profile.games, profile.wins)
+		end
+		if type(profile.elo) == "number" then
+			lbUpdate("elo", plr.UserId, plr.DisplayName, profile.elo, profile.rankedGames, profile.rankedWins)
+		end
+	end
 	push(plr)
 end
 
@@ -431,11 +443,20 @@ for _, plr in Players:GetPlayers() do
 	task.spawn(onPlayerAdded, plr)
 end
 
+-- Server shutting down: save everyone and wait until every save is done (Roblox allows 30 s).
 game:BindToClose(function()
+	local pending = 0
 	for _, plr in Players:GetPlayers() do
-		task.spawn(save, plr)
+		pending += 1
+		task.spawn(function()
+			pcall(save, plr)
+			pending -= 1
+		end)
 	end
-	task.wait(3)
+	local started = os.clock()
+	while pending > 0 and os.clock() - started < 25 do
+		task.wait(0.1)
+	end
 end)
 
 task.spawn(function()
