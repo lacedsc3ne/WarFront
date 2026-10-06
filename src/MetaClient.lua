@@ -85,33 +85,94 @@ corner(xpFill, 99)
 local shopButton = button({ Position = UDim2.fromOffset(12, 50), Size = UDim2.fromOffset(110, 32), Text = "STORE", Parent = chip })
 local statsButton = button({ Position = UDim2.fromOffset(128, 50), Size = UDim2.fromOffset(110, 32), BackgroundColor3 = MenuKit.C.GRAY700, Text = "STATS", Parent = chip })
 
--- Toast (rewards, level ups, daily)
-local toast = make("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, -140), Size = UDim2.fromOffset(380, 110), BackgroundColor3 = PANEL, BorderSizePixel = 0, Visible = false, Parent = gui })
-corner(toast, 10)
-make("UIStroke", { Color = GOLD, Thickness = 2, Parent = toast })
-local toastTitle = label({ Position = UDim2.fromOffset(0, 12), Size = UDim2.new(1, 0, 0, 28), FontFace = FONT_BOLD, TextSize = 22, TextColor3 = GOLD, Text = "", Parent = toast })
-local toastBody = label({ Position = UDim2.fromOffset(16, 44), Size = UDim2.new(1, -32, 0, 56), TextWrapped = true, Text = "", Parent = toast })
+-- Reward popup (rewards, level ups, daily, group): a card that drops in under the top bar with an
+-- icon tile, title, one line of text, reward pills and a bar that runs down while it's shown.
+local IconKit = require(localPlayer:WaitForChild("PlayerScripts"):WaitForChild("IconKit"))
+local TOAST_SECONDS = 4.5
+local toastUi: any = {}
+do
+	local t = make("Frame", { Name = "RewardToast", AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, -160), Size = UDim2.fromOffset(420, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundColor3 = MenuKit.C.GRAY900, BackgroundTransparency = 0.04, BorderSizePixel = 0, Visible = false, ClipsDescendants = true, Parent = gui })
+	corner(t, 14)
+	make("UISizeConstraint", { MaxSize = Vector2.new(420, 400), Parent = t })
+	toastUi.stroke = make("UIStroke", { Color = GOLD, Transparency = 0.55, Thickness = 1.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = t })
+	make("UIPadding", { PaddingTop = UDim.new(0, 14), PaddingBottom = UDim.new(0, 18), PaddingLeft = UDim.new(0, 14), PaddingRight = UDim.new(0, 16), Parent = t })
+	local tile = make("Frame", { Name = "IconTile", Size = UDim2.fromOffset(52, 52), BackgroundColor3 = GOLD, BackgroundTransparency = 0.82, BorderSizePixel = 0, Parent = t })
+	corner(tile, 12)
+	toastUi.tileStroke = make("UIStroke", { Color = GOLD, Transparency = 0.6, Thickness = 1, Parent = tile })
+	toastUi.tile = tile
+	toastUi.icon = IconKit.image("Crown", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(30, 30), ImageColor3 = GOLD, Parent = tile })
+	local col = make("Frame", { Name = "Text", Position = UDim2.fromOffset(66, 0), Size = UDim2.new(1, -66, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, Parent = t })
+	make("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = col })
+	toastUi.kicker = label({ LayoutOrder = 1, Size = UDim2.new(1, 0, 0, 14), FontFace = FONT_BOLD, TextSize = 11, TextColor3 = GOLD, TextXAlignment = Enum.TextXAlignment.Left, Text = "", Parent = col })
+	toastUi.title = label({ LayoutOrder = 2, Size = UDim2.new(1, 0, 0, 22), FontFace = FONT_BOLD, TextSize = 19, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Text = "", Parent = col })
+	toastUi.body = label({ LayoutOrder = 3, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, TextSize = 13, TextTransparency = 0.3, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, Text = "", Parent = col })
+	local pills = make("Frame", { Name = "Pills", LayoutOrder = 4, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, Parent = col })
+	make("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Wraps = true, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = pills })
+	make("UIPadding", { PaddingTop = UDim.new(0, 4), Parent = pills })
+	toastUi.pills = pills
+	local track = make("Frame", { Name = "Timer", AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, -14, 1, 18), Size = UDim2.new(1, 30, 0, 3), BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 0.92, BorderSizePixel = 0, Parent = t })
+	toastUi.bar = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = GOLD, BorderSizePixel = 0, Parent = track })
+	toastUi.frame = t
+end
 
 local toastQueue = {}
 local toastBusy = false
-local function showToast(title: string, body: string)
-	table.insert(toastQueue, { title, body })
+
+-- opts: { kicker = "DAILY REWARD", icon = IconKit name, color = Color3, pills = { { text, icon?, color? } } }
+local function renderToast(title: string, body: string, opts: any)
+	local color = opts.color or GOLD
+	toastUi.kicker.Text = string.upper(opts.kicker or "")
+	toastUi.kicker.Visible = (opts.kicker or "") ~= ""
+	toastUi.kicker.TextColor3 = color
+	toastUi.title.Text = title
+	toastUi.body.Text = body
+	toastUi.body.Visible = body ~= ""
+	toastUi.stroke.Color = color
+	toastUi.tile.BackgroundColor3 = color
+	toastUi.tileStroke.Color = color
+	IconKit.set(toastUi.icon, opts.icon or "Crown")
+	toastUi.icon.ImageColor3 = color
+	toastUi.bar.BackgroundColor3 = color
+	for _, c in toastUi.pills:GetChildren() do
+		if c:IsA("Frame") then
+			c:Destroy()
+		end
+	end
+	toastUi.pills.Visible = opts.pills ~= nil and #opts.pills > 0
+	for i, pill in opts.pills or {} do
+		local pc = pill.color or color
+		local f = make("Frame", { LayoutOrder = i, Size = UDim2.fromOffset(0, 26), AutomaticSize = Enum.AutomaticSize.X, BackgroundColor3 = pc, BackgroundTransparency = 0.84, BorderSizePixel = 0, Parent = toastUi.pills })
+		corner(f, 13)
+		make("UIStroke", { Color = pc, Transparency = 0.55, Thickness = 1, Parent = f })
+		make("UIPadding", { PaddingLeft = UDim.new(0, if pill.icon then 6 else 10), PaddingRight = UDim.new(0, 10), Parent = f })
+		make("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, VerticalAlignment = Enum.VerticalAlignment.Center, Padding = UDim.new(0, 5), SortOrder = Enum.SortOrder.LayoutOrder, Parent = f })
+		if pill.icon then
+			IconKit.image(pill.icon, { LayoutOrder = 1, Size = UDim2.fromOffset(16, 16), ImageColor3 = pc, Parent = f })
+		end
+		label({ LayoutOrder = 2, Size = UDim2.fromOffset(0, 26), AutomaticSize = Enum.AutomaticSize.X, FontFace = FONT_BOLD, TextSize = 13, TextColor3 = pc, Text = pill.text, Parent = f })
+	end
+end
+
+local function showToast(title: string, body: string, opts: any?)
+	table.insert(toastQueue, { title, body, opts or {} })
 	if toastBusy then
 		return
 	end
 	toastBusy = true
 	task.spawn(function()
+		local t = toastUi.frame
 		while #toastQueue > 0 do
 			local item = table.remove(toastQueue, 1)
-			toastTitle.Text = item[1]
-			toastBody.Text = item[2]
-			toast.Visible = true -- hidden while idle: on scaled/TV layouts the off-screen spot can peek in
-			TweenService:Create(toast, TweenInfo.new(0.35, Enum.EasingStyle.Back), { Position = UDim2.new(0.5, 0, 0, 70) }):Play()
-			task.wait(4)
-			TweenService:Create(toast, TweenInfo.new(0.3), { Position = UDim2.new(0.5, 0, 0, -140) }):Play()
-			task.wait(0.4)
+			renderToast(item[1], item[2], item[3])
+			t.Visible = true -- hidden while idle: on scaled/TV layouts the off-screen spot can peek in
+			toastUi.bar.Size = UDim2.fromScale(1, 1)
+			TweenService:Create(t, TweenInfo.new(0.4, Enum.EasingStyle.Back), { Position = UDim2.new(0.5, 0, 0, 96) }):Play()
+			TweenService:Create(toastUi.bar, TweenInfo.new(TOAST_SECONDS, Enum.EasingStyle.Linear), { Size = UDim2.fromScale(0, 1) }):Play()
+			task.wait(TOAST_SECONDS)
+			TweenService:Create(t, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Position = UDim2.new(0.5, 0, 0, -160) }):Play()
+			task.wait(0.35)
 		end
-		toast.Visible = false
+		t.Visible = false
 		toastBusy = false
 	end)
 end
@@ -252,7 +313,7 @@ local function applyMetaLayout()
 		shopButton.TextSize, statsButton.TextSize = 14, 14
 		DeviceLayout.setScale(chip, 1)
 
-		DeviceLayout.setScale(toast, 0.75)
+		DeviceLayout.setScale(toastUi.frame, 0.75)
 	else
 		chip.AnchorPoint = Vector2.new(1, 0) -- top-right: the leaderboard owns the top-left
 		chip.Position = UDim2.new(1, -12, 0, 12)
@@ -266,7 +327,7 @@ local function applyMetaLayout()
 		shopButton.TextSize, statsButton.TextSize = 15, 15
 		DeviceLayout.setScale(chip, s)
 
-		DeviceLayout.setScale(toast, s)
+		DeviceLayout.setScale(toastUi.frame, s)
 	end
 	if window.Visible then
 		modal.layout()
@@ -298,11 +359,34 @@ metaEvent.OnClientEvent:Connect(function(kind: string, data: any)
 		local place = data.placement
 		local suffix = if place == 1 then "st" elseif place == 2 then "nd" elseif place == 3 then "rd" else "th"
 		local title = if data.won then "Victory!" else string.format("You placed %d%s", place, suffix)
-		showToast(title, string.format("+%d XP   +%d medals%s", data.xp, data.coins, if data.vip then "  (VIP bonus)" else ""))
+		showToast(title, if data.vip then "VIP bonus included." else "", {
+			kicker = "Match rewards",
+			icon = if data.won then "Crown" else "Leaderboard",
+			pills = { { text = "+" .. data.xp .. " XP", color = MenuKit.C.MALIBU }, { text = "+" .. data.coins .. " medals", icon = "Gold" } },
+		})
 	elseif kind == "levelUp" then
-		showToast("Level up!", "You reached level " .. data .. ". New colours may be unlocked in the shop.")
+		showToast("Level " .. data, "New colours may be unlocked in the store.", { kicker = "Level up", icon = "UpperLimit", color = MenuKit.C.MALIBU })
 	elseif kind == "daily" then
-		showToast("Daily reward - day " .. data.day, string.format("+%d medals. Come back tomorrow to keep your streak!", data.coins))
+		showToast("Day " .. data.day .. " streak", "Come back tomorrow to keep your streak going.", {
+			kicker = "Daily reward",
+			icon = "Gold",
+			pills = { { text = "+" .. data.coins .. " medals", icon = "Gold" } },
+		})
+	elseif kind == "group" and type(data) == "table" then
+		local pills = {}
+		if (tonumber(data.medals) or 0) > 0 then
+			pills[#pills + 1] = { text = "+" .. data.medals .. " medals", icon = "Gold" }
+		end
+		if type(data.boost) == "string" then
+			local b = MetaConfig.boost(data.boost)
+			pills[#pills + 1] = { text = "+1 " .. (if b then b.name else "boost"), icon = if b then b.icon else "Gold", color = MenuKit.C.MALIBU }
+		end
+		showToast("Thanks for being in the group!", if data.boost then "A new free boost every day you play." else "", {
+			kicker = MetaConfig.GROUP.name .. " reward",
+			icon = "Alliance",
+			color = Color3.fromRGB(20, 205, 185),
+			pills = pills,
+		})
 	end
 end)
 

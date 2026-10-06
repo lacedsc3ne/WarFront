@@ -12,6 +12,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local DataStoreService = game:GetService("DataStoreService")
 local MarketplaceService = game:GetService("MarketplaceService")
 local BadgeService = game:GetService("BadgeService")
+local GroupService = game:GetService("GroupService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local MetaConfig = require(Shared:WaitForChild("MetaConfig"))
@@ -43,6 +44,7 @@ local loaded: { [Player]: boolean } = {} -- true only when loaded from (or confi
 local vipCache: { [Player]: boolean } = {}
 local allColorsCache: { [Player]: boolean } = {}
 local perkCache: { [Player]: { [string]: boolean } } = {} -- gameplay perk passes owned (MetaConfig.PERKS)
+local groupCache: { [Player]: boolean } = {} -- in MetaConfig.GROUP (checked on join and on request)
 
 local function defaultProfile()
 	return {
@@ -63,6 +65,8 @@ local function defaultProfile()
 		rankedGames = 0,
 		rankedWins = 0,
 		boosts = {}, -- one-use boosts owned: key -> count (MetaConfig.BOOSTS)
+		groupMedals = false, -- the one-time group reward was given
+		lastGroupBoost = 0, -- day number of the last free daily group boost
 		history = {}, -- last HISTORY_MAX games, newest last (see Progression.roundEnded)
 	}
 end
@@ -288,6 +292,9 @@ local function publicProfile(plr: Player)
 		rankedWins = p.rankedWins,
 		perks = perkCache[plr] or {},
 		boosts = if typeof(p.boosts) == "table" then p.boosts else {},
+		inGroup = groupCache[plr] or false,
+		groupMedals = p.groupMedals == true,
+		groupBoostToday = p.lastGroupBoost == os.time() // 86400,
 	}
 end
 
@@ -326,6 +333,58 @@ local function claimDaily(plr: Player)
 	metaEvent:FireClient(plr, "daily", { day = p.streak, coins = coins, table = MetaConfig.DAILY })
 end
 
+-- Group rewards (MetaConfig.GROUP). GetGroupsAsync is not cached for the session like IsInGroup,
+-- so "check again" after joining works without rejoining.
+local function checkGroup(plr: Player): boolean
+	local ok, groups = pcall(function()
+		return GroupService:GetGroupsAsync(plr.UserId)
+	end)
+	if not ok or type(groups) ~= "table" then
+		return groupCache[plr] or false
+	end
+	for _, g in groups do
+		if g.Id == MetaConfig.GROUP.id then
+			return true
+		end
+	end
+	return false
+end
+
+-- Gives what a group member hasn't had yet (the one-time medals, today's free boost). Returns a
+-- message for the store.
+local function claimGroup(plr: Player): string
+	local p = profiles[plr]
+	groupCache[plr] = checkGroup(plr)
+	if not p or not groupCache[plr] then
+		return "Join " .. MetaConfig.GROUP.name .. " to get the group rewards."
+	end
+	if not loaded[plr] then
+		return "Group rewards are paused: your progress can't be saved right now."
+	end
+	local got = {}
+	local gift = {}
+	if not p.groupMedals then
+		p.groupMedals = true
+		p.coins += MetaConfig.GROUP.MEDALS
+		got[#got + 1] = "+" .. MetaConfig.GROUP.MEDALS .. " medals"
+		gift.medals = MetaConfig.GROUP.MEDALS
+	end
+	local today = os.time() // 86400
+	local boost = MetaConfig.boost(MetaConfig.GROUP.DAILY_BOOST)
+	if boost and p.lastGroupBoost ~= today then
+		p.lastGroupBoost = today
+		p.boosts[boost.key] = (tonumber(p.boosts[boost.key]) or 0) + 1
+		got[#got + 1] = "a free " .. boost.name
+		gift.boost = boost.key
+	end
+	if #got > 0 then
+		task.spawn(save, plr)
+		metaEvent:FireClient(plr, "group", gift)
+		return "Group reward: " .. table.concat(got, " and ") .. "."
+	end
+	return "Thanks for being in the group! Your next free boost comes tomorrow."
+end
+
 -- Player lifecycle
 local function onPlayerAdded(plr: Player)
 	local data
@@ -352,6 +411,7 @@ local function onPlayerAdded(plr: Player)
 	end
 	perkCache[plr] = perks
 	claimDaily(plr)
+	claimGroup(plr)
 	push(plr)
 end
 
@@ -362,6 +422,7 @@ local function onPlayerRemoving(plr: Player)
 	vipCache[plr] = nil
 	allColorsCache[plr] = nil
 	perkCache[plr] = nil
+	groupCache[plr] = nil
 end
 
 Players.PlayerAdded:Connect(onPlayerAdded)
@@ -476,6 +537,12 @@ metaFn.OnServerInvoke = function(plr: Player, action: any, arg: any)
 			return false, "Unknown colour"
 		end
 		local owned = c.price == 0 or allColorsCache[plr] or table.find(p.ownedColors, c.id) ~= nil
+		if c.group then
+			owned = groupCache[plr] == true
+			if not owned then
+				return false, "Join " .. MetaConfig.GROUP.name .. " to use this colour"
+			end
+		end
 		if action == "buyColor" and not owned then
 			local level = MetaConfig.levelFromXP(p.xp)
 			if level < c.level then
@@ -525,6 +592,10 @@ metaFn.OnServerInvoke = function(plr: Player, action: any, arg: any)
 			return true, b.name .. " added. Use it from the defeat screen."
 		end
 		return true, b.name .. " added. Use it in a match from the boosts bar."
+	elseif action == "groupCheck" then
+		local msg = claimGroup(plr)
+		push(plr)
+		return true, msg
 	elseif action == "clearColor" then
 		p.color = nil
 		push(plr)
@@ -551,7 +622,11 @@ function Progression.colorFor(plr: Player)
 	if not c then
 		return nil
 	end
-	if c.price > 0 and not allColorsCache[plr] and not table.find(p.ownedColors, c.id) then
+	if c.group then
+		if not groupCache[plr] then
+			return nil -- left the group: random colour
+		end
+	elseif c.price > 0 and not allColorsCache[plr] and not table.find(p.ownedColors, c.id) then
 		return nil
 	end
 	return c.rgb

@@ -1017,7 +1017,23 @@ local function storeGrid(parent: Instance, order: number, cellH: number): Frame
 end
 
 local function ownsColor(p: any, c: any): boolean
+	if c.group then
+		return p.inGroup == true -- group members only (MetaConfig.GROUP)
+	end
 	return c.price == 0 or p.allColors == true or (type(p.ownedColors) == "table" and table.find(p.ownedColors, c.id) ~= nil)
+end
+
+-- Roblox's join-group prompt, then the server checks membership and gives the rewards.
+local function joinGroup(page: any)
+	task.spawn(function()
+		local ok = pcall(function()
+			game:GetService("GroupService"):PromptJoinAsync(MetaConfig.GROUP.id)
+		end)
+		if not ok then
+			storeStatus(page, "Open the group page on Roblox to join: " .. MetaConfig.GROUP.name)
+		end
+		storeInvoke(page, "groupCheck")
+	end)
 end
 
 renderStoreTab = function(page: any, tab: string)
@@ -1062,6 +1078,10 @@ renderStoreTab = function(page: any, tab: string)
 			elseif owned then
 				cardAction(card, "Equip", "primary", function()
 					storeInvoke(page, "equipColor", c.id)
+				end)
+			elseif c.group then
+				cardAction(card, "Join the group", "primary", function()
+					joinGroup(page)
 				end)
 			elseif locked then
 				cardAction(card, "Unlocks at level " .. c.level, "muted")
@@ -1113,6 +1133,50 @@ renderStoreTab = function(page: any, tab: string)
 			perks[#perks + 1] = { id = perk.id, name = perk.name, desc = perk.desc, owned = ownedPerks[perk.key] == true, gameIcon = perk.icon }
 		end
 		passGrid(4, perks)
+	elseif tab == "group" then
+		local G = MetaConfig.GROUP
+		local boost = MetaConfig.boost(G.DAILY_BOOST)
+		local colour = MetaConfig.color(G.COLOR)
+		MenuKit.paragraph(body, 1, "Join " .. G.name .. " on Roblox and get:", { FontFace = F.BOLD, TextColor3 = C.WHITE })
+		local grid = storeGrid(body, 2, 230)
+		local rows = {
+			{ name = numberText(G.MEDALS) .. " medals", desc = "Once, when you join", done = p.groupMedals == true, art = function(art)
+				MenuKit.text({ AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.4), Size = UDim2.fromScale(1, 0.4), FontFace = F.BOLD, TextSize = 26, TextColor3 = C.CYBER, Text = numberText(G.MEDALS), Parent = art })
+			end },
+			{ name = if colour then colour.name else "Group colour", desc = "Group-only territory colour", done = p.inGroup == true, art = function(art)
+				if colour then
+					local sw = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.4), Size = UDim2.fromScale(0.45, 0.45), BackgroundColor3 = Color3.fromRGB(colour.rgb[1], colour.rgb[2], colour.rgb[3]), BorderSizePixel = 0, Parent = art })
+					make("UIAspectRatioConstraint", { Parent = sw })
+					MenuKit.round(sw)
+				end
+			end },
+			{ name = "Free " .. (if boost then boost.name else "boost"), desc = "Every day you play", done = p.groupBoostToday == true, art = function(art)
+				IconKit.image(if boost then boost.icon else "Gold", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.4), Size = UDim2.fromOffset(44, 44), Parent = art })
+			end },
+		}
+		for i, r in rows do
+			local card = storeCard(grid, i, r.name, function(art)
+				r.art(art)
+				MenuKit.paragraph(art, 0, r.desc, { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -6), Size = UDim2.new(1, -12, 0, 0), TextSize = 12, TextXAlignment = Enum.TextXAlignment.Center, TextColor3 = C.WHITE, TextTransparency = 0.4 })
+			end)
+			if r.done then
+				cardAction(card, if i == 3 then "Got today's" elseif i == 2 then "Unlocked" else "Claimed", "owned")
+			else
+				cardAction(card, if p.inGroup then "Tomorrow" else "Join to unlock", "muted")
+			end
+		end
+		if p.inGroup then
+			MenuKit.paragraph(body, 3, "You're in " .. G.name .. ". Rewards are given automatically when you join the game.", { TextColor3 = C.EMERALD300, TextTransparency = 0.1, TextXAlignment = Enum.TextXAlignment.Center })
+		else
+			local join = MenuKit.button("primary", { Name = "JoinGroup", LayoutOrder = 3, Size = UDim2.new(1, 0, 0, 44), FontFace = F.BOLD, TextSize = 16, Text = "JOIN " .. string.upper(G.name), Parent = body })
+			join.Activated:Connect(function()
+				joinGroup(page)
+			end)
+			local check = MenuKit.button("gray", { Name = "CheckGroup", LayoutOrder = 4, Size = UDim2.new(1, 0, 0, 36), FontFace = F.BOLD, TextSize = 14, Text = "I joined - check again", Parent = body })
+			check.Activated:Connect(function()
+				storeInvoke(page, "groupCheck")
+			end)
+		end
 	elseif tab == "boosts" then
 		MenuKit.paragraph(body, 1, "Boosts for your matches. Use them from the boosts bar at the top right once the fighting starts, as many as you own (" .. MetaConfig.BOOST_COOLDOWN .. " s apart per kind). Bought in a match, they're used right away. Extra Revives are used from the defeat screen. Never in ranked.", { TextColor3 = C.WHITE, TextTransparency = 0.5 })
 		local grid = storeGrid(body, 2, 270)
@@ -1206,6 +1270,7 @@ local function renderStore(page: any)
 		{ key = "passes", label = "Passes" },
 		{ key = "boosts", label = "Boosts" },
 		{ key = "coins", label = "Medals" },
+		{ key = "group", label = "Group" },
 	}, "colours", function(key)
 		page.storeMsg = ""
 		renderStoreTab(page, key)

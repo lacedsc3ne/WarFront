@@ -104,6 +104,16 @@ MetaConfig.REWARDS = {
 	minSecondsForReward = 60, -- must have been in the round this long
 }
 
+-- Roblox group rewards (the group that owns the game). Members get MEDALS once, the group-only
+-- territory colour COLOR while they're in the group, and one free DAILY_BOOST each day.
+MetaConfig.GROUP = {
+	id = 415799956,
+	name = "Phasma Studio's",
+	MEDALS = 500,
+	COLOR = "phasma",
+	DAILY_BOOST = "goldCrate",
+}
+
 -- Daily login streak (coins). The 7th day repeats.
 MetaConfig.DAILY = { 25, 35, 50, 75, 100, 150, 250 }
 
@@ -121,7 +131,8 @@ function MetaConfig.levelFromXP(xp: number): (number, number, number)
 	return level, xp, MetaConfig.xpToNext(level)
 end
 
--- Territory colours. price = coins; level = minimum level to buy.
+-- Territory colours. price = coins; level = minimum level to buy; group = only for members of
+-- MetaConfig.GROUP (not unlocked by the All Colours pass).
 MetaConfig.COLORS = {
 	{ id = "crimson", name = "Crimson", rgb = { 214, 48, 64 }, price = 0, level = 1 },
 	{ id = "royal", name = "Royal Blue", rgb = { 52, 92, 230 }, price = 0, level = 1 },
@@ -133,6 +144,7 @@ MetaConfig.COLORS = {
 	{ id = "rose", name = "Rose", rgb = { 255, 120, 190 }, price = 800, level = 8 },
 	{ id = "obsidian", name = "Obsidian", rgb = { 40, 40, 52 }, price = 1200, level = 12 },
 	{ id = "snow", name = "Snow", rgb = { 245, 245, 250 }, price = 1500, level = 15 },
+	{ id = "phasma", name = "Phasma Teal", rgb = { 20, 205, 185 }, price = 0, level = 1, group = true }, -- group members only
 }
 
 function MetaConfig.color(id: string?)
