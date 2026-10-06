@@ -282,6 +282,7 @@ do
 		groupPopup.open()
 	end)
 	ev.Parent = localPlayer:WaitForChild("PlayerGui")
+	groupPopup.shade = shade
 end
 
 -- Store / stats window: an OpenFront o-modal (MenuKit.modal) showing the same pages as the
@@ -444,6 +445,87 @@ end
 DeviceLayout.attachScreenGui(gui)
 DeviceLayout.Changed:Connect(applyMetaLayout)
 applyMetaLayout()
+
+-- Group rewards on the side of the main menu, always there for non-members while the menu is
+-- open: a card in the empty space left of the main column, or a round button in the bottom-right
+-- corner when there's no room (phones, small windows). Both open the group popup.
+do
+	local G = MetaConfig.GROUP
+	local TEAL = Color3.fromRGB(20, 205, 185)
+	local boost = MetaConfig.boost(G.DAILY_BOOST)
+	local colour = MetaConfig.color(G.COLOR)
+	local side = make("TextButton", { Name = "GroupSide", Text = "", AutoButtonColor = false, AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 20, 0.5, 30), Size = UDim2.fromOffset(220, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundColor3 = MenuKit.C.GRAY900, BackgroundTransparency = 0.04, BorderSizePixel = 0, Visible = false, ZIndex = 5, Parent = gui })
+	corner(side, 16)
+	local sideStroke = make("UIStroke", { Color = TEAL, Transparency = 0.45, Thickness = 1.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = side })
+	make("UIPadding", { PaddingTop = UDim.new(0, 18), PaddingBottom = UDim.new(0, 16), PaddingLeft = UDim.new(0, 16), PaddingRight = UDim.new(0, 16), Parent = side })
+	make("UIListLayout", { Padding = UDim.new(0, 8), HorizontalAlignment = Enum.HorizontalAlignment.Center, SortOrder = Enum.SortOrder.LayoutOrder, Parent = side })
+	local badge = make("Frame", { LayoutOrder = 1, Size = UDim2.fromOffset(56, 56), BackgroundColor3 = TEAL, BackgroundTransparency = 0.8, BorderSizePixel = 0, Parent = side })
+	corner(badge, 16)
+	local badgeStroke = make("UIStroke", { Color = TEAL, Transparency = 0.6, Thickness = 1.5, Parent = badge })
+	IconKit.image("Alliance", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(32, 32), ImageColor3 = TEAL, Parent = badge })
+	label({ LayoutOrder = 2, Size = UDim2.new(1, 0, 0, 14), FontFace = FONT_BOLD, TextSize = 11, TextColor3 = TEAL, Text = "FREE REWARDS", Parent = side })
+	label({ LayoutOrder = 3, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, FontFace = FONT_BOLD, TextSize = 18, TextWrapped = true, Text = "Join our group", Parent = side })
+	local items = make("Frame", { LayoutOrder = 4, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, Parent = side })
+	make("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = items })
+	make("UIPadding", { PaddingTop = UDim.new(0, 2), PaddingBottom = UDim.new(0, 4), Parent = items })
+	local rows = {
+		{ icon = "Gold", color = GOLD, text = "+" .. G.MEDALS .. " medals" },
+		{ swatch = colour, text = (if colour then colour.name else "Group") .. " colour" },
+		{ icon = if boost then boost.icon else "Gold", color = MenuKit.C.MALIBU, text = "Free " .. (if boost then boost.name else "boost") .. " daily" },
+	}
+	for i, row in rows do
+		local f = make("Frame", { LayoutOrder = i, Size = UDim2.new(1, 0, 0, 20), BackgroundTransparency = 1, Parent = items })
+		if row.swatch then
+			local sw = make("Frame", { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 1, 0.5, 0), Size = UDim2.fromOffset(16, 16), BackgroundColor3 = Color3.fromRGB(row.swatch.rgb[1], row.swatch.rgb[2], row.swatch.rgb[3]), BorderSizePixel = 0, Parent = f })
+			corner(sw, 8)
+		else
+			IconKit.image(row.icon, { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 0, 0.5, 0), Size = UDim2.fromOffset(18, 18), ImageColor3 = row.color, Parent = f })
+		end
+		label({ Position = UDim2.fromOffset(26, 0), Size = UDim2.new(1, -26, 1, 0), TextSize = 13, TextTransparency = 0.15, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Text = row.text, Parent = f })
+	end
+	local joinPill = label({ LayoutOrder = 5, Size = UDim2.new(1, 0, 0, 38), BackgroundTransparency = 0, BackgroundColor3 = TEAL, FontFace = FONT_BOLD, TextSize = 15, TextColor3 = MenuKit.C.GRAY900, Text = "JOIN GROUP", Parent = side })
+	joinPill.BackgroundTransparency = 0 -- label() makes backgrounds transparent
+	corner(joinPill, 10)
+	MenuKit.hover(side, function(st)
+		sideStroke.Transparency = if st == "idle" then 0.45 else 0.1
+		joinPill.BackgroundColor3 = if st == "idle" then TEAL else TEAL:Lerp(Color3.new(1, 1, 1), 0.2)
+	end)
+
+	-- Small screens: round button in the bottom-right corner with a FREE tag.
+	local fab = make("TextButton", { Name = "GroupButton", Text = "", AutoButtonColor = false, AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -16, 1, -16), Size = UDim2.fromOffset(60, 60), BackgroundColor3 = TEAL, BorderSizePixel = 0, Visible = false, ZIndex = 5, Parent = gui })
+	corner(fab, 30)
+	make("UIStroke", { Color = Color3.new(1, 1, 1), Transparency = 0.6, Thickness = 2, Parent = fab })
+	IconKit.image("Alliance", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(32, 32), ImageColor3 = MenuKit.C.GRAY900, Parent = fab })
+	local tag = label({ AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0, -2), Size = UDim2.fromOffset(42, 16), BackgroundTransparency = 0, BackgroundColor3 = GOLD, FontFace = FONT_BOLD, TextSize = 10, TextColor3 = MenuKit.C.GRAY900, Text = "FREE", Parent = fab })
+	tag.BackgroundTransparency = 0
+	corner(tag, 8)
+
+	-- A slow glow so the eye finds it.
+	TweenService:Create(badgeStroke, TweenInfo.new(1.2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Transparency = 0.05 }):Play()
+
+	local pg = localPlayer:WaitForChild("PlayerGui")
+	local function update()
+		local show = pg:GetAttribute("FrontlinesMenuOpen") == true and pg:GetAttribute("WFInGroup") == false and not window.Visible and not groupPopup.shade.Visible
+		local w = gui.AbsoluteSize.X
+		local column = if w >= 1536 then 907 else 756
+		local room = (w - column) / 2 >= 260 and DeviceLayout.state.input ~= "Touch"
+		side.Visible = show and room
+		fab.Visible = show and not room
+	end
+	for _, b in { side, fab } do
+		b.Activated:Connect(function()
+			groupPopup.open()
+			update()
+		end)
+	end
+	pg:GetAttributeChangedSignal("FrontlinesMenuOpen"):Connect(update)
+	pg:GetAttributeChangedSignal("WFInGroup"):Connect(update)
+	window:GetPropertyChangedSignal("Visible"):Connect(update)
+	groupPopup.shade:GetPropertyChangedSignal("Visible"):Connect(update)
+	gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(update)
+	DeviceLayout.Changed:Connect(update)
+	update()
+end
 
 -- Server messages
 local function applyProfile(p)
