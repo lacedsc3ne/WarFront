@@ -12,8 +12,10 @@
 --   match       a reserved server of the match place: one round with the settings the lobby chose,
 --               then everyone is sent back to the lobby.
 --   standalone  the old behaviour (rounds play in the server you joined). Used while
---               Config.MATCH_PLACE_ID is 0, and in Studio unless a role is picked for testing.
--- Studio testing: set the workspace attribute "WFRole" to "lobby" or "match" before pressing Play.
+--               Config.MATCH_PLACE_ID is 0.
+-- Studio plays like the live game: "lobby" (or "match" when the match place is open). The lobby
+-- can't teleport there, so a match it starts is played in the same server (GameServer
+-- studioMatch). Override with the workspace attribute "WFRole" = "lobby" / "match" / "standalone".
 -- A Studio "match" reads its settings from the workspace attribute "WFMatchConfig" (JSON).
 -- The server publishes the role as the workspace attribute "WFPlaceRole" for clients.
 
@@ -29,10 +31,13 @@ local cached: string? = nil
 local function compute(): string
 	if RunService:IsStudio() then
 		local r = workspace:GetAttribute("WFRole")
-		if r == "lobby" or r == "match" then
+		if r == "lobby" or r == "match" or r == "standalone" then
 			return r
 		end
-		return "standalone"
+		if Config.MATCH_PLACE_ID == 0 then
+			return "standalone"
+		end
+		return if game.PlaceId == Config.MATCH_PLACE_ID then "match" else "lobby"
 	end
 	if Config.MATCH_PLACE_ID == 0 then
 		return "standalone"

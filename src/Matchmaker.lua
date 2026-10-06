@@ -138,8 +138,13 @@ local function teleportToMatch(list: { Player }, access: string, label: string)
 		return
 	end
 	if IS_STUDIO or access == "STUDIO" then
+		-- Studio can't teleport: play the match in this server instead (GameServer studioMatch).
+		local ok, cfg = pcall(HttpService.JSONDecode, HttpService, workspace:GetAttribute("WFMatchConfigLast") or "")
+		if ok and type(cfg) == "table" and ctx.studioMatch and ctx.studioMatch(cfg, alive) then
+			return
+		end
 		for _, plr in alive do
-			notice(plr, "Studio: the match would start now (teleports only work in a live game). Its settings are in workspace.WFMatchConfigLast.", "blue")
+			notice(plr, "Studio: a match is already being played in this server. Finish it first.", "blue")
 		end
 		return
 	end
@@ -172,8 +177,8 @@ function Matchmaker.toLobby(list: { Player })
 		return
 	end
 	if IS_STUDIO then
-		for _, plr in alive do
-			notice(plr, "Studio: you would go back to the lobby now (teleports only work in a live game).", "blue")
+		if ctx.studioToLobby then
+			ctx.studioToLobby(alive) -- back to the menu in this server
 		end
 		return
 	end

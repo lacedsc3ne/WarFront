@@ -884,6 +884,17 @@ local function onMM(data: any)
 	if data.kind == "notice" then
 		hideOverlay()
 		ctx.toast(tostring(data.text))
+	elseif data.kind == "studioMatch" then
+		-- Studio: the match is played in this server (no teleport).
+		hideOverlay()
+		if ctx.studioMatch then
+			ctx.studioMatch(data.tutorial == true)
+		end
+	elseif data.kind == "studioLobby" then
+		hideOverlay()
+		if ctx.studioLobby then
+			ctx.studioLobby()
+		end
 	elseif data.kind == "teleport" then
 		showOverlay(data.text)
 		if require(script.Parent:WaitForChild("Settings")).values.lobbyStartAlerts then

@@ -16,7 +16,7 @@
 -- RANKED / JOIN LOBBY, footer. Narrower screens get OpenFront's mobile top bar + slide-in drawer
 -- and the phone stacking order. Pages (settings, help, release notes, language, profile,
 -- inventory, leaderboard, clans, upcoming maps) open inline in the main area like OpenFront's
--- inline modals (MenuPages / MenuKit). Matchmaking buttons say "Coming Soon".
+-- inline modals (MenuPages / MenuKit). Matchmaking buttons open LobbyPages (lobby role only).
 -- Talks to:
 --   Shared.Net        "play", "vote" (client -> server); "init", "phase", "roster", "joined" (server -> client)
 --   Shared.Meta/MetaFn profile (level, xp, coins, games...)
@@ -2171,6 +2171,19 @@ LobbyPages.init({
 	mapPool = mapPool,
 	close = function()
 		closePage()
+	end,
+	-- Studio: a match the lobby starts is played in this server (GameServer studioMatch).
+	studioMatch = function(tutorial: boolean)
+		if tutorial then
+			playerGui:SetAttribute("FrontlinesTutorial", true)
+		end
+		state.hasPlayed = true
+		closePage()
+		hideMenu()
+	end,
+	studioLobby = function()
+		state.inRound = false
+		showMenu()
 	end,
 })
 

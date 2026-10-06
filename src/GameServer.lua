@@ -58,6 +58,7 @@ local match = {
 	ready = false, -- settings loaded (match servers)
 	waitUntil = nil :: number?, -- tick to start even if not everyone arrived
 	done = false, -- the round finished and players were sent back to the lobby
+	studioLobby = false, -- Studio: this lobby server is playing a match in place (studioMatch)
 	roundHumans = {} :: { number }, -- ranked: userIds that played the round
 }
 -- Round rules shared with the clients (modifiers: disabled units, alliances, water nukes, Doomsday
@@ -3638,6 +3639,60 @@ Matchmaker.init({
 	end,
 	modeTitle = Teams.title,
 	isTeam = Teams.isTeam,
+	-- Studio only: teleports don't work there, so the lobby turns into a match server for the
+	-- match it started and back into the lobby afterwards (Matchmaker teleportToMatch / toLobby).
+	studioMatch = function(cfg: any, list: { Player }): boolean
+		if match.role == "match" then
+			-- Ranked / public: each player's request arrives on its own; the same match is fine.
+			return match.cfg ~= nil and match.cfg.created == cfg.created
+		end
+		match.role, match.studioLobby = "match", true
+		Matchmaker.active = false
+		workspace:SetAttribute("WFPlaceRole", "match")
+		match.cfg = cfg
+		match.rules = if type(cfg.settings) == "table" then cfg.settings else {}
+		if type(cfg.map) ~= "string" or not mapsFolder:FindFirstChild(cfg.map) then
+			cfg.map = "Europe"
+		end
+		workspace:SetAttribute("WFMatchKind", cfg.kind)
+		match.done, match.waitUntil, match.ready = false, nil, true
+		table.clear(match.roundHumans)
+		local everyone = table.clone(list)
+		for _, uid in (if type(cfg.players) == "table" then cfg.players else {}) do
+			local plr = Players:GetPlayerByUserId(uid)
+			if plr and not table.find(everyone, plr) then
+				everyone[#everyone + 1] = plr
+			end
+		end
+		for _, plr in everyone do
+			wantsPlay[plr.UserId] = true
+			net:FireClient(plr, "mm", { kind = "studioMatch", tutorial = cfg.kind == "tutorial" })
+		end
+		if phase ~= "Lobby" then
+			setPhase("Lobby", 0)
+		end
+		return true
+	end,
+	studioToLobby = function(list: { Player })
+		for _, plr in list do
+			wantsPlay[plr.UserId] = nil
+			net:FireClient(plr, "mm", { kind = "studioLobby" })
+		end
+		if not match.studioLobby or phase ~= "Ended" then
+			return -- one player left; the round goes on (and ends) without them
+		end
+		match.role, match.studioLobby = "lobby", false
+		Matchmaker.active = true
+		workspace:SetAttribute("WFPlaceRole", "lobby")
+		workspace:SetAttribute("WFMatchKind", nil)
+		match.cfg, match.rules = nil, {}
+		match.ready, match.done, match.waitUntil = false, false, nil
+		for _, plr in Players:GetPlayers() do
+			wantsPlay[plr.UserId] = nil
+			net:FireClient(plr, "mm", { kind = "studioLobby" })
+		end
+		setPhase("Lobby", math.floor(Config.MAP_VOTE_LOBBY_SECONDS / Config.TICK))
+	end,
 })
 if match.role == "match" then
 	for _, plr in Players:GetPlayers() do

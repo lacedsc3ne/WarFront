@@ -54,8 +54,8 @@ MetaConfig.BOOST_SHIELD_SECONDS = 30
 
 -- Extra revive (developer product, or coins): used from the defeat screen once the round's free
 -- revives are gone. At most REVIVE_BUY_MAX bought revives per round; never in ranked.
--- id = 0 until the developer product exists (then only the coin price is offered).
-MetaConfig.REVIVE = { key = "revive", id = 0, coins = 600, name = "Extra Revive", desc = "Come back after you're defeated, on top of your free revive", icon = "Land" } -- 49 R$
+-- Developer product "Extra Revive" (3716885094); with id = 0 only the coin price would be offered.
+MetaConfig.REVIVE = { key = "revive", id = 3716885094, coins = 600, name = "Extra Revive", desc = "Come back after you're defeated, on top of your free revive", icon = "Land" } -- 45 R$
 MetaConfig.REVIVE_BUY_MAX = 3
 
 -- Clans (ServerScriptService.Clans): creating one costs CREATE_MEDALS medals, or one Clan Charter
