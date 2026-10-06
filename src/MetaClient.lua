@@ -104,7 +104,7 @@ do
 	local col = make("Frame", { Name = "Text", Position = UDim2.fromOffset(66, 0), Size = UDim2.new(1, -66, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, Parent = t })
 	make("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = col })
 	toastUi.kicker = label({ LayoutOrder = 1, Size = UDim2.new(1, 0, 0, 14), FontFace = FONT_BOLD, TextSize = 11, TextColor3 = GOLD, TextXAlignment = Enum.TextXAlignment.Left, Text = "", Parent = col })
-	toastUi.title = label({ LayoutOrder = 2, Size = UDim2.new(1, 0, 0, 22), FontFace = FONT_BOLD, TextSize = 19, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Text = "", Parent = col })
+	toastUi.title = label({ LayoutOrder = 2, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, FontFace = FONT_BOLD, TextSize = 19, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, Text = "", Parent = col }) -- wraps (long announcements)
 	toastUi.body = label({ LayoutOrder = 3, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, TextSize = 13, TextTransparency = 0.3, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, Text = "", Parent = col })
 	local pills = make("Frame", { Name = "Pills", LayoutOrder = 4, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, Parent = col })
 	make("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Wraps = true, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = pills })
@@ -167,8 +167,9 @@ local function showToast(title: string, body: string, opts: any?)
 			t.Visible = true -- hidden while idle: on scaled/TV layouts the off-screen spot can peek in
 			toastUi.bar.Size = UDim2.fromScale(1, 1)
 			TweenService:Create(t, TweenInfo.new(0.4, Enum.EasingStyle.Back), { Position = UDim2.new(0.5, 0, 0, 96) }):Play()
-			TweenService:Create(toastUi.bar, TweenInfo.new(TOAST_SECONDS, Enum.EasingStyle.Linear), { Size = UDim2.fromScale(0, 1) }):Play()
-			task.wait(TOAST_SECONDS)
+			local seconds = item[3].seconds or TOAST_SECONDS
+			TweenService:Create(toastUi.bar, TweenInfo.new(seconds, Enum.EasingStyle.Linear), { Size = UDim2.fromScale(0, 1) }):Play()
+			task.wait(seconds)
 			TweenService:Create(t, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Position = UDim2.new(0.5, 0, 0, -160) }):Play()
 			task.wait(0.35)
 		end
@@ -568,7 +569,7 @@ metaEvent.OnClientEvent:Connect(function(kind: string, data: any)
 		local place = data.placement
 		local suffix = if place == 1 then "st" elseif place == 2 then "nd" elseif place == 3 then "rd" else "th"
 		local title = if data.won then "Victory!" else string.format("You placed %d%s", place, suffix)
-		showToast(title, if data.vip then "VIP bonus included." else "", {
+		showToast(title, if data.vip and data.event then "VIP and event bonus included." elseif data.vip then "VIP bonus included." elseif data.event then "Event bonus included." else "", {
 			kicker = "Match rewards",
 			icon = if data.won then "Crown" else "Leaderboard",
 			pills = { { text = "+" .. data.xp .. " XP", color = MenuKit.C.MALIBU }, { text = "+" .. data.coins .. " medals", icon = "Gold" } },
@@ -580,6 +581,14 @@ metaEvent.OnClientEvent:Connect(function(kind: string, data: any)
 			kicker = "Daily reward",
 			icon = "Gold",
 			pills = { { text = "+" .. data.coins .. " medals", icon = "Gold" } },
+		})
+	elseif kind == "announce" and type(data) == "table" then
+		-- From the developers (admin menu): this server, every server, or just this player.
+		showToast(tostring(data.text), if data.from then "From " .. tostring(data.from) else "", {
+			kicker = "Announcement",
+			icon = "Info",
+			color = Color3.fromRGB(255, 99, 99),
+			seconds = 9,
 		})
 	elseif kind == "group" and type(data) == "table" then
 		local pills = {}

@@ -676,6 +676,11 @@ function ops.leave(plr: Player)
 	return true, if disband then "Clan disbanded." else "You left [" .. tag .. "]."
 end
 
+local lastCall: { [Player]: number } = {}
+Players.PlayerRemoving:Connect(function(plr)
+	lastCall[plr] = nil
+end)
+
 fn.OnServerInvoke = function(plr: Player, op: any, arg: any)
 	local f = typeof(op) == "string" and ops[op]
 	if not f then
@@ -684,6 +689,12 @@ fn.OnServerInvoke = function(plr: Player, op: any, arg: any)
 	if busy[plr] then
 		return false, "One moment..."
 	end
+	-- Every clan request reads the DataStore: at most about 3 a second per player.
+	local now = os.clock()
+	if lastCall[plr] and now - lastCall[plr] < 0.3 then
+		return false, "One moment..."
+	end
+	lastCall[plr] = now
 	busy[plr] = true
 	local ok, a, b = pcall(f, plr, arg)
 	busy[plr] = nil

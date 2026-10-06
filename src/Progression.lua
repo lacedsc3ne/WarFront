@@ -558,10 +558,35 @@ MarketplaceService.ProcessReceipt = function(receipt)
 end
 
 -- Client requests
+-- Spam guard for MetaFn: 8 requests a second (bursts of 16) per player; "groupCheck" (a web call)
+-- at most once every 5 s.
+local metaRate: { [Player]: any } = {}
+Players.PlayerRemoving:Connect(function(plr)
+	metaRate[plr] = nil
+end)
+
 metaFn.OnServerInvoke = function(plr: Player, action: any, arg: any)
 	local p = profiles[plr]
 	if not p or typeof(action) ~= "string" then
 		return false, "Profile not loaded yet"
+	end
+	local now = os.clock()
+	local rate = metaRate[plr]
+	if not rate then
+		rate = { tokens = 16, at = now, group = 0 }
+		metaRate[plr] = rate
+	end
+	rate.tokens = math.min(16, rate.tokens + (now - rate.at) * 8)
+	rate.at = now
+	if rate.tokens < 1 then
+		return false, "Slow down a little"
+	end
+	rate.tokens -= 1
+	if action == "groupCheck" then
+		if now - rate.group < 5 then
+			return false, "Wait a few seconds and check again"
+		end
+		rate.group = now
 	end
 	if action == "get" then
 		return true, publicProfile(plr)
@@ -789,6 +814,9 @@ function Progression.roundEnded(results, info: any?)
 				xp = math.floor(xp * MetaConfig.VIP_MULT)
 				coins = math.floor(coins * MetaConfig.VIP_MULT)
 			end
+			-- Admin events (2x medals / XP weekends), set by ServerScriptService.Admin.
+			xp = math.floor(xp * Progression.event.xp)
+			coins = math.floor(coins * Progression.event.medals)
 			p.games += 1
 			p.eliminations += r.eliminations
 			if p.bestPlacement == 0 or r.placement < p.bestPlacement then
@@ -806,6 +834,7 @@ function Progression.roundEnded(results, info: any?)
 				xp = xp,
 				coins = coins,
 				vip = vipCache[plr] or false,
+				event = Progression.event.medals > 1 or Progression.event.xp > 1,
 			})
 			push(plr)
 			task.spawn(save, plr)
@@ -831,6 +860,113 @@ end
 
 -- Elo for a finished ranked 1v1 (K = Config.RANKED_K). Works for players who already left the
 -- match server: their stored profile is updated directly.
+-- Admin tools (ServerScriptService.Admin)
+-- Live reward multipliers for events; Admin keeps them in sync across servers.
+Progression.event = { medals = 1, xp = 1 }
+
+local function adminSummary(p, online: boolean)
+	return {
+		online = online,
+		medals = tonumber(p.coins) or 0,
+		xp = tonumber(p.xp) or 0,
+		level = MetaConfig.levelFromXP(tonumber(p.xp) or 0),
+		games = tonumber(p.games) or 0,
+		wins = tonumber(p.wins) or 0,
+		elo = p.elo,
+		rankedGames = tonumber(p.rankedGames) or 0,
+		boosts = if typeof(p.boosts) == "table" then p.boosts else {},
+		streak = tonumber(p.streak) or 0,
+		inGroup = p.groupMedals == true,
+	}
+end
+
+-- Profile of any player: the live one when they're in this server, else the saved one.
+function Progression.adminView(uid: number): any?
+	local plr = Players:GetPlayerByUserId(uid)
+	if plr and profiles[plr] then
+		return adminSummary(profiles[plr], true)
+	end
+	if not store then
+		return nil
+	end
+	local ok, data = pcall(function()
+		return store:GetAsync(key(uid))
+	end)
+	if ok and type(data) == "table" then
+		return adminSummary(reconcile(data), false)
+	end
+	return nil
+end
+
+local function applyAdminEdit(p, op: string, a: any, b: any): (boolean, string)
+	local n = math.floor(tonumber(b) or tonumber(a) or 0)
+	if op == "medals" then
+		p.coins = math.max(0, (tonumber(p.coins) or 0) + n)
+		return true, string.format("%+d medals (now %d)", n, p.coins)
+	elseif op == "xp" then
+		p.xp = math.max(0, (tonumber(p.xp) or 0) + n)
+		return true, string.format("%+d XP (level %d)", n, MetaConfig.levelFromXP(p.xp))
+	elseif op == "item" then
+		local item = typeof(a) == "string" and MetaConfig.item(a)
+		if not item then
+			return false, "Unknown item"
+		end
+		if typeof(p.boosts) ~= "table" then
+			p.boosts = {}
+		end
+		p.boosts[item.key] = math.max(0, (tonumber(p.boosts[item.key]) or 0) + n)
+		return true, string.format("%+d %s (now %d)", n, item.name, p.boosts[item.key])
+	elseif op == "reset" then
+		local keep = p.purchases -- receipts stay, so old purchases are never granted twice
+		for k in p do
+			p[k] = nil
+		end
+		for k, v in defaultProfile() do
+			p[k] = v
+		end
+		p.purchases = keep
+		return true, "Data reset"
+	end
+	return false, "Unknown action"
+end
+
+-- Change a player's saved data: the live profile when they're in this server (Admin asks the other
+-- servers first), otherwise straight in the DataStore.
+function Progression.adminEdit(uid: number, op: string, a: any, b: any): (boolean, string)
+	local plr = Players:GetPlayerByUserId(uid)
+	local p = plr and profiles[plr]
+	if plr and p then
+		if not loaded[plr] then
+			return false, "Their data didn't load in this server, try again later"
+		end
+		local ok, msg = applyAdminEdit(p, op, a, b)
+		if ok then
+			push(plr)
+			task.spawn(save, plr)
+		end
+		return ok, msg
+	end
+	if not store then
+		return false, "DataStores aren't available"
+	end
+	local result = { false, "No saved data for that player" }
+	local ok, err = pcall(function()
+		store:UpdateAsync(key(uid), function(old)
+			if type(old) ~= "table" then
+				return nil
+			end
+			local p2 = reconcile(old)
+			local okEdit, msg = applyAdminEdit(p2, op, a, b)
+			result = { okEdit, msg .. " (offline)" }
+			return if okEdit then p2 else nil
+		end)
+	end)
+	if not ok then
+		return false, "DataStore error: " .. tostring(err)
+	end
+	return result[1], result[2]
+end
+
 function Progression.rankedResult(winnerId: number, loserId: number)
 	local function current(uid: number)
 		local plr = Players:GetPlayerByUserId(uid)

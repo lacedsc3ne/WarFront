@@ -230,8 +230,8 @@ local function findSpawn(p, near: boolean): number?
 	return best or ctx.randomSpawnTile(Config.MIN_SPAWN_DISTANCE) or ctx.randomSpawnTile(0)
 end
 
-local function comeBack(plr: Player, p, near: boolean)
-	local reason = denyReason(plr, p)
+local function comeBack(plr: Player, p, near: boolean, force: boolean?)
+	local reason = if force then (if p.alive then "Still alive" else nil) else denyReason(plr, p)
 	if reason then
 		ctx.net:FireClient(plr, "reviveDenied", { reason = reason })
 		return
@@ -284,6 +284,15 @@ end
 
 -- Spend one bought revive from the inventory and come back (near the old spawn). Returns true if
 -- it was used. Also called right after a Robux purchase (GameServer, Progression.onItemBought).
+-- Admin menu: bring a defeated player back near their old land, ignoring revive limits.
+function Revive.adminRevive(plr: Player, p): boolean
+	if not p or p.alive then
+		return false
+	end
+	comeBack(plr, p, true, true)
+	return p.alive == true
+end
+
 function Revive.buyRevive(plr: Player, p): boolean
 	if not p or p.alive or ctx.phase() ~= "Play" or not ctx.wantsPlay[plr.UserId] then
 		return false

@@ -792,6 +792,32 @@ function Railways.destroyInBlast(tile: number, radius2: number)
 	end
 end
 
+-- Water nukes turned these tiles into water: railroads across them are gone, and so are the trains
+-- whose route still runs over them (stations stay; new rails may connect them again later).
+function Railways.onWater(tiles: { number })
+	local flooded = {}
+	for _, t in tiles do
+		flooded[t] = true
+	end
+	for _, r in table.clone(rails) do
+		for _, t in r.tiles do
+			if flooded[t] then
+				unregisterRail(r)
+				clustersDirty = true
+				break
+			end
+		end
+	end
+	for _, tr in table.clone(trains) do
+		for i = math.max(1, math.floor(tr.pos)), #tr.tiles do
+			if flooded[tr.tiles[i]] then
+				removeTrain(tr)
+				break
+			end
+		end
+	end
+end
+
 function Railways.flush()
 	if #outRailsAdd > 0 or #outRailsRemove > 0 then
 		ctx.net:FireAllClients("rails", { add = outRailsAdd, remove = outRailsRemove })

@@ -48,8 +48,8 @@ local DEFAULTS = {
 	alertsVolume = 80,
 	ambienceVolume = 40,
 	interfaceVolume = 50,
-	musicVolume = 20, -- quieter than OpenFront's 0.5 (Liam, Oct 2026)
-	audioVersion = 2, -- 2: old saved music volumes of 50 (the previous default) drop to the new one
+	musicVolume = 40, -- Liam, Oct 2026 (OpenFront 50; was 20 for a while)
+	audioVersion = 3, -- saved music volumes still at an old default (50, 20) move to the new one
 	muted = false,
 	-- OpenFront UserSettings (UserSettingModal Gameplay / Graphics / Audio tabs)
 	alertFrame = true, -- red / orange screen frame when betrayed or attacked over land
@@ -232,10 +232,10 @@ local function applyLoaded(saved: any)
 		return
 	end
 	loaded = true
-	local migrate = type(saved) == "table" and saved.audioVersion == nil
+	local migrate = type(saved) == "table" and (tonumber(saved.audioVersion) or 0) < DEFAULTS.audioVersion
 	if type(saved) == "table" then
 		for k in DEFAULTS do
-			local oldDefault = migrate and (k == "audioVersion" or (k == "musicVolume" and saved[k] == 50))
+			local oldDefault = migrate and (k == "audioVersion" or (k == "musicVolume" and (saved[k] == 50 or saved[k] == 20)))
 			if not dirty[k] and saved[k] ~= nil and not oldDefault then
 				setValue(k, saved[k], false)
 			end

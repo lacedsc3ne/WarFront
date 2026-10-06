@@ -2172,6 +2172,12 @@ LobbyPages.init({
 	close = function()
 		closePage()
 	end,
+	open = function(kind: string)
+		if currentPage ~= kind then
+			closePage()
+			openPage(kind)
+		end
+	end,
 	-- Studio: a match the lobby starts is played in this server (GameServer studioMatch).
 	studioMatch = function(tutorial: boolean)
 		if tutorial then

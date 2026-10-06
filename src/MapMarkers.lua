@@ -478,6 +478,11 @@ end
 -- Nukes
 function MapMarkers.addNuke(data): Frame
 	local W, H = ctx.mapSize()
+	local old = nukeFx[data.id]
+	if old then
+		old.holder:Destroy() -- the same id announced again: replace, never stack outlines
+		nukeFx[data.id] = nil
+	end
 	local def = ctx.nukes[data.kind] or { inner = 3, outer = 7.5 }
 	local color = relationColor(data.owner or 0)
 	local holder = Instance.new("Frame")

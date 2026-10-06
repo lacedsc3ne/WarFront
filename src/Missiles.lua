@@ -627,7 +627,13 @@ function Missiles.tick()
 	tickMissiles(now)
 	for id, n in nukes do
 		if not ctx.players()[n.owner] then
-			nukes[id] = nil
+			-- The launcher is gone: drop the nuke, and its target outline on every screen.
+			if n.warhead then
+				finish(n, false, n.to)
+			else
+				nukes[id] = nil
+				ctx.net:FireAllClients("nukeEnd", { id = id, exploded = false, tile = n.to, radius = 0, silent = true })
+			end
 			continue
 		end
 		local remaining = n.ticks - (now - n.start)

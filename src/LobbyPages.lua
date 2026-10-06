@@ -16,10 +16,13 @@
 -- LobbyPages.render(kind, page) fills a MenuKit page (MainMenu's inline page)
 -- LobbyPages.closed(kind)       the page was closed: leave the lobby / the ranked queue
 -- Net: sends "lobbyCreate", "lobbyJoin", "lobbyLeave", "lobbySettings", "lobbyStart",
--- "lobbyKick", "rankedJoin", "rankedLeave"; receives "mm" (see ServerScriptService.Matchmaker).
+-- "lobbyKick", "lobbyVisibility", "lobbyList", "rankedJoin", "rankedLeave"; receives "mm" (see
+-- ServerScriptService.Matchmaker). Lobbies are Public (listed on Join Lobby) or Private (ID or a
+-- Roblox invite, which carries the ID as launch data). ctx.open(kind) opens a menu page.
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local SocialService = game:GetService("SocialService")
 local GuiService = game:GetService("GuiService")
 
 local MenuKit = require(script.Parent:WaitForChild("MenuKit"))
@@ -42,6 +45,12 @@ local pendingSettings: any = nil -- host edits not yet echoed
 local sendAt = 0 -- when to send pendingSettings (0 = sent)
 local editedAt = 0 -- last host edit (echoes older than this are ignored for a moment)
 local refreshers: { () -> () } = {}
+-- Public lobbies on the Join Lobby page (mm "lobbyList"): { code, hostName, count, max, map,
+-- randomMap, mode, teams }. listAskedAt throttles the requests.
+local lobbyList: { any }? = nil
+local listAskedAt = 0
+local listView: { frame: Frame?, sig: string } = { frame = nil, sig = "" }
+local visibilityWanted: string? = nil -- host's Public / Private click, until the server echoes it
 local spinners: { GuiObject } = {}
 -- Single-player page settings (SinglePlayerModal DEFAULT_OPTIONS; kept while the menu is open).
 local SOLO_DEFAULTS = {
@@ -544,7 +553,7 @@ local function lobbyIdCard(body: Instance, order: number)
 	local card = MenuKit.card(body, order, 16, 14, 4)
 	MenuKit.paragraph(card, 1, "Lobby ID", { TextSize = 13, TextTransparency = 0.5, FontFace = F.BOLD })
 	local code = text({ LayoutOrder = 2, Size = UDim2.new(1, 0, 0, 40), TextXAlignment = Enum.TextXAlignment.Left, FontFace = Font.new(F.MONO.Family, Enum.FontWeight.Bold), TextSize = 32, Text = "", Parent = card })
-	MenuKit.paragraph(card, 3, "Friends join with JOIN LOBBY on the main menu and this ID.", { TextSize = 13, TextTransparency = 0.5 })
+	MenuKit.paragraph(card, 3, "Share this ID: friends enter it on JOIN LOBBY. Or invite them below.", { TextSize = 13, TextTransparency = 0.5 })
 	-- OpenFront "Hidden Lobby IDs": the ID shows as dots until clicked (handy when streaming).
 	local revealed = false
 	local reveal = make("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "", Parent = code })
@@ -559,6 +568,69 @@ local function lobbyIdCard(body: Instance, order: number)
 	refreshers[#refreshers + 1] = show
 end
 
+-- Roblox game invite carrying the lobby ID (Matchmaker sends invited players straight to it).
+local function inviteFriends()
+	local code = lobby and lobby.code
+	if not code then
+		return
+	end
+	local ok, can = pcall(function()
+		return SocialService:CanSendGameInviteAsync(localPlayer)
+	end)
+	if not ok or not can then
+		ctx.toast("Invites aren't available on this account. Share the lobby ID instead.")
+		return
+	end
+	local options = Instance.new("ExperienceInviteOptions")
+	options.PromptMessage = "Join my War Front lobby!"
+	options.LaunchData = code
+	pcall(function()
+		SocialService:PromptGameInvite(localPlayer, options)
+	end)
+end
+
+-- Who can join: Public (listed on everyone's Join Lobby page) or Private (lobby ID or invite only).
+local function visibilityCard(body: Instance, order: number)
+	local card = MenuKit.card(body, order, 16, 14, 10)
+	MenuKit.paragraph(card, 1, "Who can join", { FontFace = F.BOLD, TextSize = 16 })
+	local row = grid(card, 2, 160, 44)
+	local hint = MenuKit.paragraph(card, 3, "", { TextSize = 13, TextTransparency = 0.5 })
+	local setters = {}
+	for i, v in { { "public", "Public" }, { "private", "Private" } } do
+		local b, set = optionCard(row, i, v[2], 160, 44)
+		b.Name = "Visibility" .. v[2]
+		local label = b:FindFirstChild("Label") :: TextLabel
+		label.AnchorPoint = Vector2.new(0.5, 0.5)
+		label.Position = UDim2.fromScale(0.5, 0.5)
+		setters[v[1]] = set
+		b.Activated:Connect(function()
+			if not isHost() or not lobby then
+				return
+			end
+			visibilityWanted = v[1]
+			ctx.net:FireServer("lobbyVisibility", v[1])
+			for _, f in refreshers do
+				f()
+			end
+		end)
+	end
+	local invite = MenuKit.button("secondary", { Name = "InviteFriends", LayoutOrder = 4, Size = UDim2.new(1, 0, 0, 44), FontFace = F.BOLD, Text = "INVITE FRIENDS", Parent = card })
+	invite.Activated:Connect(inviteFriends)
+	refreshers[#refreshers + 1] = function()
+		local current = (lobby and lobby.visibility) or "private"
+		if visibilityWanted == current then
+			visibilityWanted = nil
+		end
+		local v = visibilityWanted or current
+		for key, set in setters do
+			set(key == v, not isHost())
+		end
+		hint.Text = if v == "public"
+			then "Public: anyone can find this lobby on the Join Lobby page."
+			else "Private: only people with the lobby ID or an invite can join."
+	end
+end
+
 local function renderLobby(page, hosting: boolean)
 	resetPage(page)
 	local body = page.body
@@ -567,6 +639,7 @@ local function renderLobby(page, hosting: boolean)
 		return
 	end
 	lobbyIdCard(body, 1)
+	visibilityCard(body, 9)
 	if not isHost() then
 		MenuKit.paragraph(body, 2, "Lobby joined! Waiting for host to start...", { FontFace = F.BOLD, TextSize = 16 }) -- private_lobby.joined_waiting
 	end
@@ -658,6 +731,100 @@ local function renderJoin(page)
 	end)
 	shown.joinStatus = status
 	shown.joinButton = join
+
+	-- Public lobbies (hosts that chose Public), newest first.
+	local head = make("Frame", { LayoutOrder = 5, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 36), Parent = body })
+	MenuKit.heading(head, 1, "People", "Public Lobbies").Size = UDim2.new(1, -120, 1, 0)
+	local refresh = MenuKit.button("secondary", { Name = "Refresh", AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0), Size = UDim2.fromOffset(110, 32), FontFace = F.BOLD, TextSize = 13, Text = "REFRESH", Parent = head })
+	refresh.Activated:Connect(function()
+		LobbyPages.askList(true)
+	end)
+	local list = make("Frame", { Name = "PublicLobbies", LayoutOrder = 6, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Parent = body })
+	make("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = list })
+	listView.frame, listView.sig = list, ""
+	LobbyPages.drawList()
+	LobbyPages.askList(true)
+end
+
+local function modeLabel(e): string
+	if e.mode ~= "Team" then
+		return "Free for All"
+	end
+	return if type(e.teams) == "number" then e.teams .. " teams" else tostring(e.teams)
+end
+
+-- Fills the Join Lobby page's public list from lobbyList.
+function LobbyPages.drawList()
+	local list = listView.frame
+	if not list or not list.Parent then
+		return
+	end
+	local sig = if lobbyList == nil then "loading" else ""
+	for _, e in lobbyList or {} do
+		sig ..= string.format("%s:%s:%s:%s:%s:%s;", tostring(e.code), tostring(e.count), tostring(e.map), tostring(e.randomMap), tostring(e.mode), tostring(e.teams))
+	end
+	if sig == listView.sig then
+		return
+	end
+	listView.sig = sig
+	for _, c in list:GetChildren() do
+		if c:IsA("GuiObject") then
+			c:Destroy()
+		end
+	end
+	if lobbyList == nil then
+		MenuKit.paragraph(list, 1, "Loading lobbies...", { TextSize = 14, TextTransparency = 0.5 })
+		return
+	end
+	if #lobbyList == 0 then
+		MenuKit.paragraph(list, 1, "No public lobbies right now. Make one with CREATE LOBBY, or ask a friend for their lobby ID.", { TextSize = 14, TextTransparency = 0.5 })
+		return
+	end
+	for i, e in lobbyList do
+		local row = make("Frame", { Name = "Lobby", LayoutOrder = i, BackgroundColor3 = C.WHITE, BackgroundTransparency = 0.95, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 60), Parent = list })
+		MenuKit.corner(row, 10)
+		MenuKit.stroke(row, 0.9)
+		text({
+			Position = UDim2.fromOffset(14, 8),
+			Size = UDim2.new(1, -130, 0, 22),
+			FontFace = F.BOLD,
+			TextSize = 16,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+			Text = tostring(e.hostName) .. "'s lobby",
+			Parent = row,
+		})
+		text({
+			Position = UDim2.fromOffset(14, 32),
+			Size = UDim2.new(1, -130, 0, 18),
+			TextSize = 13,
+			TextTransparency = 0.45,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+			Text = string.format("%s  ·  %s  ·  %d/%d players", if e.randomMap then "Random map" else mapName(e.map), modeLabel(e), tonumber(e.count) or 0, tonumber(e.max) or 0),
+			Parent = row,
+		})
+		local full = (tonumber(e.count) or 0) >= (tonumber(e.max) or 0)
+		local join = MenuKit.button(if full then "secondary" else "primary", { Name = "Join", AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -10, 0.5, 0), Size = UDim2.fromOffset(100, 40), FontFace = F.BOLD, TextSize = 14, Text = if full then "FULL" else "JOIN", Parent = row })
+		local code = e.code
+		join.Activated:Connect(function()
+			if full then
+				return
+			end
+			join.Text = "JOINING…"
+			ctx.net:FireServer("lobbyJoin", code)
+		end)
+	end
+end
+
+-- Asks the server for the public lobbies (at most every 2 s; force = the player asked).
+function LobbyPages.askList(force: boolean?)
+	local now = os.clock()
+	if now - listAskedAt < (if force then 2 else 6) then
+		return
+	end
+	listAskedAt = now
+	ctx.net:FireServer("lobbyList")
 end
 
 local function renderRanked(page)
@@ -864,6 +1031,7 @@ function LobbyPages.closed(kind: string?)
 		end
 		lobby = nil
 		pendingSettings = nil
+		visibilityWanted = nil
 	elseif kind == "ranked" then
 		ctx.net:FireServer("rankedLeave")
 		ranked.state = "idle"
@@ -918,6 +1086,16 @@ local function onMM(data: any)
 				end
 			end
 		end
+	elseif data.kind == "lobbyList" then
+		lobbyList = if type(data.lobbies) == "table" then data.lobbies else {}
+		LobbyPages.drawList()
+	elseif data.kind == "invite" then
+		-- Arrived from a friend's lobby invite: open Join Lobby and join that lobby.
+		if type(data.code) == "string" and not lobby and ctx.open then
+			ctx.open("join")
+			ctx.toast("Joining your friend's lobby...")
+			ctx.net:FireServer("lobbyJoin", data.code)
+		end
 	elseif data.kind == "ranked" then
 		ranked.state = data.state or ranked.state
 		ranked.queueSize = data.queueSize
@@ -932,6 +1110,8 @@ local function onMM(data: any)
 			if shown.kind == "join" and shown.joinStatus then
 				shown.joinStatus.Text = tostring(data.reason)
 				shown.joinButton.Text = "JOIN LOBBY"
+				listView.sig = "" -- redraw the list's JOIN buttons
+				LobbyPages.drawList()
 			else
 				ctx.toast(tostring(data.reason))
 			end
@@ -1005,6 +1185,9 @@ function LobbyPages.init(c)
 				for _, f in refreshers do
 					f()
 				end
+			end
+			if shown.kind == "join" and not lobby and listView.frame and listView.frame.Parent then
+				LobbyPages.askList(false)
 			end
 		end
 	end)

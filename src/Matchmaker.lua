@@ -210,6 +210,7 @@ local function reserveMatch(cfg): string?
 		warn("[War Front] ReserveServer failed: " .. tostring(access))
 		return nil
 	end
+	cfg.access = access -- the match server shows it to the admin server list (Admin "join")
 	local stored = false
 	for _ = 1, 3 do
 		if try(function()
@@ -946,7 +947,12 @@ end
 -- Private lobbies (HostLobbyModal / JoinLobbyModal)
 local private = {
 	codeOf = {} :: { [Player]: string },
+	listed = {} :: { [string]: { at: number, sig: string } }, -- public lobbies this server lists
 }
+-- Public lobbies are listed in the sorted map "Listed" (code -> summary) for every lobby server's
+-- Join Lobby page. The host's server refreshes the entry (LIST_REFRESH s, expires after
+-- LIST_EXPIRY s) and removes it when the lobby starts, closes or goes private.
+local LIST_REFRESH, LIST_EXPIRY, LIST_MAX = 10, 30, 50
 
 local function newCode(): string
 	local out = table.create(6)
@@ -997,7 +1003,61 @@ local function lobbyView(rec, plr: Player)
 		settings = rec.settings,
 		members = members,
 		state = rec.state,
+		visibility = rec.visibility or "private",
 	}
+end
+
+local function unlist(code: string)
+	if private.listed[code] then
+		private.listed[code] = nil
+		task.spawn(try, function()
+			store("Listed"):RemoveAsync(code)
+		end)
+	end
+end
+
+-- Keeps this lobby's entry on the public list current (called from syncPrivate on the host's server).
+local function listLobby(rec)
+	if rec.state ~= "open" or rec.visibility ~= "public" then
+		unlist(rec.code)
+		return
+	end
+	local s = rec.settings or {}
+	local summary = {
+		code = rec.code,
+		hostName = tostring(rec.hostName or "?"),
+		count = memberCount(rec),
+		max = Config.PRIVATE_MAX_PLAYERS,
+		map = s.map,
+		randomMap = s.randomMap == true,
+		mode = s.mode,
+		teams = s.teams,
+		at = os.time(),
+	}
+	local sig = string.format("%d|%s|%s|%s|%s", summary.count, tostring(s.map), tostring(s.randomMap), tostring(s.mode), tostring(s.teams))
+	local old = private.listed[rec.code]
+	if old and old.sig == sig and os.clock() - old.at < LIST_REFRESH then
+		return
+	end
+	private.listed[rec.code] = { at = os.clock(), sig = sig }
+	try(function()
+		store("Listed"):SetAsync(rec.code, summary, LIST_EXPIRY, -summary.at)
+	end)
+end
+
+local function sendLobbyList(plr: Player)
+	local items = try(function()
+		return store("Listed"):GetRangeAsync(Enum.SortDirection.Ascending, LIST_MAX)
+	end)
+	local out = {}
+	local now = os.time()
+	for _, item in items or {} do
+		local v = item.value
+		if type(v) == "table" and type(v.code) == "string" and now - (tonumber(v.at) or 0) <= LIST_EXPIRY then
+			out[#out + 1] = v
+		end
+	end
+	send(plr, { kind = "lobbyList", lobbies = out, mine = private.codeOf[plr] })
 end
 
 local function updateLobby(code: string, fn: (any) -> any?): any?
@@ -1038,6 +1098,7 @@ local function createLobby(plr: Player)
 			settings = table.clone(Matchmaker.DEFAULT_SETTINGS),
 			members = { [tostring(plr.UserId)] = { name = plr.DisplayName, job = JOB } },
 			state = "open",
+			visibility = "public", -- "public": on the Join Lobby list; "private": ID or invite only
 			created = os.time(),
 			updated = os.time(),
 		}
@@ -1105,6 +1166,7 @@ local function leaveLobby(plr: Player)
 		end
 		return old
 	end)
+	unlist(code)
 	send(plr, { kind = "lobby", state = "left" })
 end
 
@@ -1147,6 +1209,7 @@ local function startLobby(plr: Player)
 		old.state, old.access = "started", access
 		return old
 	end)
+	unlist(code)
 end
 
 local function syncPrivate()
@@ -1163,6 +1226,16 @@ local function syncPrivate()
 		local rec = try(function()
 			return store("Private"):GetAsync(code)
 		end)
+		if rec and rec.state == "open" then
+			for _, plr in list do
+				if plr.UserId == rec.host then
+					listLobby(rec)
+					break
+				end
+			end
+		else
+			unlist(code)
+		end
 		if not rec or rec.state == "closed" then
 			for _, plr in list do
 				lobbyClosed(plr, if rec then "The host closed the lobby." else "The lobby expired.")
@@ -1193,6 +1266,7 @@ local KINDS = {
 	play = true, leave = true,
 	rankedJoin = true, rankedLeave = true,
 	lobbyCreate = true, lobbyJoin = true, lobbyLeave = true, lobbySettings = true, lobbyStart = true, lobbyKick = true,
+	lobbyVisibility = true, lobbyList = true,
 }
 
 function Matchmaker.handles(kind: string): boolean
@@ -1230,6 +1304,11 @@ end
 
 local lastRequestAt: { [Player]: number } = {}
 
+local heavyAt: { [Player]: { [string]: number } } = {}
+Players.PlayerRemoving:Connect(function(plr)
+	heavyAt[plr] = nil
+end)
+
 function Matchmaker.handle(plr: Player, kind: string, a1: any, a2: any)
 	-- At most 5 requests a second per player (each may write to MemoryStore).
 	local now = os.clock()
@@ -1237,6 +1316,17 @@ function Matchmaker.handle(plr: Player, kind: string, a1: any, a2: any)
 		return
 	end
 	lastRequestAt[plr] = now
+	-- Each of these reserves a server or writes a lobby: spaced out so spam can't flood them.
+	local gap = if kind == "play" and (a1 == "tutorial" or a1 == "solo") then 10 elseif kind == "lobbyCreate" then 3 elseif kind == "lobbyJoin" then 1 elseif kind == "lobbyList" or kind == "lobbyVisibility" then 1.5 else 0
+	if gap > 0 then
+		local key = kind .. (if typeof(a1) == "string" then a1 else "")
+		heavyAt[plr] = heavyAt[plr] or {}
+		if heavyAt[plr][key] and now - heavyAt[plr][key] < gap then
+			notice(plr, "Please wait a few seconds before trying again.", "blue")
+			return
+		end
+		heavyAt[plr][key] = now
+	end
 	if kind == "play" then
 		if a1 == "tutorial" then
 			task.spawn(soloMatch, plr, "tutorial")
@@ -1304,6 +1394,25 @@ function Matchmaker.handle(plr: Player, kind: string, a1: any, a2: any)
 				end
 			end)
 		end
+	elseif kind == "lobbyVisibility" then
+		local code = private.codeOf[plr]
+		if code and (a1 == "public" or a1 == "private") then
+			task.spawn(function()
+				local rec = updateLobby(code, function(old)
+					if old.host ~= plr.UserId or old.state ~= "open" then
+						return nil
+					end
+					old.visibility = a1
+					return old
+				end)
+				if rec then
+					listLobby(rec)
+					send(plr, lobbyView(rec, plr))
+				end
+			end)
+		end
+	elseif kind == "lobbyList" then
+		task.spawn(sendLobbyList, plr)
 	elseif kind == "lobbyStart" then
 		task.spawn(startLobby, plr)
 	elseif kind == "lobbyKick" then
@@ -1363,6 +1472,25 @@ function Matchmaker.init(c)
 			leaveLobby(plr)
 		end
 	end)
+	-- Lobby invites (LobbyPages "INVITE FRIENDS": SocialService game invites carry the lobby ID as
+	-- launch data). A player who arrives from one is taken straight to that lobby.
+	local function checkInvite(plr: Player)
+		local ok, data = pcall(function()
+			return plr:GetJoinData()
+		end)
+		local code = ok and type(data) == "table" and cleanCode(data.LaunchData)
+		if code then
+			task.delay(4, function() -- the menu is up by then
+				if plr.Parent and not private.codeOf[plr] then
+					send(plr, { kind = "invite", code = code })
+				end
+			end)
+		end
+	end
+	Players.PlayerAdded:Connect(checkInvite)
+	for _, plr in Players:GetPlayers() do
+		checkInvite(plr)
+	end
 	task.spawn(function()
 		while true do
 			try(syncPublic)

@@ -8,6 +8,12 @@
 
 local MetaConfig = {}
 
+-- Owners: the only accounts that can open the admin menu (F2) and use ServerScriptService.Admin.
+MetaConfig.ADMINS = { 2730345734, 10306709931 }
+function MetaConfig.isAdmin(userId: number): boolean
+	return table.find(MetaConfig.ADMINS, userId) ~= nil
+end
+
 -- Fill these in after creating them on the Creator Hub (Monetization tab). 0 = disabled.
 MetaConfig.GAMEPASS = {
 	VIP = 2008730377, -- x1.5 XP and coins, gold name, VIP tag (199 R$)

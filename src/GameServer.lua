@@ -844,7 +844,8 @@ local function startLandAttack(p, targetId: number, troops: number): boolean
 	if existing then
 		Flow.onAttack(p, targetId)
 		Flow.stat(p, "troopsSent", troops)
-		existing.retreatAt = nil -- new troops call off a pending retreat
+		-- OpenFront AttackExecution: new troops join the existing attack, even one that is
+		-- retreating (they come home with it; the retreat is never called off).
 		p.troops -= troops
 		existing.troops += troops
 		rebuildFront(existing)
@@ -1450,6 +1451,7 @@ local function flushWater()
 		mapState.water[#mapState.water + 1] = t
 	end
 	routeCache = {} -- boat routes may cross the new water
+	Railways.onWater(converted) -- no railroads or trains over the new water
 	net:FireAllClients("water", converted)
 end
 
@@ -2609,7 +2611,7 @@ local function setPlayerName(plr: Player, raw: any)
 	local function reply(ok: boolean, nameOrError: string)
 		net:FireClient(plr, "nameResult", { ok = ok, name = if ok then nameOrError else nil, error = if ok then nil else nameOrError })
 	end
-	if typeof(raw) ~= "string" then
+	if typeof(raw) ~= "string" or #raw > 100 then
 		return
 	end
 	local name = string.gsub(string.gsub(raw, "^%s+", ""), "%s+$", "")
@@ -3221,9 +3223,36 @@ end
 
 -- Client requests
 local lastRequest: { [Player]: number } = {}
+-- Flood guard: every message spends a token (refills 20 a second, holds up to 40), and the heavy
+-- ones have their own spacing ("ready" resends the whole map, "setName" runs the text filter).
+-- Exploiters spamming the remote just get ignored.
+local flood: { [Player]: any } = {}
+local HEAVY_GAP = { ready = 2, setName = 2, play = 0.5 }
+local function allowMessage(plr: Player, kind: string): boolean
+	local now = os.clock()
+	local f = flood[plr]
+	if not f then
+		f = { tokens = 40, at = now, heavy = {} }
+		flood[plr] = f
+	end
+	f.tokens = math.min(40, f.tokens + (now - f.at) * 20)
+	f.at = now
+	if f.tokens < 1 then
+		return false
+	end
+	f.tokens -= 1
+	local gap = HEAVY_GAP[kind]
+	if gap then
+		if f.heavy[kind] and now - f.heavy[kind] < gap then
+			return false
+		end
+		f.heavy[kind] = now
+	end
+	return true
+end
 
 net.OnServerEvent:Connect(function(plr: Player, kind: any, a1: any, a2: any, a3: any)
-	if typeof(kind) ~= "string" then
+	if typeof(kind) ~= "string" or #kind > 32 or not allowMessage(plr, kind) then
 		return
 	end
 	if kind == "ready" then
@@ -3512,6 +3541,7 @@ Players.PlayerRemoving:Connect(function(plr)
 		Flow.setDisconnected(byUser[plr.UserId], true)
 	end
 	lastRequest[plr] = nil
+	flood[plr] = nil
 	wantsPlay[plr.UserId] = nil
 	votes[plr.UserId] = nil
 	if match.cfg and match.cfg.kind == "ranked" and (phase == "Spawn" or phase == "Play") and players then
@@ -3710,6 +3740,94 @@ Matchmaker.init({
 			net:FireClient(plr, "mm", { kind = "studioLobby" })
 		end
 		setPhase("Lobby", math.floor(Config.MAP_VOTE_LOBBY_SECONDS / Config.TICK))
+	end,
+})
+
+-- Owner admin menu (ServerScriptService.Admin, opened with F2 by MetaConfig.ADMINS).
+require(ServerScriptService:WaitForChild("Admin")).init({
+	progression = Progression,
+	matchInfo = function()
+		return {
+			role = match.role,
+			kind = if match.cfg then match.cfg.kind else nil,
+			access = if match.cfg then match.cfg.access else nil,
+			map = currentMapId,
+			phase = phase,
+			speed = gameSpeed.mult,
+			paused = gameSpeed.paused,
+			round = teamState.round,
+		}
+	end,
+	-- Match state of a player in this server's round (nil when they aren't in it).
+	playerState = function(uid: number)
+		local p = players and byUser[uid]
+		if not p then
+			return nil
+		end
+		return { name = p.name, alive = p.alive, gold = math.floor(p.gold), troops = math.floor(p.troops), tiles = p.tiles }
+	end,
+	matchAction = function(uid: number, action: string, amount: number?): (boolean, string)
+		local p = players and byUser[uid]
+		if not p or (phase ~= "Spawn" and phase ~= "Play") then
+			return false, "They aren't in a match on this server"
+		end
+		if action == "gold" or action == "troops" then
+			local n = math.clamp(math.floor(amount or 0), 0, 1e12)
+			if action == "gold" then
+				p.gold = n
+			else
+				p.troops = n
+			end
+			return true, string.format("%s set to %d", action, n)
+		elseif action == "kill" then
+			if not p.alive then
+				return false, "Already defeated"
+			end
+			killPlayer(p, nil)
+			return true, p.name .. " defeated"
+		elseif action == "revive" then
+			local plr = Players:GetPlayerByUserId(uid)
+			if not plr or p.alive or phase ~= "Play" then
+				return false, "Only defeated players can be revived, during play"
+			end
+			return Revive.adminRevive(plr, p), "Revived " .. p.name
+		elseif action == "win" then
+			if phase ~= "Play" then
+				return false, "The round hasn't started yet"
+			end
+			endGame(p)
+			return true, p.name .. " wins the round"
+		end
+		return false, "Unknown action"
+	end,
+	serverAction = function(action: string, value: any): (boolean, string)
+		if action == "pause" then
+			if phase ~= "Spawn" and phase ~= "Play" then
+				return false, "No round is running"
+			end
+			gameSpeed.paused = not gameSpeed.paused
+			gameSpeed.apply()
+			return true, if gameSpeed.paused then "Paused" else "Resumed"
+		elseif action == "speed" then
+			local v = tonumber(value)
+			if not v or not gameSpeed.CHOICES[v] then
+				return false, "Speed must be 0.5, 1, 2 or 6"
+			end
+			if phase ~= "Spawn" and phase ~= "Play" then
+				return false, "No round is running"
+			end
+			gameSpeed.mult, gameSpeed.actual = v, v
+			gameSpeed.ticks, gameSpeed.checkAt = 0, os.clock()
+			gameSpeed.apply()
+			return true, "Speed x" .. v
+		elseif action == "endRound" then
+			if phase ~= "Spawn" and phase ~= "Play" then
+				return false, "No round is running"
+			end
+			endGame(nil)
+			return true, "Round ended"
+		end
+		return false, "Unknown action"
 	end,
 })
 if match.role == "match" then

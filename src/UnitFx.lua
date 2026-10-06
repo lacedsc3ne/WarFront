@@ -322,6 +322,7 @@ local function addWarheads(d)
 		local wait = buffer.readu16(list, o + 8)
 		local speed = buffer.readu16(list, o + 10) / 64
 		local tx, ty = to % W, to // W
+		destroyWarhead(id)
 		-- OpenFront MIRV warhead sprite: a 3 x 3 white square (flickers like every nuke).
 		local dot = Instance.new("Frame")
 		dot.Name = "Warhead"
@@ -355,6 +356,9 @@ local function addWarheads(d)
 			disc = disc,
 			hash = (id * 0.618) % 1,
 		}
+		local w = warheads[id]
+		-- Cleared on its own if "warheadEnd" never arrives (6 s past the planned impact).
+		w.expire = d.start + (wait + Ballistics.length(w.curve) / math.max(speed, 0.001)) * Config.TICK + 6
 	end
 end
 
@@ -453,7 +457,11 @@ function UnitFx.step(st: number, zoom: number)
 	local hot = math.floor((st * 10 * 0.3) % 4) -- unit.flickerSpeed per tick
 	local r2 = TARGETABLE_RANGE * TARGETABLE_RANGE
 	local dotPx = math.max(1, cell * 3 / 13)
-	for _, w in warheads do
+	for id, w in warheads do
+		if st > w.expire then
+			destroyWarhead(id)
+			continue
+		end
 		local e = (st - w.start) / Config.TICK - w.wait
 		local x, y
 		if e < 0 then

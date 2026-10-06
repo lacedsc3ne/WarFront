@@ -1183,7 +1183,21 @@ local function removeBoat(id)
 	end
 end
 
+-- Seconds past a nuke's planned arrival before its outline is cleared without an end message
+-- (a SAM missile can hold a nuke at its target for a few seconds).
+local NUKE_GRACE = 6
+
+local function dropNuke(id: number)
+	local n = nukes[id]
+	if n then
+		n.dot:Destroy()
+		n.ring:Destroy()
+		nukes[id] = nil
+	end
+end
+
 local function addNuke(data)
+	dropNuke(data.id) -- never leave an older outline with the same id behind
 	local fx, fy = data.from % W, data.from // W
 	local tx, ty = data.to % W, data.to // W
 	local def = Config.NUKES[data.kind]
@@ -1214,12 +1228,7 @@ local function explosion(tile: number, radius: number, big: boolean)
 end
 
 local function endNuke(data)
-	local n = nukes[data.id]
-	if n then
-		n.dot:Destroy()
-		n.ring:Destroy()
-		nukes[data.id] = nil
-	end
+	dropNuke(data.id)
 	if data.silent then
 		return -- MIRV carrier separated into warheads (UnitFx)
 	end
@@ -2386,7 +2395,11 @@ RunService.RenderStepped:Connect(function()
 	-- Nukes
 	local nukePx = SpriteKit.cellPx(zoom)
 	local targetR2 = (150 / Config.LINEAR_SCALE) ^ 2 -- defaultNukeTargetableRange
-	for _, n in nukes do
+	for id, n in nukes do
+		if st > n.start + n.duration + NUKE_GRACE then
+			dropNuke(id) -- its end message never came (a lost or stale nuke): clear the outline
+			continue
+		end
 		local x, y
 		if n.curve then
 			x, y = Ballistics.at(n.curve, math.max(0, st - n.start) * (n.speed or 0))

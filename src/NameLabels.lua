@@ -56,7 +56,7 @@ local OUTLINE = 1.4 -- name.outlineWidth (screen px, in the player's territory c
 -- name.frag.glsl caps the outline to the MSDF margin: min(1.4, em_px / 6 - 1) (distanceRange 16
 -- atlas px at size 48), so small names have a thinner (or no) outline.
 local OUTLINE_PER_EM = 1 / 6
-local FLAG_H = 1.2 -- flag height in line heights (icon.vert.glsl)
+local FLAG_H = 0.8 -- flag height in line heights (OpenFront 1.2; smaller here, Liam Oct 2026)
 local ICON = 1.1 -- status icon size in line heights (status-icon.vert.glsl)
 local TROOP_LINE = 1.1 -- troop line offset in line heights (name.vert.glsl)
 -- Width calibration: Overpass Bold advance width of REF_TEXT, in em (resources/atlases/msdf-atlas.json).
