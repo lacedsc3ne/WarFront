@@ -1114,7 +1114,7 @@ renderStoreTab = function(page: any, tab: string)
 		end
 		passGrid(4, perks)
 	elseif tab == "boosts" then
-		MenuKit.paragraph(body, 1, "Boosts for your matches. Use them from the boosts bar at the top right during a game, as many as you own: from " .. MetaConfig.BOOST_DELAY .. " s after the spawn phase, then once every " .. MetaConfig.BOOST_COOLDOWN .. " s per kind. Extra Revives are used from the defeat screen. Never in ranked.", { TextColor3 = C.WHITE, TextTransparency = 0.5 })
+		MenuKit.paragraph(body, 1, "Boosts for your matches. Use them from the boosts bar at the top right once the fighting starts, as many as you own (" .. MetaConfig.BOOST_COOLDOWN .. " s apart per kind). Bought in a match, they're used right away. Extra Revives are used from the defeat screen. Never in ranked.", { TextColor3 = C.WHITE, TextTransparency = 0.5 })
 		local grid = storeGrid(body, 2, 270)
 		local owned = if type(p.boosts) == "table" then p.boosts else {}
 		for i, b in MetaConfig.SHOP_ITEMS do

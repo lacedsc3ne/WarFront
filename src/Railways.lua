@@ -657,9 +657,12 @@ local function removeTrain(tr)
 	end
 end
 
+-- TrainStation.rel: self, then teammates ("team", paid like "other"), then allies.
 local function relation(a, b): string
 	if a == b then
 		return "self"
+	elseif a.team ~= nil and a.team == b.team then
+		return "team"
 	elseif ctx.allied(a.id, b.id) then
 		return "ally"
 	end
@@ -674,12 +677,11 @@ local function stationReached(tr, st)
 		local stOwner = ownerOf(st)
 		if trainOwner and stOwner then
 			local gold = trainGold(relation(trainOwner, stOwner), tr.visited)
-			if stOwner ~= trainOwner and stOwner.alive then
-				stOwner.gold += gold
+			-- addGold(gold, station tile): shows "+gold" over the station for its owner.
+			if stOwner ~= trainOwner then
+				ctx.addIncome(stOwner, gold, st.tile)
 			end
-			if trainOwner.alive then
-				trainOwner.gold += gold
-			end
+			ctx.addIncome(trainOwner, gold, st.tile)
 		end
 		tr.visited += 1
 	end

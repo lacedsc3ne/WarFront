@@ -409,6 +409,26 @@ function MapFx.moveIndicator(tile: number, owner: number)
 	active[#active + 1] = { kind = "move", label = holder, parts = parts, t0 = os.clock(), life = MOVE_DURATION }
 end
 
+-- WorldTextPass bonus popup: "+ 10K" rising and fading over a port / train station when trade or a
+-- train pays us (server "bonus" { tile, gold }).
+local BONUS_LIFE = 2
+function MapFx.bonus(tile: number, gold: number)
+	local W = ctx.mapSize()
+	local text = Instance.new("TextLabel")
+	text.BackgroundTransparency = 1
+	text.AnchorPoint = Vector2.new(0.5, 1)
+	text.Position = tilePos(tile % W, tile // W)
+	text.Size = UDim2.fromOffset(90, 16)
+	text.FontFace = Font.fromEnum(Enum.Font.GothamBold)
+	text.TextSize = 13
+	text.TextColor3 = Color3.fromRGB(253, 224, 71) -- yellow-300
+	text.TextStrokeTransparency = 0.2
+	text.Text = "+ " .. (if ctx.fmt then ctx.fmt(gold) else tostring(gold))
+	text.ZIndex = 5
+	text.Parent = ctx.layer
+	active[#active + 1] = { kind = "bonus", label = text, t0 = os.clock(), life = BONUS_LIFE, base = text.Position }
+end
+
 function MapFx.conquest(data)
 	if not data or data.killer ~= ctx.getMyId() then
 		return
@@ -724,6 +744,11 @@ function MapFx.step(now: number, zoom: number)
 				part.Position = UDim2.new(0.5, offs[k].X, 0.5, offs[k].Y)
 				part.ImageTransparency = f
 			end
+		elseif e.kind == "bonus" then
+			e.label.Position = e.base + UDim2.fromOffset(0, -18 * f)
+			local alpha = if f < 0.7 then 1 else (1 - f) / 0.3
+			e.label.TextTransparency = 1 - alpha
+			e.label.TextStrokeTransparency = 1 - alpha * 0.8
 		elseif e.kind == "fallout" then
 			local heat = 1 - f
 			local intensity = FALLOUT_COLD + (FALLOUT_HOT - FALLOUT_COLD) * heat

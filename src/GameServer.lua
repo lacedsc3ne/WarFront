@@ -180,6 +180,19 @@ local function notify(playerId: number, text: string, kind: string?)
 	end
 end
 
+-- PlayerImpl.addGold(gold, tile): income from trade ships and trains, with OpenFront's BonusEvent
+-- ("+10K" rising over the port / station, and the gold pip in the control panel) for its owner.
+local function addIncome(p, gold: number, tile: number)
+	if not p or not p.alive or gold <= 0 then
+		return
+	end
+	p.gold += gold
+	local plr = playerOf(p)
+	if plr then
+		net:FireClient(plr, "bonus", { tile = tile, gold = gold })
+	end
+end
+
 -- PlayerImpl.canTrade: no embargo in either direction (embargoes live in GameFlow).
 local function canTrade(a, b): boolean
 	return a ~= nil and b ~= nil and a ~= b and Flow.canTrade(a.id, b.id)
@@ -1252,7 +1265,7 @@ local function finishTrade(b)
 	if b.captured then
 		local owner = players[b.owner]
 		if owner and owner.alive then
-			owner.gold += gold
+			addIncome(owner, gold, b.to.tile)
 			if b.owner ~= b.origOwner then
 				local victim = players[b.origOwner]
 				notify(b.owner, string.format("Received %d gold from ship captured from %s", gold, if victim then victim.name else "?"), "info")
@@ -1263,10 +1276,10 @@ local function finishTrade(b)
 	local from = players[b.from.owner]
 	local to = players[b.to.owner]
 	if from and from.alive and b.from.owner ~= 0 then
-		from.gold += gold
+		addIncome(from, gold, b.from.tile)
 	end
 	if to and to.alive and b.to.owner ~= 0 and b.to.owner ~= b.from.owner then
-		to.gold += gold
+		addIncome(to, gold, b.to.tile)
 	end
 end
 
@@ -1607,6 +1620,7 @@ Railways.init({
 	end,
 	rng = rng,
 	canTrade = canTrade,
+	addIncome = addIncome,
 	allied = function(a: number, b: number): boolean
 		return Diplomacy.allied(a, b)
 	end,

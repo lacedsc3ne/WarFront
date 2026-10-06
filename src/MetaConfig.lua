@@ -37,7 +37,7 @@ MetaConfig.PERK_EXTRA_REVIVES = 1 -- Second Chance
 MetaConfig.PERK_SHIELD_SECONDS = 10 -- Safe Landing: personal shield after spawn immunity ends
 
 -- Boosts (developer products, or coins). Used in a match from the boosts strip, as often as you
--- have them: not in the first BOOST_DELAY seconds of fighting, then BOOST_COOLDOWN seconds between
+-- have them: from the moment the fighting starts (BOOST_DELAY = 0), BOOST_COOLDOWN seconds between
 -- two of the same kind; never in ranked. Bought in a match = used right away when possible.
 MetaConfig.BOOSTS = {
 	{ key = "goldCrate", id = 3716871545, coins = 400, name = "Gold Crate", desc = "+100K gold instantly", icon = "Gold" }, -- 25 R$
@@ -45,8 +45,8 @@ MetaConfig.BOOSTS = {
 	{ key = "shield", id = 3716871650, coins = 800, name = "Shield", desc = "30 s safe from land attacks (nukes still hit; attacking a player ends it)", icon = "Defense" }, -- 49 R$
 	{ key = "nukeVoucher", id = 3716871701, coins = 800, name = "Nuke Voucher", desc = "Your next Atom Bomb is free (needs a silo)", icon = "AtomBomb" }, -- 49 R$
 }
-MetaConfig.BOOST_DELAY = 30 -- seconds after the spawn phase before boosts can be used
-MetaConfig.BOOST_COOLDOWN = 60 -- seconds between two uses of the same boost
+MetaConfig.BOOST_DELAY = 0 -- seconds after the spawn phase before boosts can be used (none: bought = usable)
+MetaConfig.BOOST_COOLDOWN = 10 -- seconds between two uses of the same boost (stops accidental double use)
 MetaConfig.BOOST_GOLD = 100000
 MetaConfig.BOOST_TROOPS = 0.25 -- Reinforcements: +25% of max troops now, max troops x1.25 ...
 MetaConfig.BOOST_TROOPS_SECONDS = 60 -- ... for this long

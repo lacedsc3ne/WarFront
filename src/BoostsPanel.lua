@@ -81,7 +81,7 @@ local function blocked(): string?
 		return "Ranked"
 	end
 	if state.phase ~= "Play" then
-		return if state.phase == "Spawn" then "In " .. MetaConfig.BOOST_DELAY .. "s" else "Not now"
+		return if state.phase == "Spawn" then "Spawn" else "Not now" -- usable once the fighting starts
 	end
 	local left = MetaConfig.BOOST_DELAY - elapsedNow()
 	if left > 0 then

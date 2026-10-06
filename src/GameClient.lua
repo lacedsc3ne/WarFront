@@ -1723,6 +1723,12 @@ local function onNet(kind: string, data: any, quiet: boolean?)
 	elseif kind == "clock" then
 		NameLabels.setDoom(if type(data) == "table" then data.doom else nil)
 		refreshNameLabels()
+	elseif kind == "bonus" then
+		-- Trade ship / train income (BonusEvent): "+ gold" over the port or station and the pip.
+		if type(data) == "table" and tonumber(data.gold) and tonumber(data.tile) then
+			MapFx.bonus(data.tile, data.gold)
+			cp.showGain(data.gold)
+		end
 	elseif kind == "conquest" then
 		MapFx.conquest(data) -- sword + "+ gold" where the player we conquered was
 		if type(data) == "table" and data.killer == myId and myId ~= 0 and (tonumber(data.gold) or 0) > 0 then

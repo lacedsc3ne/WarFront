@@ -14,7 +14,7 @@
 --   goldCrate +100K gold; reinforcements +25% of max troops now and max troops x1.25 for 60 s
 --   (p.reinforceUntil, read by GameServer's tick); shield 30 s (Revive.addShield); nukeVoucher next
 --   Atom Bomb free (p.nukeVoucher, read by Missiles.cost / launch).
---   As often as the player has them: from BOOST_DELAY seconds after the spawn phase, then
+--   As often as the player has them: once the fighting starts (plus BOOST_DELAY, 0 now), with
 --   BOOST_COOLDOWN seconds between two of the same kind; never in ranked.
 --   Server -> client "boostResult" { ok, key, text, cooldown? } and a feed line for everyone.
 -- Perks.init(ctx)   ctx: net, feed(text, kind, ownerId), notify(id, text, kind), playerOf(p),
