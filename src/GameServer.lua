@@ -77,6 +77,97 @@ local MapCatalog = require(Shared:WaitForChild("MapCatalog"))
 local mapsFolder = Shared:WaitForChild("Maps")
 local currentMapId = "Europe"
 local map = MapUtil.load(mapsFolder:WaitForChild(currentMapId))
+
+-- Lobby place: players only download the menu's background map (LOBBY_MAP); the other maps stay
+-- on the server (ServerStorage.WFHiddenMaps.Maps) and the menu gets small terrain thumbnails from
+-- Shared.MapThumb instead. Match servers (and Studio while it plays a match) show every map.
+-- Shared.Maps attribute "Available" = every map id, for the menu's map list.
+local LOBBY_MAP, THUMB_W = "Europe", 400
+local hiddenMaps = Instance.new("Folder")
+do
+	-- Map modules require script.Parent.Parent.MapCatalog, so the hidden folder sits next to a copy.
+	local holder = Instance.new("Folder")
+	holder.Name = "WFHiddenMaps"
+	Shared:WaitForChild("MapCatalog"):Clone().Parent = holder
+	hiddenMaps.Name = "Maps"
+	hiddenMaps.Parent = holder
+	holder.Parent = game:GetService("ServerStorage")
+end
+do
+	local ids = {}
+	for _, m in mapsFolder:GetChildren() do
+		ids[#ids + 1] = m.Name
+	end
+	mapsFolder:SetAttribute("Available", table.concat(ids, ","))
+end
+local function findMap(id: string): Instance?
+	return mapsFolder:FindFirstChild(id) or hiddenMaps:FindFirstChild(id)
+end
+local function showAllMaps(all: boolean)
+	if all then
+		for _, m in hiddenMaps:GetChildren() do
+			m.Parent = mapsFolder
+		end
+	else
+		for _, m in mapsFolder:GetChildren() do
+			if m.Name ~= LOBBY_MAP and m.Name ~= currentMapId and m:IsA("ModuleScript") then
+				m.Parent = hiddenMaps
+			end
+		end
+	end
+end
+if match.role == "lobby" then
+	showAllMaps(false)
+end
+do
+	local thumbFn = Shared:FindFirstChild("MapThumb") or Instance.new("RemoteFunction")
+	thumbFn.Name = "MapThumb"
+	thumbFn.Parent = Shared
+	local thumbs: { [string]: any } = {}
+	local calls: { [Player]: { n: number, at: number } } = {}
+	Players.PlayerRemoving:Connect(function(plr)
+		calls[plr] = nil
+	end)
+	-- (id) -> { width, height, terrain = buffer } at most THUMB_W wide (nearest terrain byte).
+	thumbFn.OnServerInvoke = function(plr: Player, id: any)
+		if type(id) ~= "string" or #id > 40 then
+			return nil
+		end
+		local now = os.clock()
+		local c = calls[plr]
+		if not c or now - c.at > 60 then
+			c = { n = 0, at = now }
+			calls[plr] = c
+		end
+		c.n += 1
+		if c.n > 40 then
+			return nil
+		end
+		if thumbs[id] == nil then
+			local mod = findMap(id)
+			local ok, m = false, nil
+			if mod and mod:IsA("ModuleScript") then
+				ok, m = pcall(MapUtil.load, mod)
+			end
+			if not ok or not m then
+				thumbs[id] = false
+			else
+				local tw = math.min(THUMB_W, m.width)
+				local th = math.max(1, math.floor(tw * m.height / m.width + 0.5))
+				local buf = buffer.create(tw * th)
+				for y = 0, th - 1 do
+					local sy = math.min(m.height - 1, math.floor((y + 0.5) * m.height / th))
+					for x = 0, tw - 1 do
+						local sx = math.min(m.width - 1, math.floor((x + 0.5) * m.width / tw))
+						buffer.writeu8(buf, y * tw + x, buffer.readu8(m.terrain, sy * m.width + sx))
+					end
+				end
+				thumbs[id] = { width = tw, height = th, terrain = buf }
+			end
+		end
+		return thumbs[id] or nil
+	end
+end
 local W, HGT, SIZE = map.width, map.height, map.size
 local rng = Random.new()
 
@@ -2251,7 +2342,7 @@ local function startMapVote()
 	teamState.nextMode = Teams.rollMode(teamState.round + 1, rng)
 	local pool = {}
 	for _, info in MapCatalog do
-		if mapsFolder:FindFirstChild(info.id) then
+		if findMap(info.id) then
 			pool[#pool + 1] = info
 		end
 	end
@@ -2315,7 +2406,7 @@ end
 
 -- Swaps the active map and every SIZE-dependent buffer that isn't rebuilt by resetWorld.
 local function loadMap(id: string, compact: boolean?): boolean
-	local mod = mapsFolder:FindFirstChild(id)
+	local mod = findMap(id)
 	if not mod then
 		warn("[War Front] map module missing: " .. id)
 		return false
@@ -3676,7 +3767,7 @@ Matchmaker.init({
 	mapPool = function()
 		local pool = {}
 		for _, info in MapCatalog do
-			if mapsFolder:FindFirstChild(info.id) then
+			if findMap(info.id) then
 				pool[#pool + 1] = info
 			end
 		end
@@ -3696,10 +3787,11 @@ Matchmaker.init({
 		end
 		match.role, match.studioLobby = "match", true
 		Matchmaker.active = false
+		showAllMaps(true)
 		workspace:SetAttribute("WFPlaceRole", "match")
 		match.cfg = cfg
 		match.rules = if type(cfg.settings) == "table" then cfg.settings else {}
-		if type(cfg.map) ~= "string" or not mapsFolder:FindFirstChild(cfg.map) then
+		if type(cfg.map) ~= "string" or not findMap(cfg.map) then
 			cfg.map = "Europe"
 		end
 		workspace:SetAttribute("WFMatchKind", cfg.kind)
@@ -3731,6 +3823,7 @@ Matchmaker.init({
 		end
 		match.role, match.studioLobby = "lobby", false
 		Matchmaker.active = true
+		showAllMaps(false)
 		workspace:SetAttribute("WFPlaceRole", "lobby")
 		workspace:SetAttribute("WFMatchKind", nil)
 		match.cfg, match.rules = nil, {}
@@ -3848,7 +3941,7 @@ if match.role == "match" then
 		end
 		match.cfg = cfg
 		match.rules = if type(cfg.settings) == "table" then cfg.settings else {}
-		if type(cfg.map) ~= "string" or not mapsFolder:FindFirstChild(cfg.map) then
+		if type(cfg.map) ~= "string" or not findMap(cfg.map) then
 			cfg.map = "Europe"
 		end
 		workspace:SetAttribute("WFMatchKind", cfg.kind)

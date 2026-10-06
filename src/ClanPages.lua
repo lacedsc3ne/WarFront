@@ -32,13 +32,21 @@ local ROLE_NAMES = { leader = "Leader", officer = "Officer", member = "Member" }
 local ROLE_COLORS = { leader = C.CYBER, officer = C.AQUARIUS, member = C.GRAY300 }
 
 local function call(op: string, arg: any?): (boolean, any)
-	local ok, success, result = pcall(function()
-		return Shared:WaitForChild("ClanFn"):InvokeServer(op, arg)
-	end)
-	if not ok then
-		return false, "Couldn't reach the server, try again."
+	for attempt = 1, 4 do
+		local ok, success, result = pcall(function()
+			return Shared:WaitForChild("ClanFn"):InvokeServer(op, arg)
+		end)
+		if not ok then
+			return false, "Couldn't reach the server, try again."
+		end
+		-- Another request of ours (a live refresh) is still running on the server: try again shortly.
+		if success ~= true and result == "One moment..." and attempt < 4 then
+			task.wait(0.4)
+		else
+			return success == true, result
+		end
 	end
-	return success == true, result
+	return false, "One moment..."
 end
 
 local function setTag(tag: string?)
@@ -126,8 +134,20 @@ end
 
 local render: (page: any, tab: string?) -> ()
 
+-- Live view: what the Clans page (or the clan leaderboard) shows right now, so a server "changed"
+-- push (Shared.ClanEvent) or the periodic check can refresh it in place. marker = an instance of
+-- that view; once it's gone (page closed or switched), nothing refreshes.
+local live: { [string]: any } = {}
+local function setLive(page: any, kind: string, marker: Instance, extra: { [string]: any }?)
+	live = { page = page, kind = kind, marker = marker }
+	for k, v in extra or {} do
+		live[k] = v
+	end
+end
+
 -- One clan: header, stats, join / leave, settings, requests and members.
-local function renderClan(page: any, clan: any, me: any, back: (() -> ())?)
+local function renderClan(page: any, clan: any, me: any, back: (() -> ())?, keepScroll: boolean?)
+	local scroll = page.body.CanvasPosition
 	page:clear()
 	local body = page.body
 	local o = 0
@@ -159,6 +179,7 @@ local function renderClan(page: any, clan: any, me: any, back: (() -> ())?)
 
 	-- Header
 	local head = MenuKit.card(body, n(), 16, 14, 8)
+	setLive(page, if back then "clan" else "mine", head, { tag = clan.tag, me = me, back = back })
 	local row = make("Frame", { LayoutOrder = 1, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 36), Parent = head })
 	MenuKit.list(row, true, 10, { VerticalAlignment = Enum.VerticalAlignment.Center })
 	tagBadge(row, clan.tag, 34)
@@ -300,7 +321,7 @@ local function renderClan(page: any, clan: any, me: any, back: (() -> ())?)
 			end
 		end
 	end
-	page.body.CanvasPosition = Vector2.zero
+	page.body.CanvasPosition = if keepScroll then scroll else Vector2.zero
 end
 
 -- Browse: search + list of clans (most wins first).
@@ -310,17 +331,32 @@ local function renderBrowse(page: any, me: any)
 	local box = textBox(body, 1, "Search clans by tag or name")
 	local list = make("Frame", { LayoutOrder = 2, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Parent = body })
 	MenuKit.list(list, false, 8)
-	local function fill(query: string)
-		for _, c in list:GetChildren() do
-			if c:IsA("GuiObject") then
-				c:Destroy()
+	local fillToken = 0
+	local function fill(query: string, silent: boolean?)
+		fillToken += 1
+		local token = fillToken
+		if not silent then
+			for _, c in list:GetChildren() do
+				if c:IsA("GuiObject") then
+					c:Destroy()
+				end
 			end
 		end
-		local note = MenuKit.paragraph(list, 0, "Loading clans...", { TextSize = 14, TextTransparency = 0.5 })
+		local note = MenuKit.paragraph(list, 0, if silent then "" else "Loading clans...", { TextSize = 14, TextTransparency = 0.5, Visible = not silent })
 		task.spawn(function()
 			local ok, clans = call("list", query)
-			if not note.Parent then
+			if not note.Parent or token ~= fillToken then
+				note:Destroy()
 				return
+			end
+			if silent then
+				-- Live refresh: swap the rows in one go (no "Loading" flash).
+				for _, c in list:GetChildren() do
+					if c:IsA("GuiObject") and c ~= note then
+						c:Destroy()
+					end
+				end
+				note.Visible = true
 			end
 			if not ok or type(clans) ~= "table" then
 				note.Text = tostring(clans)
@@ -360,11 +396,18 @@ local function renderBrowse(page: any, me: any)
 	box.FocusLost:Connect(function()
 		fill(box.Text)
 	end)
+	setLive(page, "browse", list, {
+		me = me,
+		refresh = function()
+			fill(box.Text, true)
+		end,
+	})
 	fill("")
 end
 
 -- Create: name, tag, description, open; pay with medals or a Clan Charter (Robux).
 local function renderCreate(page: any, me: any)
+	live = {} -- a form being filled in: never refreshed under the player
 	page:clear()
 	local body = page.body
 	local card = MenuKit.card(body, 1, 16, 16, 10)
@@ -505,9 +548,10 @@ function ClanPages.renderBoard(page: any)
 			x += widths[i]
 		end
 	end
-	MenuKit.paragraph(body, 1, "Clans rank by wins: a clan wins when any of its members wins a game.", { TextSize = 12, TextTransparency = 0.6 })
+	local topNote = MenuKit.paragraph(body, 1, "Clans rank by wins: a clan wins when any of its members wins a game.", { TextSize = 12, TextTransparency = 0.6 })
 	rowFrame(2, { "Rank", "Clan", "Wins", "Games", "Members" }, true)
 	local loading = MenuKit.paragraph(body, 3, "Loading clans...", { TextXAlignment = Enum.TextXAlignment.Center, TextTransparency = 0.6 })
+	setLive(page, "board", topNote) -- the note at the top stays while rows reload
 	task.spawn(function()
 		local ok, clans = call("list", "")
 		if not loading.Parent then
@@ -554,6 +598,85 @@ function ClanPages.summary(body: Instance, order: number)
 		line.TextSize = 20
 		line.TextTransparency = 0
 		MenuKit.paragraph(card, 2, (ROLE_NAMES[c.role] or "Member") .. "  ·  Rank #" .. tostring(c.rank or "-") .. "  ·  " .. numberText(c.wins) .. " wins  ·  " .. #c.members .. "/" .. c.max .. " members", { TextSize = 13, TextTransparency = 0.45 })
+	end)
+end
+
+-- Refreshes whatever the live view shows (server push or the periodic check).
+local function refreshLive()
+	local v = live
+	local page = v.page
+	if not page or not v.marker or not v.marker.Parent then
+		return
+	end
+	local focused = game:GetService("UserInputService"):GetFocusedTextBox()
+	if focused and focused:IsDescendantOf(page.body) then
+		return -- typing (search, description): don't redraw under the player
+	end
+	if v.kind == "board" then
+		local scroll = page.body.CanvasPosition
+		ClanPages.renderBoard(page)
+		task.delay(0.5, function()
+			page.body.CanvasPosition = scroll
+		end)
+		return
+	end
+	local ok, me = call("me")
+	if not ok or type(me) ~= "table" or live ~= v or not v.marker.Parent then
+		return
+	end
+	setTag(if me.clan then me.clan.tag else nil)
+	local wasIn = v.me and v.me.clan ~= nil
+	local isIn = me.clan ~= nil
+	if wasIn ~= isIn or (v.kind == "mine" and not isIn) then
+		render(page) -- joined / accepted / kicked / disbanded: the tabs change
+		return
+	end
+	if v.kind == "mine" then
+		renderClan(page, me.clan, me, nil, true)
+	elseif v.kind == "clan" then
+		local okView, clan = call("view", v.tag)
+		if okView and type(clan) == "table" and live == v and v.marker.Parent then
+			renderClan(page, clan, me, v.back, true)
+		end
+	elseif v.kind == "browse" and v.refresh then
+		v.me = me
+		v.refresh()
+	end
+end
+
+-- Server pushes ("changed", TAG) are bundled (at most one refresh a second); browse, the
+-- leaderboard and your own clan are also re-checked every 20 s in case a push was missed.
+do
+	local pending, lastPoll = false, os.clock()
+	task.spawn(function()
+		local ev = Shared:WaitForChild("ClanEvent", 30)
+		if ev and ev:IsA("RemoteEvent") then
+			ev.OnClientEvent:Connect(function(kind: string, tag: any)
+				if kind ~= "changed" then
+					return
+				end
+				local v = live
+				local mine = tag == playerGui:GetAttribute("WFClanTag")
+				if v.kind == "browse" or v.kind == "board" or mine or (v.kind == "clan" and v.tag == tag) then
+					pending = true -- lists show every clan; otherwise only ours or the one on screen
+				end
+			end)
+		end
+	end)
+	task.spawn(function()
+		while true do
+			task.wait(1)
+			local v = live
+			local due = pending or (v.kind ~= nil and v.kind ~= "clan" and os.clock() - lastPoll > 20)
+			if due and v.marker and v.marker.Parent then
+				pending = false
+				lastPoll = os.clock()
+				pcall(refreshLive)
+			elseif pending then
+				pending = false
+				ClanPages.refreshTag() -- page closed: keep the menu's TAG button current
+			end
+		end
 	end)
 end
 

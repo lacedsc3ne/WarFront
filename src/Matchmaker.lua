@@ -1084,7 +1084,7 @@ local function lobbyClosed(plr: Player, why: string)
 	send(plr, { kind = "lobby", state = "closed", reason = why })
 end
 
-local function createLobby(plr: Player)
+local function createLobby(plr: Player, opts: any)
 	if private.codeOf[plr] then
 		return
 	end
@@ -1095,10 +1095,14 @@ local function createLobby(plr: Player)
 			code = code,
 			host = plr.UserId,
 			hostName = plr.DisplayName,
-			settings = table.clone(Matchmaker.DEFAULT_SETTINGS),
+			-- Settings and visibility picked on Create Lobby's first page (cleaned like lobbySettings).
+			settings = if type(opts) == "table" and type(opts.settings) == "table"
+				then Matchmaker.cleanSettings(opts.settings, Matchmaker.DEFAULT_SETTINGS)
+				else table.clone(Matchmaker.DEFAULT_SETTINGS),
 			members = { [tostring(plr.UserId)] = { name = plr.DisplayName, job = JOB } },
 			state = "open",
-			visibility = "public", -- "public": on the Join Lobby list; "private": ID or invite only
+			-- "public": on the Join Lobby list; "private": ID or invite only
+			visibility = if type(opts) == "table" and opts.visibility == "private" then "private" else "public",
 			created = os.time(),
 			updated = os.time(),
 		}
@@ -1371,7 +1375,7 @@ function Matchmaker.handle(plr: Player, kind: string, a1: any, a2: any)
 	elseif kind == "lobbyCreate" then
 		pub.want[plr] = nil
 		removeMember(plr)
-		task.spawn(createLobby, plr)
+		task.spawn(createLobby, plr, a1) -- a1: { settings, visibility } from the setup page
 	elseif kind == "lobbyJoin" then
 		pub.want[plr] = nil
 		removeMember(plr)

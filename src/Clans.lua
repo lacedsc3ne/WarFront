@@ -15,7 +15,8 @@
 --   "index"    { [TAG] = { n = name, m = members, o = open, w = wins, g = games } } for browsing
 --              and the clan leaderboard
 -- MessagingService "WFClans" { u = userId, t = TAG | false } tells other servers a player's clan
--- changed (accepted, kicked) so their name tag updates without rejoining.
+-- changed (accepted, kicked) so their name tag updates without rejoining; { c = TAG } says a clan
+-- changed (Shared.ClanEvent "changed" to every client, so Clans pages refresh live).
 -- Client -> server: Shared.ClanFn (RemoteFunction) :InvokeServer(op, arg) -> ok, result | message
 --   "me"                     { clan = view?, role?, medals, tokens, cost, charterId, max }
 --   "view", TAG              view of any clan (requests only for its officers)
@@ -66,6 +67,22 @@ local indexCache = { at = -math.huge, data = {} :: { [string]: any } }
 local fn = Shared:FindFirstChild("ClanFn") or Instance.new("RemoteFunction")
 fn.Name = "ClanFn"
 fn.Parent = Shared
+
+-- Live updates: Shared.ClanEvent ("changed", TAG) goes to every player on every server whenever a
+-- clan changes (members, roles, requests, settings, wins), so open Clans pages and the clan
+-- leaderboard refresh by themselves. Other servers hear it through MessagingService { c = TAG },
+-- which also drops their cached index.
+local clanEvent = Shared:FindFirstChild("ClanEvent") or Instance.new("RemoteEvent")
+clanEvent.Name = "ClanEvent"
+clanEvent.Parent = Shared
+
+local function clanChanged(tag: string)
+	indexCache.at = -math.huge
+	clanEvent:FireAllClients("changed", tag)
+	task.spawn(pcall, function()
+		MessagingService:PublishAsync(TOPIC, { c = tag })
+	end)
+end
 
 local function now(): number
 	return os.time()
@@ -153,7 +170,7 @@ local function setIndex(tag: string, entry: any?)
 		idx[tag] = entry
 		return idx
 	end)
-	indexCache.at = -math.huge
+	clanChanged(tag)
 end
 
 local function readIndex(): { [string]: any }
@@ -433,6 +450,8 @@ function ops.join(plr: Player, tag: any)
 		setUser(uid, tag)
 		setIndex(tag, indexEntry(rec))
 		announce(uid, tag)
+	else
+		clanChanged(tag) -- new request: the clan's officers see it
 	end
 	return true, view(rec, uid)
 end
@@ -452,6 +471,7 @@ function ops.cancel(plr: Player, tag: any)
 	if not ok then
 		return false, rec
 	end
+	clanChanged(string.upper(tag))
 	return true, view(normalize(rec), plr.UserId)
 end
 
@@ -689,13 +709,14 @@ fn.OnServerInvoke = function(plr: Player, op: any, arg: any)
 	if busy[plr] then
 		return false, "One moment..."
 	end
-	-- Every clan request reads the DataStore: at most about 3 a second per player.
+	-- Every clan request reads the DataStore: at most about 3 a second per player. A request that
+	-- comes too soon waits its turn (one at a time: busy refuses the rest while it waits).
+	busy[plr] = true
 	local now = os.clock()
 	if lastCall[plr] and now - lastCall[plr] < 0.3 then
-		return false, "One moment..."
+		task.wait(0.3 - (now - lastCall[plr]))
 	end
-	lastCall[plr] = now
-	busy[plr] = true
+	lastCall[plr] = os.clock()
 	local ok, a, b = pcall(f, plr, arg)
 	busy[plr] = nil
 	if not ok then
@@ -711,6 +732,11 @@ function Clans.init(c)
 	pcall(function()
 		MessagingService:SubscribeAsync(TOPIC, function(msg)
 			local d = msg.Data
+			if type(d) == "table" and type(d.c) == "string" and #d.c <= 8 then
+				indexCache.at = -math.huge
+				clanEvent:FireAllClients("changed", d.c)
+				return
+			end
 			if type(d) == "table" and tonumber(d.u) and Players:GetPlayerByUserId(d.u) then
 				setLocal(d.u, if type(d.t) == "string" then d.t else nil)
 			end

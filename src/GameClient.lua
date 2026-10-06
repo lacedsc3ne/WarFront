@@ -1906,6 +1906,10 @@ local function act(t: number)
 			-- BuildPreviewController.createStructure: upgrade the structure under the ghost when
 			-- there is one, else build; atom / hydrogen bomb ghosts stay armed for the next target.
 			local keep = mode.type == "nuke" and (mode.kind == "AtomBomb" or mode.kind == "HydrogenBomb")
+			-- Hold Shift to keep placing the same building / unit (quick placement).
+			if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.RightShift) then
+				keep = true
+			end
 			if mode.type == "build" then
 				local _, canUpgrade = Interact.build.ghostInfo(mode.kind, t)
 				if canUpgrade then

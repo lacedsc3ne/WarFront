@@ -248,9 +248,12 @@ end
 
 local function mapPool()
 	local folder = Shared:FindFirstChild("Maps")
+	-- The lobby place only sends the background map; "Available" lists every map the server has.
+	local available = folder and folder:GetAttribute("Available")
+	local listed = if type(available) == "string" then string.split(available, ",") else nil
 	local out = {}
 	for _, m in MapCatalog do
-		if not folder or folder:FindFirstChild(m.id) then
+		if not folder or folder:FindFirstChild(m.id) or (listed and table.find(listed, m.id)) then
 			out[#out + 1] = m
 		end
 	end
@@ -309,7 +312,20 @@ local function loadMapData(id: string)
 		return mapData[id]
 	end
 	local folder = Shared:FindFirstChild("Maps") or Shared:WaitForChild("Maps", 5)
-	local mod = folder and (folder:FindFirstChild(id) or folder:WaitForChild(id, 5))
+	local mod = folder and folder:FindFirstChild(id)
+	local thumbFn = Shared:FindFirstChild("MapThumb")
+	if not mod and thumbFn and thumbFn:IsA("RemoteFunction") then
+		-- Lobby place: the map stays on the server; it sends a small terrain thumbnail
+		-- ({ width, height, terrain }), which renderPreview draws like a map.
+		local ok, thumb = pcall(function()
+			return thumbFn:InvokeServer(id)
+		end)
+		if ok and type(thumb) == "table" and typeof(thumb.terrain) == "buffer" then
+			mapData[id] = thumb
+			return thumb
+		end
+	end
+	mod = mod or (folder and folder:WaitForChild(id, 5))
 	local result = false
 	if mod and mod:IsA("ModuleScript") then
 		local ok, m = pcall(MapUtil.load, mod)

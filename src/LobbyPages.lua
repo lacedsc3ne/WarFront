@@ -51,6 +51,15 @@ local lobbyList: { any }? = nil
 local listAskedAt = 0
 local listView: { frame: Frame?, sig: string } = { frame = nil, sig = "" }
 local visibilityWanted: string? = nil -- host's Public / Private click, until the server echoes it
+-- Create Lobby is two pages: setup (pick the settings and who can join, then CREATE LOBBY) and the
+-- lobby itself (ID, players, invites, START GAME). The host can go back to the settings from the
+-- lobby (hostView = "settings") and return to it.
+local host = {
+	draft = nil :: any, -- settings picked before the lobby exists (kept while the menu is open)
+	visibility = "public",
+	view = "room" :: string, -- "room" | "settings" (an open lobby)
+	creating = false, -- CREATE LOBBY pressed, waiting for the server
+}
 local spinners: { GuiObject } = {}
 -- Single-player page settings (SinglePlayerModal DEFAULT_OPTIONS; kept while the menu is open).
 local SOLO_DEFAULTS = {
@@ -79,15 +88,23 @@ local function text(props)
 	return MenuKit.text(props)
 end
 
+-- Create Lobby before the lobby exists: settings are edited locally (host.draft).
+local function setupMode(): boolean
+	return shown.kind == "host" and not (lobby and lobby.state == "open")
+end
+
 local function settings(): any
 	if shown.kind == "solo" then
 		return solo.settings
+	end
+	if setupMode() then
+		return host.draft or {}
 	end
 	return pendingSettings or (lobby and lobby.settings) or {}
 end
 
 local function isHost(): boolean
-	return shown.kind == "solo" or (lobby ~= nil and lobby.isHost == true)
+	return shown.kind == "solo" or setupMode() or (lobby ~= nil and lobby.isHost == true)
 end
 
 local function mapName(id: string?): string
@@ -195,9 +212,10 @@ local function pushSettings(change: { [string]: any })
 	if not isHost() then
 		return
 	end
-	if shown.kind == "solo" then
+	if shown.kind == "solo" or setupMode() then
+		local t = if shown.kind == "solo" then solo.settings else host.draft
 		for k, v in change do
-			solo.settings[k] = v
+			t[k] = v
 		end
 		for _, f in refreshers do
 			f()
@@ -604,20 +622,25 @@ local function visibilityCard(body: Instance, order: number)
 		label.Position = UDim2.fromScale(0.5, 0.5)
 		setters[v[1]] = set
 		b.Activated:Connect(function()
-			if not isHost() or not lobby then
+			if setupMode() then
+				host.visibility = v[1]
+			elseif not isHost() or not lobby then
 				return
+			else
+				visibilityWanted = v[1]
+				ctx.net:FireServer("lobbyVisibility", v[1])
 			end
-			visibilityWanted = v[1]
-			ctx.net:FireServer("lobbyVisibility", v[1])
 			for _, f in refreshers do
 				f()
 			end
 		end)
 	end
-	local invite = MenuKit.button("secondary", { Name = "InviteFriends", LayoutOrder = 4, Size = UDim2.new(1, 0, 0, 44), FontFace = F.BOLD, Text = "INVITE FRIENDS", Parent = card })
-	invite.Activated:Connect(inviteFriends)
+	if not setupMode() then
+		local invite = MenuKit.button("secondary", { Name = "InviteFriends", LayoutOrder = 4, Size = UDim2.new(1, 0, 0, 44), FontFace = F.BOLD, Text = "INVITE FRIENDS", Parent = card })
+		invite.Activated:Connect(inviteFriends)
+	end
 	refreshers[#refreshers + 1] = function()
-		local current = (lobby and lobby.visibility) or "private"
+		local current = if setupMode() then host.visibility else ((lobby and lobby.visibility) or "private")
 		if visibilityWanted == current then
 			visibilityWanted = nil
 		end
@@ -631,11 +654,81 @@ local function visibilityCard(body: Instance, order: number)
 	end
 end
 
-local function renderLobby(page, hosting: boolean)
+local LOBBY_DEFAULTS = table.clone(SOLO_DEFAULTS)
+LOBBY_DEFAULTS.map = "Europe"
+
+local renderLobby
+
+-- Create Lobby, step 1: the game settings and who can join, then CREATE LOBBY.
+local function renderHostSetup(page)
+	resetPage(page)
+	local body = page.body
+	if host.creating then
+		spinner(body, 1, C.MALIBU, "Creating lobby...")
+		return
+	end
+	if not host.draft then
+		host.draft = table.clone(LOBBY_DEFAULTS)
+		host.draft.disabledUnits = {}
+	end
+	MenuKit.paragraph(body, 1, "Pick the settings, then create the lobby. You can still change them while people join.", { TextSize = 14, TextTransparency = 0.4 })
+	visibilityCard(body, 2)
+	local order = buildSettings(body, 10, true)
+	local create = MenuKit.button("primary", { Name = "CreateLobby", LayoutOrder = order + 1, Size = UDim2.new(1, 0, 0, 52), FontFace = F.BOLD, Text = "CREATE LOBBY", Parent = body })
+	create.Activated:Connect(function()
+		if host.creating then
+			return
+		end
+		host.creating = true
+		ctx.net:FireServer("lobbyCreate", { settings = host.draft, visibility = host.visibility })
+		renderHostSetup(page)
+		task.delay(12, function()
+			-- No answer (the server refused or failed): back to the settings.
+			if host.creating and not lobby and shown.kind == "host" and shown.page == page then
+				host.creating = false
+				renderHostSetup(page)
+			end
+		end)
+	end)
+	for _, f in refreshers do
+		f()
+	end
+end
+
+-- The host editing an open lobby's settings (changes reach the players as they're made).
+local function renderLobbySettings(page)
+	resetPage(page)
+	local body = page.body
+	local back = MenuKit.button("secondary", { Name = "BackToLobby", LayoutOrder = 1, Size = UDim2.new(1, 0, 0, 44), FontFace = F.BOLD, Text = "BACK TO LOBBY", Parent = body })
+	back.Activated:Connect(function()
+		host.view = "room"
+		renderLobby(page, true)
+	end)
+	local order = buildSettings(body, 10, true)
+	local done = MenuKit.button("primary", { Name = "Done", LayoutOrder = order + 1, Size = UDim2.new(1, 0, 0, 52), FontFace = F.BOLD, Text = "BACK TO LOBBY", Parent = body })
+	done.Activated:Connect(function()
+		host.view = "room"
+		renderLobby(page, true)
+	end)
+	for _, f in refreshers do
+		f()
+	end
+end
+
+-- Create Lobby, step 2 (and Join Lobby once in): ID, players, who can join, the settings, START.
+renderLobby = function(page, hosting: boolean)
+	if hosting and not (lobby and lobby.state == "open") then
+		renderHostSetup(page)
+		return
+	end
+	if hosting and lobby and lobby.isHost and host.view == "settings" then
+		renderLobbySettings(page)
+		return
+	end
 	resetPage(page)
 	local body = page.body
 	if not lobby or lobby.state ~= "open" then
-		spinner(body, 1, C.MALIBU, if hosting then "Creating lobby..." else "Joining lobby...")
+		spinner(body, 1, C.MALIBU, "Joining lobby...")
 		return
 	end
 	lobbyIdCard(body, 1)
@@ -644,9 +737,15 @@ local function renderLobby(page, hosting: boolean)
 		MenuKit.paragraph(body, 2, "Lobby joined! Waiting for host to start...", { FontFace = F.BOLD, TextSize = 16 }) -- private_lobby.joined_waiting
 	end
 	buildPlayers(body, 3)
-	local order = buildSettings(body, 10, isHost())
+	local order = buildSettings(body, 10, false)
 	if isHost() then
-		local start = MenuKit.button("primary", { Name = "StartGame", LayoutOrder = order + 1, Size = UDim2.new(1, 0, 0, 52), FontFace = F.BOLD, Text = "START GAME", Parent = body })
+		local row = make("Frame", { LayoutOrder = order + 1, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 52), Parent = body })
+		local edit = MenuKit.button("secondary", { Name = "EditSettings", Size = UDim2.new(0, 180, 1, 0), FontFace = F.BOLD, Text = "EDIT SETTINGS", Parent = row })
+		edit.Activated:Connect(function()
+			host.view = "settings"
+			renderLobby(page, true)
+		end)
+		local start = MenuKit.button("primary", { Name = "StartGame", Position = UDim2.fromOffset(190, 0), Size = UDim2.new(1, -190, 1, 0), FontFace = F.BOLD, Text = "START GAME", Parent = row })
 		start.Activated:Connect(function()
 			start.Text = "STARTING…" -- game_settings.starting
 			ctx.net:FireServer("lobbyStart")
@@ -999,8 +1098,8 @@ function LobbyPages.render(kind: string, page)
 	if kind == "host" then
 		if not lobby or lobby.state ~= "open" then
 			pendingSettings = nil
-			ctx.net:FireServer("lobbyCreate")
 		end
+		host.view = "room"
 		renderLobby(page, true)
 	elseif kind == "join" then
 		renderJoin(page)
@@ -1032,6 +1131,7 @@ function LobbyPages.closed(kind: string?)
 		lobby = nil
 		pendingSettings = nil
 		visibilityWanted = nil
+		host.view, host.creating = "room", false
 	elseif kind == "ranked" then
 		ctx.net:FireServer("rankedLeave")
 		ranked.state = "idle"
@@ -1052,6 +1152,12 @@ local function onMM(data: any)
 	if data.kind == "notice" then
 		hideOverlay()
 		ctx.toast(tostring(data.text))
+		if host.creating and not lobby then
+			host.creating = false -- CREATE LOBBY was refused (too soon / error): back to the settings
+			if shown.kind == "host" and shown.page then
+				renderHostSetup(shown.page)
+			end
+		end
 	elseif data.kind == "studioMatch" then
 		-- Studio: the match is played in this server (no teleport).
 		hideOverlay()
@@ -1133,6 +1239,7 @@ local function onMM(data: any)
 		end
 		local first = lobby == nil or lobby.code ~= data.code or lobby.isHost ~= data.isHost
 		lobby = data
+		host.creating = false
 		if pendingSettings and sendAt == 0 and os.clock() > editedAt + 1.5 then
 			pendingSettings = nil -- the server has our edit by now
 		end
