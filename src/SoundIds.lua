@@ -8,9 +8,10 @@
 -- Files: Documents/WarFront/sounds (uploaded Oct 2026).
 
 return {
-	-- Music: OpenFront's menu-theme.mp3 / gameplay.mp3 (proprietary, used with OpenFront's permission).
-	["music-gameplay"] = 87001142840161,
-	["music-menu"] = 112472622708951,
+	-- Music: off for now (Liam is picking new soundtracks). Old ids: gameplay 87001142840161,
+	-- menu 112472622708951. Put new asset ids here to turn music back on.
+	["music-gameplay"] = 0,
+	["music-menu"] = 0,
 	["alliance-accepted"] = 139562667545959,
 	["alliance-broken"] = 113980028595976,
 	["alliance-declined"] = 137412769604900,
