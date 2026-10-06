@@ -1939,6 +1939,9 @@ UserInputService.InputBegan:Connect(function(input, processed)
 		return
 	end
 	local t = input.UserInputType
+	if vote.panel.Visible and (t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch) then
+		return -- the map can't be dragged or clicked behind the map vote
+	end
 	if t == Enum.UserInputType.MouseButton1 and phase.phase == "Play" and not mode and KeybindData.held("boxSelectWarships") then
 		-- OpenFront: hold Shift and drag to box-select warships.
 		selection.boxStart = Vector2.new(input.Position.X, input.Position.Y)
@@ -1978,6 +1981,9 @@ end)
 UserInputService.InputChanged:Connect(function(input, processed)
 	local t = input.UserInputType
 	if t == Enum.UserInputType.MouseWheel and not processed then
+		if vote.panel.Visible then
+			return
+		end
 		if Interact.keys.wheel(input) then
 			return -- Shift + wheel: attack ratio
 		end
@@ -2067,7 +2073,7 @@ end)
 
 local pinchLast = 1
 UserInputService.TouchPinch:Connect(function(positions, scale, _velocity, state, processed)
-	if processed or #positions < 2 then
+	if processed or #positions < 2 or vote.panel.Visible then
 		return
 	end
 	if state == Enum.UserInputState.Begin then

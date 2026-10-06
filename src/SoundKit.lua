@@ -288,7 +288,32 @@ end
 
 -- SoundManager.playBackgroundMusic / MenuMusic: one looping track on the Music channel.
 -- OpenFront's menu and gameplay tracks (used with OpenFront's permission), ids in Shared.SoundIds
--- "music-menu" / "music-gameplay" (0 = silence).
+-- "music-menu" loops; "music-gameplay" is a playlist (MUSIC_PLAYLISTS) played in order and then
+-- from the start again. Ids in Shared.SoundIds (0 = silence).
+local MUSIC_PLAYLISTS = {
+	["music-gameplay"] = { "music-gameplay-1", "music-gameplay-2", "music-gameplay-3" },
+}
+local musicIndex = 0
+local function playMusicTrack(name: string, loop: boolean)
+	if music then
+		music:Destroy()
+		music = nil
+	end
+	local asset = assetFor(name)
+	if not asset then
+		return false
+	end
+	local s = Instance.new("Sound")
+	s.Name = "Music"
+	s.SoundId = asset
+	s.Looped = loop
+	s.SoundGroup = group("Music")
+	s.Parent = SoundService
+	s:Play()
+	music = s
+	return true
+end
+
 function SoundKit.setMusic(track: string?)
 	if track == musicName then
 		return
@@ -298,17 +323,34 @@ function SoundKit.setMusic(track: string?)
 		music:Destroy()
 		music = nil
 	end
-	local asset = track and assetFor(track)
-	if asset then
-		local s = Instance.new("Sound")
-		s.Name = "Music"
-		s.SoundId = asset
-		s.Looped = true
-		s.SoundGroup = group("Music")
-		s.Parent = SoundService
-		s:Play()
-		music = s
+	if not track then
+		return
 	end
+	local list = MUSIC_PLAYLISTS[track]
+	if not list then
+		playMusicTrack(track, true)
+		return
+	end
+	-- Playlist: next track when one ends (skipping silent / missing ones).
+	musicIndex = 0
+	local function nextTrack()
+		for _ = 1, #list do
+			musicIndex = musicIndex % #list + 1
+			if musicName ~= track then
+				return
+			end
+			if playMusicTrack(list[musicIndex], #list == 1) then
+				local s = music :: Sound
+				s.Ended:Connect(function()
+					if music == s and musicName == track then
+						nextTrack()
+					end
+				end)
+				return
+			end
+		end
+	end
+	nextTrack()
 end
 
 function SoundKit.setup(c)

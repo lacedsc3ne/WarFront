@@ -152,6 +152,7 @@ local SETTINGS = {
 	ambienceVolume = { 0, 100 },
 	interfaceVolume = { 0, 100 },
 	musicVolume = { 0, 100 },
+	audioVersion = { 0, 100 },
 	muted = true,
 	alertFrame = true,
 	leftClickMenu = true,

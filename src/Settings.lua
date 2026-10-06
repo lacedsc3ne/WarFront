@@ -48,7 +48,8 @@ local DEFAULTS = {
 	alertsVolume = 80,
 	ambienceVolume = 40,
 	interfaceVolume = 50,
-	musicVolume = 50, -- OpenFront default music 0.5
+	musicVolume = 20, -- quieter than OpenFront's 0.5 (Liam, Oct 2026)
+	audioVersion = 2, -- 2: old saved music volumes of 50 (the previous default) drop to the new one
 	muted = false,
 	-- OpenFront UserSettings (UserSettingModal Gameplay / Graphics / Audio tabs)
 	alertFrame = true, -- red / orange screen frame when betrayed or attacked over land
@@ -77,6 +78,7 @@ local RANGES = {
 	ambienceVolume = { 0, 100, 5 },
 	interfaceVolume = { 0, 100, 5 },
 	musicVolume = { 0, 100, 5 },
+	audioVersion = { 0, 100, 1 },
 	attackRatio = { 1, 100, 1 },
 	attackRatioIncrement = { 1, 20, 1 },
 	nukeAllySafety = { 0, 30, 1 },
@@ -230,14 +232,16 @@ local function applyLoaded(saved: any)
 		return
 	end
 	loaded = true
+	local migrate = type(saved) == "table" and saved.audioVersion == nil
 	if type(saved) == "table" then
 		for k in DEFAULTS do
-			if not dirty[k] and saved[k] ~= nil then
+			local oldDefault = migrate and (k == "audioVersion" or (k == "musicVolume" and saved[k] == 50))
+			if not dirty[k] and saved[k] ~= nil and not oldDefault then
 				setValue(k, saved[k], false)
 			end
 		end
 	end
-	if next(dirty) then
+	if next(dirty) or migrate then
 		scheduleSave() -- changes made before the profile arrived still need saving
 	end
 	table.clear(dirty)

@@ -690,6 +690,23 @@ local COST_OFFSET = 25
 local ghost: any = nil
 local ghostCost: TextLabel? = nil
 local upgradeMark: any = nil
+-- Build-mode extras (BuildPreviewController): the icon of a bomb / warship under the cursor (they
+-- have no structure ghost) and RangeCirclePass, the white circle showing a nuke's blast radius,
+-- a SAM's / defense post's range or a factory's rail range.
+local ghostExtra: { icon: ImageLabel?, kind: string?, circle: Frame? } = {}
+local function rangeFor(kind: string): number
+	local L = SharedConfig.LINEAR_SCALE or 4
+	if kind == "AtomBomb" or kind == "HydrogenBomb" then
+		return SharedConfig.NUKES[kind].outer -- nukeMagnitudes(type).outer
+	elseif kind == "SAM" then
+		return (150 - 480 / (1 + 5)) / L -- samRange(level 1)
+	elseif kind == "Factory" then
+		return 110 / L -- trainStationMaxRange
+	elseif kind == "DefensePost" then
+		return SharedConfig.DEFENSE_RADIUS or 30 / L -- defensePostRange
+	end
+	return 0
+end
 
 local function renderNumber(n: number): string
 	n = math.max(0, n)
@@ -730,6 +747,13 @@ function MapMarkers.setGhost(g, zoom: number)
 		return
 	end
 	if not g then
+		if ghostExtra.icon then
+			ghostExtra.icon:Destroy()
+			ghostExtra.icon, ghostExtra.kind = nil, nil
+		end
+		if ghostExtra.circle then
+			ghostExtra.circle.Visible = false
+		end
 		if ghost then
 			ghost.outer:Destroy()
 			ghost = nil
@@ -747,11 +771,22 @@ function MapMarkers.setGhost(g, zoom: number)
 		ghost.outer:Destroy()
 		ghost = nil
 	end
-	-- Only structures have a ghost icon (StructurePass atlas); bombs / warships show just the cost.
+	-- Structures have a ghost marker (StructurePass atlas); bombs and warships get their build-bar
+	-- icon under the cursor instead.
 	local hasIcon = SHAPES[g.kind] ~= nil
 	local px = math.max(sizeFor(zoom), ICON_SIZE * 0.5)
+	if ghostExtra.icon and (hasIcon or ghostExtra.kind ~= g.kind) then
+		ghostExtra.icon:Destroy()
+		ghostExtra.icon, ghostExtra.kind = nil, nil
+	end
 	if not hasIcon then
-		-- (no icon; fall through to the cost label)
+		local icon = ghostExtra.icon
+		if not icon then
+			icon = IconKit.image(g.kind, { Name = "BuildGhostIcon", AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(26, 26), ImageTransparency = 0.15, ZIndex = 4, Parent = ctx.layer })
+			ghostExtra.icon, ghostExtra.kind = icon, g.kind
+		end
+		icon.Position = xyScale(g.x - 0.5, g.y - 0.5)
+		icon.ImageColor3 = if g.canPlace == false and g.canAfford == false then Color3.new(1, 0.45, 0.45) else Color3.new(1, 1, 1)
 	elseif not ghost then
 		ghost = newMarker(g.kind)
 		ghost.outer.Name = "BuildGhost"
@@ -795,6 +830,42 @@ function MapMarkers.setGhost(g, zoom: number)
 	elseif upgradeMark then
 		upgradeMark.outer:Destroy()
 		upgradeMark = nil
+	end
+
+	-- Range circle: 20 % white fill and a white edge, centred on the tile (or the structure that
+	-- would be upgraded).
+	local range = rangeFor(g.kind)
+	if range > 0 then
+		local c = ghostExtra.circle
+		if not c then
+			c = Instance.new("Frame")
+			c.Name = "BuildRange"
+			c.AnchorPoint = Vector2.new(0.5, 0.5)
+			c.BackgroundColor3 = Color3.new(1, 1, 1)
+			c.BackgroundTransparency = 0.8
+			c.BorderSizePixel = 0
+			c.ZIndex = 2
+			local corner = Instance.new("UICorner")
+			corner.CornerRadius = UDim.new(1, 0)
+			corner.Parent = c
+			local edge = Instance.new("UIStroke")
+			edge.Color = Color3.new(1, 1, 1)
+			edge.Transparency = 0.5
+			edge.Thickness = 1.5
+			edge.Parent = c
+			c.Parent = ctx.layer
+			ghostExtra.circle = c
+		end
+		local W, H = ctx.mapSize()
+		c.Visible = true
+		c.Size = UDim2.fromScale(range * 2 / W, range * 2 / H)
+		if g.canUpgrade and g.upgradeTile then
+			c.Position = tileScale(g.upgradeTile)
+		else
+			c.Position = xyScale(g.x - 0.5, g.y - 0.5)
+		end
+	elseif ghostExtra.circle then
+		ghostExtra.circle.Visible = false
 	end
 
 	if g.showCost and (g.cost or 0) > 0 then

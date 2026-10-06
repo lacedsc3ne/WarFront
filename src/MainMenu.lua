@@ -846,7 +846,7 @@ for i, label in { "CREATE LOBBY", "RANKED", "JOIN LOBBY" } do
 end
 
 -- Footer ----------------------------------------------------------------------------
-local footer = make("Frame", { Name = "Footer", BackgroundColor3 = C.ZINC900, BackgroundTransparency = 0.1, BorderSizePixel = 0, Parent = scroll })
+local footer = make("Frame", { Name = "Footer", Visible = false, BackgroundColor3 = C.ZINC900, BackgroundTransparency = 0.1, BorderSizePixel = 0, Parent = scroll })
 make("Frame", { Name = "Border", Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = WHITE, BackgroundTransparency = 0.9, BorderSizePixel = 0, Parent = footer })
 local githubBtn = make("TextButton", { Name = "GitHub", Text = "", AutoButtonColor = false, BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0), Parent = footer })
 local githubIcon = MenuKit.icon("Github", { Size = UDim2.fromScale(1, 1), ImageTransparency = 0.4, Parent = githubBtn })
@@ -1332,7 +1332,7 @@ relayout = function()
 		mainX = if sm then 16 else 0
 		W = LX - 2 * mainX
 	end
-	local footerH = if mobile then 88 else 100
+	local footerH = 0 -- footer removed (Liam, Oct 2026); the attribution line stays
 	layoutFooter(LX, mobile)
 
 	local y = pt

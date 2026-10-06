@@ -8,10 +8,12 @@
 -- Files: Documents/WarFront/sounds (uploaded Oct 2026).
 
 return {
-	-- Music: off for now (Liam is picking new soundtracks). Old ids: gameplay 87001142840161,
-	-- menu 112472622708951. Put new asset ids here to turn music back on.
-	["music-gameplay"] = 0,
-	["music-menu"] = 0,
+	-- Music (Liam's tracks, Oct 2026): the menu loops music-menu; a match plays music-gameplay-1, -2,
+	-- -3 in order and starts over (SoundKit MUSIC_PLAYLISTS). 0 = silence.
+	["music-menu"] = 129792605772879,
+	["music-gameplay-1"] = 128055986157292,
+	["music-gameplay-2"] = 77214691586591,
+	["music-gameplay-3"] = 129792605772879,
 	["alliance-accepted"] = 139562667545959,
 	["alliance-broken"] = 113980028595976,
 	["alliance-declined"] = 137412769604900,
