@@ -6,7 +6,6 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.GamepadControls (ModuleScript), used by GameClient.
---
 -- There is no character in a match, so the controller drives our own UI:
 --   left stick   virtual cursor          right stick  pan the map
 --   LT / RT      zoom out / in at cursor A            act(tile under cursor)
@@ -14,7 +13,6 @@
 --   X            openContextMenuAt(cursor)            Y  focus / leave the build bar
 --   LB / RB      attack ratio -10% / +10%             D-pad L/R  cycle build/nuke action
 --   R3 (right stick click)  re-fit the map  (View/Select and Start open the menu: MainMenu)
---
 -- Screen points passed to ctx callbacks are in the same space as GuiObject.AbsolutePosition
 -- (the space screenToTile uses).
 

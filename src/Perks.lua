@@ -4,7 +4,6 @@
 ]]
 
 -- ServerScriptService.Perks (ModuleScript), driven by GameServer. Not part of OpenFront.
---
 -- Perks (MetaConfig.PERKS), applied to human players, never in ranked:
 --   startingArmy  troops x1.25 when the spawn phase ends
 --   warEconomy    passive gold x1.15         (p.perkGold, read by GameServer's tick)
@@ -18,7 +17,6 @@
 --   As often as the player has them: from BOOST_DELAY seconds after the spawn phase, then
 --   BOOST_COOLDOWN seconds between two of the same kind; never in ranked.
 --   Server -> client "boostResult" { ok, key, text, cooldown? } and a feed line for everyone.
---
 -- Perks.init(ctx)   ctx: net, feed(text, kind, ownerId), notify(id, text, kind), playerOf(p),
 --                   isRanked(), tick(), roundStartTick(), phase(), players(), progression,
 --                   addShield(p, untilTick)

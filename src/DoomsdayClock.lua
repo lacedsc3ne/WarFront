@@ -13,7 +13,6 @@
 ]]
 
 -- ServerScriptService.DoomsdayClock (ModuleScript), used by GameServer.
---
 -- DoomsdayClock.init(ctx)       ctx: players(), teamGame(), elapsed() (game seconds), land() (land
 --                               minus fallout), getOwner(t), relinquish(t) (to nobody + fallout),
 --                               map(), tick(), kill(p), net
@@ -73,9 +72,7 @@ local function secondsUnder(id: number): number
 	return if since then math.floor((ctx.tick() - since) / 10) else 0
 end
 
---------------------------------------------------------------------------------
 -- Territory rot
---------------------------------------------------------------------------------
 local NB = {}
 
 -- Rot one tile: hand the land to nobody (as wasteland: fallout) and queue its neighbours.
@@ -210,9 +207,7 @@ local function rot(p, under: number)
 	end
 end
 
---------------------------------------------------------------------------------
 -- Once a second
---------------------------------------------------------------------------------
 local function sides(contenders: { any }, ffa: boolean): { { any } }
 	if ffa then
 		local out = {}

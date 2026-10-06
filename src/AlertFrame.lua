@@ -12,7 +12,6 @@
 --   the 15 s cooldown, it is a retaliation (we attacked them in the last 15 s) or it is smaller
 --   than a fifth of our troops.
 -- Settings.values.alertFrame turns it off.
---
 -- AlertFrame.mount(gui)                 create the frame
 -- AlertFrame.betrayed()                 betrayal alert
 -- AlertFrame.update(me, troops, alive)  per "me" snapshot (attacks / incoming lists)

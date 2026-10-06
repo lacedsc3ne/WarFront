@@ -6,7 +6,6 @@
 ]]
 
 -- ServerScriptService.AiBehavior (ModuleScript), driven by GameServer every tick.
---
 -- Re-implements OpenFront's TribeExecution (bots, called "tribes"), NationExecution and the shared
 -- AiAttackBehavior, plus NationAllianceBehavior (alliance answers/requests/betrayal),
 -- NationExecution's embargo handling and NationNukeBehavior's target and tile choice.
@@ -16,7 +15,6 @@
 -- Not ported: NationEmojiBehavior, NationMIRVBehavior, NationStructureBehavior's placement scoring,
 -- warship-aware boat routing (sail/blocker). Hard/Impossible beachheads are ported (sendBeachhead,
 -- followUpLandings).
---
 -- Distances: OpenFront tile distances are divided by Config.LINEAR_SCALE (our map is 1/4 per axis).
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -62,9 +60,7 @@ function AI.init(hooks)
 	ctx = hooks
 end
 
---------------------------------------------------------------------------------
 -- State
---------------------------------------------------------------------------------
 -- Per-player AI parameters (TribeExecution / NationExecution constructors).
 function AI.newState(kind: string)
 	local rate
@@ -98,9 +94,7 @@ function AI.newState(kind: string)
 	return s
 end
 
---------------------------------------------------------------------------------
 -- Map helpers
---------------------------------------------------------------------------------
 -- One pass over the border: bordering players (land), unowned land, fallout, shore tiles.
 local function scan(p)
 	local map = ctx.map()
@@ -184,9 +178,7 @@ local function outgoingTroops(p): number
 	return sum
 end
 
---------------------------------------------------------------------------------
 -- Attack behaviour (AiAttackBehavior)
---------------------------------------------------------------------------------
 local B = {} -- behaviour functions, forward-declared table
 
 -- findIncomingAttackPlayer: the largest incoming attack from a non-friendly player
@@ -554,9 +546,7 @@ function B.runawayLeader()
 	return nil
 end
 
---------------------------------------------------------------------------------
 -- Alliances (NationAllianceBehavior)
---------------------------------------------------------------------------------
 local function allyCount(p): number
 	local n = 0
 	for id, q in ctx.players() do
@@ -741,9 +731,7 @@ function B.maybeBetray(p, q, juiciestAlly, friends, enemies): boolean
 	return false
 end
 
---------------------------------------------------------------------------------
 -- Nation strategies (AiAttackBehavior.attackBestTarget / getAttackStrategies)
---------------------------------------------------------------------------------
 function B.attackBots(p): boolean
 	local players = ctx.players()
 	local bots = {}
@@ -1141,9 +1129,7 @@ function B.maybeAttack(p)
 	B.attackBestTarget(p, friends, enemies)
 end
 
---------------------------------------------------------------------------------
 -- Nation embargoes (NationExecution.updateRelationsFromEmbargos / handleEmbargoesToHostileNations)
---------------------------------------------------------------------------------
 function B.embargoes(p)
 	local ai = p.ai
 	local d = difficulty()
@@ -1170,9 +1156,7 @@ function B.embargoes(p)
 	end
 end
 
---------------------------------------------------------------------------------
 -- Nukes (NationNukeBehavior)
---------------------------------------------------------------------------------
 local NUKE_VALUE = { City = 25000, DefensePost = 5000, MissileSilo = 50000, Port = 15000, Factory = 15000 }
 
 function B.nukeTarget(p)
@@ -1375,9 +1359,7 @@ function B.maybeSendNuke(p)
 	end
 end
 
---------------------------------------------------------------------------------
 -- Ticks
---------------------------------------------------------------------------------
 local function tribeTick(p)
 	local ai = p.ai
 	ai.scan = scan(p)

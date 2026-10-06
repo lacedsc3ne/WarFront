@@ -17,7 +17,6 @@
 --                      the sender's territory for 5 s (NameLayer)
 -- Reads the "me" snapshot (attacks, incoming, boatList, boatsIn) through ctx.getMe(); listens to
 -- Shared.Net itself for "init", "phase" and "emoji".
---
 -- MatchHud.setup(ctx)
 --   ctx.gui, ctx.net, ctx.roster, ctx.getMyId(), ctx.getMe(), ctx.getPhase(), ctx.getRatio(),
 --   ctx.fmt(n), ctx.stack (HudStack frame: the attack rows go in it), ctx.labelLayer (map overlay
@@ -95,9 +94,7 @@ local function eta(seconds: number): string
 	return (if m > 0 then m .. "m" else "") .. (if s > 0 then s .. "s" else "")
 end
 
---------------------------------------------------------------------------------
 -- Attacks display
---------------------------------------------------------------------------------
 local attacks = { rows = {} :: { [string]: any }, frame = nil :: any, grid = nil :: any }
 
 local ROW_H = 26
@@ -346,9 +343,7 @@ local function buildAttacks(parent: Instance)
 	})
 end
 
---------------------------------------------------------------------------------
 -- Spawn timer + heads-up message + toast
---------------------------------------------------------------------------------
 local phaseInfo = { phase = "Lobby", ticksLeft = 0, at = 0, winnerId = 0, winner = nil :: string?, winnerTeam = nil :: string? }
 local spawnBar: Frame
 local spawnFill: Frame
@@ -441,9 +436,7 @@ local function refreshTop()
 	end
 end
 
---------------------------------------------------------------------------------
 -- Win modal
---------------------------------------------------------------------------------
 local win = { card = nil :: any, title = nil :: any, body = nil :: any, keep = nil :: any, shownFor = "" }
 
 local function hideWin()
@@ -592,9 +585,7 @@ local function refreshWin()
 	end
 end
 
---------------------------------------------------------------------------------
 -- Emoji messages
---------------------------------------------------------------------------------
 local bubbles: { any } = {}
 
 local function onEmoji(data)
@@ -649,9 +640,7 @@ local function stepBubbles()
 	end
 end
 
---------------------------------------------------------------------------------
 -- Setup
---------------------------------------------------------------------------------
 function MatchHud.setup(c)
 	ctx = c
 	gui = c.gui

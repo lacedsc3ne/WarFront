@@ -6,7 +6,6 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.AlertsPanel (ModuleScript), used by GameClient.
---
 -- One place for in-match alerts, laid out like OpenFront's EventsDisplay + ActionableEvents
 -- (src/client/hud/layers): from top to bottom
 --   * minor events: small rows in a dark rounded box (latest 4),
@@ -18,7 +17,6 @@
 -- Gamepad: a new request selects its Accept button if nothing else is selected; D-pad up jumps
 -- into the panel; B on a request card rejects it, B elsewhere in the panel leaves it.
 -- DeviceLayout places the panel (its frame is GameClient's `feedFrame`) and calls setCompact().
---
 -- AlertsPanel.create(ctx) -> Frame   ctx = { gui, roster, getMyId(), usingGamepad() }
 -- AlertsPanel.bind(c)                 c = { focusPlayer(id), answer(fromId, accept) }
 -- AlertsPanel.push(text, kind, owner?)
@@ -208,9 +206,7 @@ local function leaveSelection(frame: Instance)
 	end
 end
 
---------------------------------------------------------------------------------
 -- Events
---------------------------------------------------------------------------------
 local function textSizes(): (number, number)
 	if compact then
 		return 11, 13
@@ -334,9 +330,7 @@ function AlertsPanel.setFeedEnabled(on: boolean)
 	end
 end
 
---------------------------------------------------------------------------------
 -- Alliance request cards
---------------------------------------------------------------------------------
 local function cardTitle(fromId: number, renew: boolean): string
 	if renew then
 		return playerName(fromId) .. " wants to renew your alliance!"
@@ -505,9 +499,7 @@ function AlertsPanel.setRequests(incoming)
 	end
 end
 
---------------------------------------------------------------------------------
 -- Layout
---------------------------------------------------------------------------------
 function AlertsPanel.setCompact(on: boolean)
 	if compact == on then
 		return

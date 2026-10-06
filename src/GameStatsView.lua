@@ -7,12 +7,10 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.GameStatsView (ModuleScript), used by MatchHud and MenuPages.
---
 -- stats = the server's "matchStats" payload (GameFlow.statsFor): placement, peakTiles, finalTiles,
 --   peakPercent, seconds, attacksSent, attacksReceived, troopsSent, boatsSent, bombsLaunched,
 --   built { kind = n }, kills, goldWar, deathSeconds (-1 = survived)
 -- meta (optional, from the game history): map, mode, kind, players, won, t (os.time), elo
---
 -- GameStatsView.render(body, stats, meta?, order?) -> next LayoutOrder   fills a MenuKit page body
 -- GameStatsView.open(screenGui, stats, meta?)                            "STATS" modal over a GUI
 

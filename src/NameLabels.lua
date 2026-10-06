@@ -11,7 +11,6 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.NameLabels (ModuleScript), used by GameClient.
---
 -- NameLabels.setup(ctx)  ctx = { layer: Frame (inside the map image, scale-positioned),
 --                                roster: table (id -> player, stable table), fmt(n) -> string,
 --                                zoom() -> px per tile, map() -> GameMap, owners() -> buffer,
@@ -20,12 +19,10 @@
 -- NameLabels.refresh()   update text / colours / visibility of every label (after stats, zoom, ...)
 -- NameLabels.step(now)   per frame: incremental placement search + smooth movement
 -- NameLabels.clear()     destroy all labels and placements (new round / map)
---
 -- Like OpenFront, a name sits in the centre of the largest rectangle inside the player's bounding
 -- box made of their own tiles (plus shore, shallow water and fallout), and its size comes from that
 -- rectangle: fontSize = min(width / #name * 2, height / 3). The owner grid is sampled in slices
 -- across frames so the cost stays small.
---
 -- Everything is laid out in OpenFront "em" (their atlas font size): flag 0.9 em tall
 -- (base 36/48 x 1.2) right against the name, troops 0.6 em one line (0.825 em) below, status row
 -- 1.05 em above. Roblox sizes text by the font's whole glyph bounding box, not by em, so the
@@ -169,9 +166,7 @@ function NameLabels.setup(c)
 	calibrate(c.layer)
 end
 
---------------------------------------------------------------------------------
 -- Placement (NameBoxCalculator.placeName)
---------------------------------------------------------------------------------
 local heights: { number } = {}
 local stack: { number } = {}
 
@@ -305,9 +300,7 @@ local function scanSlice(): boolean
 	return true
 end
 
---------------------------------------------------------------------------------
 -- Labels
---------------------------------------------------------------------------------
 local function newText(parent: Instance, z: number): TextLabel
 	local t = Instance.new("TextLabel")
 	t.BackgroundTransparency = 1
@@ -383,11 +376,9 @@ local function newEntry(id: number, p: any)
 	return e
 end
 
---------------------------------------------------------------------------------
 -- Status row (PlayerIcons.ts / status-icon.vert.glsl). Slots in OpenFront's order; target (players
 -- we target: me.targets - allies' targets aren't sent) and embargo (players we embargo:
 -- me.embargoes) come from ctx.isTarget / ctx.hasEmbargo; "shield" (spawn protection) is ours.
---------------------------------------------------------------------------------
 local STATUS = {
 	{ key = "crown", sprite = "StCrown", icon = "Crown" },
 	{ key = "doom", sprite = "StDoomsday", icon = "Skull", color = Color3.new(1, 1, 1) },

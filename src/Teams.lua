@@ -7,7 +7,6 @@
 ]]
 
 -- ServerScriptService.Teams (ModuleScript), used by GameServer.
---
 -- Teams.rollMode(roundNumber, rng) -> mode   alternates FFA and Team rounds like OpenFront's public
 --                                             lobby schedule; Team rounds roll TEAM_WEIGHTS
 -- Teams.label(mode) -> string                 "Free for All", "4 Teams", "Duos", "Humans vs Nations"

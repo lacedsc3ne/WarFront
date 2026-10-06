@@ -11,7 +11,6 @@
 ]]
 
 -- ServerScriptService.CoreRules (ModuleScript), used by GameServer.
---
 -- CoreRules.init(ctx) / reset() / step()
 -- CoreRules.cost(p, kind, extra?) -> gold         costWrapper: levels owned vs levels ever built
 -- CoreRules.spawnTile(p, tile, kind) -> tile?     where a new structure would go (nil = nowhere)
@@ -24,7 +23,6 @@
 -- CoreRules.noteAttack(p)                          p launched an attack (conquest gold rule)
 -- CoreRules.conquerPlayer(conqueror, conquered)   gold transfer + "conquest" event
 -- CoreRules.handleDeadDefender(attacker, defender)
---
 -- Scale: one tile here is LINEAR_SCALE (4) full-size tiles per axis. Distances from OpenFront are
 -- divided by 4 (see Config.MIN_STRUCTURE_DISTANCE etc.); tile counts by AREA_SCALE (16).
 
@@ -66,9 +64,7 @@ local function notify(p, text: string, kind: string?)
 	end
 end
 
---------------------------------------------------------------------------------
 -- Cost scaling (Config.costWrapper)
---------------------------------------------------------------------------------
 -- unitsOwned: a structure under construction counts 1, a finished one its level.
 local function ownedLevels(p, kind: string): number
 	local n = 0
@@ -102,9 +98,7 @@ function CoreRules.noteBuilt(p, kind: string)
 	p.built[kind] = (p.built[kind] or 0) + 1
 end
 
---------------------------------------------------------------------------------
 -- Placement (PlayerImpl.validStructureSpawnTiles / landBasedStructureSpawn / portSpawn)
---------------------------------------------------------------------------------
 local function d2(map, a: number, b: number): number
 	local W = map.width
 	local dx, dy = a % W - b % W, a // W - b // W
@@ -231,9 +225,7 @@ function CoreRules.spawnTile(p, tile: number, kind: string): number?
 	return best
 end
 
---------------------------------------------------------------------------------
 -- Upgrades (findUnitToUpgrade / canUpgradeUnit / upgradeUnit / UpgradeStructureExecution)
---------------------------------------------------------------------------------
 function CoreRules.isMarked(s): boolean
 	return s.deleteAt ~= nil and s.deleteBy == s.owner
 end
@@ -304,9 +296,7 @@ function CoreRules.upgrade(p, s, amount: number?): number
 	return done
 end
 
---------------------------------------------------------------------------------
 -- Delete Unit (DeleteUnitExecution + the radial menu's selection)
---------------------------------------------------------------------------------
 function CoreRules.requestDelete(p, tile: number): boolean
 	local map = mapNow()
 	if not p.alive or ctx.getOwner(tile) ~= p.id or not MapUtil.isLand(map, tile) then
@@ -349,9 +339,7 @@ local function stepDeletions()
 	end
 end
 
---------------------------------------------------------------------------------
 -- Fallout share (AttackExecution falloutRatio = numTilesWithFallout / numLandTiles)
---------------------------------------------------------------------------------
 local function stepFallout()
 	local map = mapNow()
 	local size = map.size
@@ -375,9 +363,7 @@ function CoreRules.falloutRatio(): number
 	return falloutRatio
 end
 
---------------------------------------------------------------------------------
 -- Conquest (GameImpl.conquerPlayer, Config.conquerGoldAmount)
---------------------------------------------------------------------------------
 function CoreRules.noteAttack(p)
 	p.attacked = true
 end
@@ -467,9 +453,7 @@ function CoreRules.handleDeadDefender(attacker, defender)
 	end
 end
 
---------------------------------------------------------------------------------
 -- Encircled territory (PlayerExecution.removeClusters)
---------------------------------------------------------------------------------
 local function onEdge(map, t: number): boolean
 	local W, H = map.width, map.height
 	local x, y = t % W, t // W
@@ -822,9 +806,7 @@ local function stepClusters()
 	end
 end
 
---------------------------------------------------------------------------------
 -- Per tick (Play phase)
---------------------------------------------------------------------------------
 function CoreRules.step()
 	stepDeletions()
 	stepFallout()

@@ -12,7 +12,6 @@
 --           Emojis, send Troops, send Gold, Break Alliance / Send Alliance.
 --   send    "Send Troops / Gold to <name>": available, 10/25/50/75/Max presets, slider, send / keep.
 --   emojis  5-column table of Shared.Emojis; picking one sends it (to everyone if it's us).
---
 -- PlayerPanel.setup(ctx)
 --   ctx.gui, ctx.net, ctx.roster, ctx.getMyId(), ctx.fmt(n), ctx.contextMenu (diplomacy state),
 --   ctx.getPhase()
@@ -227,9 +226,7 @@ local function dropSelection(root: Instance)
 	end
 end
 
---------------------------------------------------------------------------------
 -- Emoji table (EmojiTable.ts)
---------------------------------------------------------------------------------
 local emojiDim: TextButton
 local emojiCard: Frame
 local emojiTarget = 0
@@ -304,9 +301,7 @@ local function buildEmojiTable()
 	gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(layout)
 end
 
---------------------------------------------------------------------------------
 -- Send troops / gold (SendResourceModal.ts)
---------------------------------------------------------------------------------
 local send = { open = false, target = 0, mode = "troops", amount = 0, percent = nil :: number? }
 local sendDim: TextButton
 local sendCard: Frame
@@ -543,9 +538,7 @@ function PlayerPanel.openSendModal(playerId: number, mode: string)
 	end
 end
 
---------------------------------------------------------------------------------
 -- Player panel (PlayerPanel.ts)
---------------------------------------------------------------------------------
 local panel = { open = false, id = 0, actionsKey = "", alliesKey = "", lastTarget = -math.huge, lastEmbargoAll = -math.huge }
 local panelDim: TextButton
 local panelCard: Frame
@@ -1030,9 +1023,7 @@ function PlayerPanel.show(playerId: number)
 	selectFirst(panelCard)
 end
 
---------------------------------------------------------------------------------
 -- Setup
---------------------------------------------------------------------------------
 function PlayerPanel.setup(c)
 	ctx = c
 	gui = c.gui

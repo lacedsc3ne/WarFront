@@ -9,7 +9,6 @@
 
 -- StarterPlayer.StarterPlayerScripts.ClockPanels (ModuleScript), used by HudSidebars (panels) and
 -- MatchHud (the overtime heads-up notice).
---
 -- Both panels: w-fit flex-col gap-1.5 py-2 px-4 bg-gray-800/92 rounded-bl-lg text-sm, a 208 x 10
 -- bar, stacked (right-aligned) under the timer.
 --   Doomsday Clock  skull + "Doomsday Clock" (red-400), status (Stable / Unstable / Collapsing
@@ -22,7 +21,6 @@
 --                   place's share (green if it's your side, red otherwise) vs the sinking win share
 --                   (orange line); "1st: {name} ({pct}%)".
 -- Server "clock" (once a second while either is on): { land = non-fallout land, doom = skulls }.
---
 -- ClockPanels.build(parent)      creates the panels in parent (a vertical list)
 -- ClockPanels.update(ctx)        ctx: roster, getMyId(), fmtTroops?; call every frame-ish
 -- ClockPanels.overtimeNotice()   true during the 5 s "Overtime!" heads-up message

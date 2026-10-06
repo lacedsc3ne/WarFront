@@ -12,7 +12,6 @@
 -- cooldown). Boosts can be used again and again (one per BOOST_COOLDOWN each); with none left the
 -- button buys one with Robux, and the server uses it as soon as the purchase goes through. The crown
 -- button in the top-right bar folds the strip away and back.
---
 -- BoostsPanel.setup({ button = GuiButton, gui = ScreenGui, net = RemoteEvent }) -> strip Frame
 --   (HudSidebars stacks the strip under the top-right bar, with the speed and clock panels)
 

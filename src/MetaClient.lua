@@ -72,9 +72,7 @@ local gui = make("ScreenGui", {
 
 local profile = nil
 
---------------------------------------------------------------------------------
 -- Profile chip (top-left)
---------------------------------------------------------------------------------
 local chip = make("Frame", { Name = "ProfileChip", Position = UDim2.fromOffset(12, 12), Size = UDim2.fromOffset(250, 92), BackgroundColor3 = PANEL, BackgroundTransparency = 0.1, BorderSizePixel = 0, Active = true, Parent = gui })
 corner(chip, 12)
 MenuKit.stroke(chip, 0.9)
@@ -87,9 +85,7 @@ corner(xpFill, 99)
 local shopButton = button({ Position = UDim2.fromOffset(12, 50), Size = UDim2.fromOffset(110, 32), Text = "STORE", Parent = chip })
 local statsButton = button({ Position = UDim2.fromOffset(128, 50), Size = UDim2.fromOffset(110, 32), BackgroundColor3 = MenuKit.C.GRAY700, Text = "STATS", Parent = chip })
 
---------------------------------------------------------------------------------
 -- Toast (rewards, level ups, daily)
---------------------------------------------------------------------------------
 local toast = make("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, -140), Size = UDim2.fromOffset(380, 110), BackgroundColor3 = PANEL, BorderSizePixel = 0, Visible = false, Parent = gui })
 corner(toast, 10)
 make("UIStroke", { Color = GOLD, Thickness = 2, Parent = toast })
@@ -120,10 +116,8 @@ local function showToast(title: string, body: string)
 	end)
 end
 
---------------------------------------------------------------------------------
 -- Store / stats window: an OpenFront o-modal (MenuKit.modal) showing the same pages as the
 -- main menu (MenuPages "store" and "profile"), so the store looks identical everywhere.
---------------------------------------------------------------------------------
 local MenuPages = require(localPlayer:WaitForChild("PlayerScripts"):WaitForChild("MenuPages"))
 local modal = MenuKit.modal(gui, "MetaWindow")
 local window = modal.holder -- "MetaWindow": MainMenu / PauseMenu watch its Visible
@@ -183,9 +177,7 @@ statsButton.Activated:Connect(function()
 	openTab("stats")
 end)
 
---------------------------------------------------------------------------------
 -- Devices: gamepad (B closes, LB/RB switch the page's tab) and per-device layout
---------------------------------------------------------------------------------
 local WINDOW_ACTION = "FrontlinesMetaWindow"
 window:GetPropertyChangedSignal("Visible"):Connect(function()
 	if window.Visible then
@@ -285,9 +277,7 @@ DeviceLayout.attachScreenGui(gui)
 DeviceLayout.Changed:Connect(applyMetaLayout)
 applyMetaLayout()
 
---------------------------------------------------------------------------------
 -- Server messages
---------------------------------------------------------------------------------
 local function applyProfile(p)
 	if not p then
 		return

@@ -9,7 +9,6 @@
 
 -- StarterPlayer.StarterPlayerScripts.Replay (ModuleScript), used by GameClient, MatchHud and
 -- PauseMenu.
---
 -- OpenFront replays a finished game by re-running its turns. Our simulation runs on the server, so
 -- the client records the round instead: every map message it receives (the "init" snapshot, tile
 -- changes, stats, structures, boats, nukes, units, rails, trains...) with its game-clock time.
@@ -22,7 +21,6 @@
 --   * The viewer is a spectator (myId 0). A new round that includes us stops the replay.
 --   * A recording stops growing past ~48 MB (the rest of the round can't be watched, like
 --     OpenFront's "Only the first {time} of this game can be watched").
---
 -- Replay.setup(ctx)  ctx.dispatch(kind, data, quiet)  GameClient's net handler
 --                    ctx.onStart(), ctx.onStop()       hide / restore match HUD, resync
 --                    ctx.gui                           ScreenGui parent for nothing (own gui)
@@ -72,9 +70,7 @@ local last: any = nil -- the last finished round
 local pendingInit: any = nil -- a new round's init, until its Spawn phase arrives { t, data }
 local play: any = nil -- { rec, idx, vt, speed, playing, seekTo }
 
---------------------------------------------------------------------------------
 -- Recording
---------------------------------------------------------------------------------
 local function sizeOf(v: any, depth: number): number
 	local t = typeof(v)
 	if t == "buffer" then
@@ -167,9 +163,7 @@ function Replay.now(): number
 	return if play then play.vt else SimClock.now()
 end
 
---------------------------------------------------------------------------------
 -- UI (ReplayControls)
---------------------------------------------------------------------------------
 local C = MenuKit.C
 local SKY400 = Color3.fromRGB(56, 189, 248)
 local GRAY800 = Color3.fromRGB(31, 41, 55)
@@ -275,9 +269,7 @@ local function buildUI()
 	make("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12), Parent = ui.status })
 end
 
---------------------------------------------------------------------------------
 -- Playback
---------------------------------------------------------------------------------
 local function startT(r): number
 	return r.playT or r.t0
 end

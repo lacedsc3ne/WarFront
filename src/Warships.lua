@@ -14,7 +14,6 @@
 -- Scale: full-size distances / LINEAR_SCALE (Config): patrol 100 -> 25, targeting 130 -> 32.5,
 -- passive healing 150 -> 37.5, docking 5 -> 1.5 (rounded up so a ship next to the port docks),
 -- capture 5 -> Manhattan 1, shells 3 tiles/tick -> 0.75. Ticks, health and damage are unchanged.
---
 -- Network: "units" buffer, 16 bytes per warship: u32 id, u16 owner, u32 tile, u16 health,
 --   u8 flags (bit0 = in combat / "angry", bit1 = retreating or docked), u8 veterancy, u16 max health.
 -- "shot" buffer, 15 bytes per shell: u32 from tile, u32 target tile (at launch), u16 estimated
@@ -214,9 +213,7 @@ local function removeShip(s, killerId: number?)
 	end
 end
 
---------------------------------------------------------------------------------
 -- Public API
---------------------------------------------------------------------------------
 function Warships.init(c)
 	ctx = c
 	map = c.map
@@ -483,9 +480,7 @@ function Warships.snapshot(): buffer
 	return b
 end
 
---------------------------------------------------------------------------------
 -- Movement
---------------------------------------------------------------------------------
 local function randomPatrolTile(s): number?
 	local rng = ctx.rng
 	local half = math.floor(Config.WARSHIP_PATROL_RANGE / 2)
@@ -581,9 +576,7 @@ local function chaseStep(s, goal: number)
 	end
 end
 
---------------------------------------------------------------------------------
 -- Targets and shells
---------------------------------------------------------------------------------
 -- Refs: { kind = "transport" | "trade", boat = b } or { kind = "ship", ship = other }
 local function refAlive(ref): boolean
 	if ref.kind == "ship" then
@@ -754,9 +747,7 @@ local function capture(s, b)
 	end
 end
 
---------------------------------------------------------------------------------
 -- Repair retreat (WarshipExecution.handleRepairRetreat and helpers)
---------------------------------------------------------------------------------
 local function dockedAt(port, exclude): number
 	local n = 0
 	for _, o in ships do

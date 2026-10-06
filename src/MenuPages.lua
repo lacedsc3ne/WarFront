@@ -10,7 +10,6 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.MenuPages (ModuleScript), used by MainMenu.
---
 -- MenuPages.TITLES[kind]                       page title (kind = "settings" | "help" | "news" |
 --                                              "language" | "profile" | "inventory" |
 --                                              "leaderboard" | "clans" | "store")
@@ -62,9 +61,7 @@ local function numberText(n: any): string
 	return out
 end
 
---------------------------------------------------------------------------------
 -- Settings (UserSettingModal: tabs Gameplay / Graphics / Audio / Keybinds)
---------------------------------------------------------------------------------
 local function boolSetter(key: string)
 	return function(): boolean
 		return Settings.values[key] == true
@@ -377,9 +374,7 @@ local function renderSettings(page: any)
 	end)
 end
 
---------------------------------------------------------------------------------
 -- Help (HelpModal)
---------------------------------------------------------------------------------
 local HOTKEYS = {
 	{ "Esc", "Closes menu. Cancels unit build preview." },
 	{ "Space (hold)", "Alternate view" },
@@ -583,9 +578,7 @@ local function renderHelp(page: any, ctx: any)
 	end
 end
 
---------------------------------------------------------------------------------
 -- Release notes (NewsModal renders changelog.md: h1 / h2 / bullets)
---------------------------------------------------------------------------------
 local CHANGELOG = {
 	{ "h1", "War Front Changelog" },
 	{ "p", "War Front is a Roblox port of OpenFront. These notes list what has been ported so far." },
@@ -623,9 +616,7 @@ local function renderNews(page: any)
 	end
 end
 
---------------------------------------------------------------------------------
 -- Language (LanguageModal: grid of flag + native + English name; English only here)
---------------------------------------------------------------------------------
 local function renderLanguage(page: any, ctx: any)
 	page:setTabs({})
 	page:clear()
@@ -651,9 +642,7 @@ local function renderLanguage(page: any, ctx: any)
 	MenuKit.paragraph(page.body, 2, "More languages coming soon.", { TextColor3 = C.WHITE, TextTransparency = 0.6 })
 end
 
---------------------------------------------------------------------------------
 -- Player profile (PlayerProfileModal: tabs Stats / Games / Clans)
---------------------------------------------------------------------------------
 local function statCard(parent: Instance, order: number, label: string, value: string)
 	local c = make("Frame", { LayoutOrder = order, BackgroundColor3 = C.WHITE, BackgroundTransparency = 0.95, BorderSizePixel = 0, Parent = parent })
 	MenuKit.corner(c, 12)
@@ -770,9 +759,7 @@ local function renderProfile(page: any, ctx: any)
 	end)
 end
 
---------------------------------------------------------------------------------
 -- Inventory (skins / territory patterns, flags, crowns, effects): locked, coming soon
---------------------------------------------------------------------------------
 local function lockedTile(parent: Instance, order: number, fill: (Frame) -> ())
 	local t = make("TextButton", { LayoutOrder = order, Text = "", AutoButtonColor = false, BackgroundColor3 = C.SURFACE, BorderSizePixel = 0, Parent = parent })
 	MenuKit.corner(t, 12)
@@ -859,12 +846,10 @@ local function renderInventory(page: any, ctx: any)
 	end)
 end
 
---------------------------------------------------------------------------------
 -- Store (Store.ts layout: modalHeader with the currency on the right, tab strip, grid of
 -- cosmetic cards with a full-width action; owned = emerald status box). Our store sells
 -- territory colours for coins, passes and coin packs (MetaConfig); purchases go through
 -- Shared.MetaFn like MetaClient did.
---------------------------------------------------------------------------------
 local MarketplaceService = game:GetService("MarketplaceService")
 local MetaConfig = require(Shared:WaitForChild("MetaConfig"))
 local metaFn = Shared:WaitForChild("MetaFn")
@@ -1224,10 +1209,8 @@ local function renderStore(page: any)
 	end)
 end
 
---------------------------------------------------------------------------------
 -- Leaderboard (LeaderboardModal): 1v1 Ranked by ELO, and most wins. The server keeps the top 100
 -- of each in a DataStore (Progression lbUpdate) and refreshes its copy every minute.
---------------------------------------------------------------------------------
 local function renderLeaderboardTab(page: any, board: string)
 	page:clear()
 	local body = page.body
@@ -1295,10 +1278,8 @@ local function renderLeaderboard(page: any)
 	end)
 end
 
---------------------------------------------------------------------------------
 -- Friends (FriendsList): your Roblox friends, who is online and where; join a friend in the
 -- lobby, invite friends. In team games friends are placed on the same team (Teams.assign).
---------------------------------------------------------------------------------
 local function renderFriends(page: any)
 	page:setTabs({})
 	page:clear()
@@ -1397,7 +1378,6 @@ local function renderFriends(page: any)
 	end)
 end
 
---------------------------------------------------------------------------------
 function MenuPages.render(kind: string, page: any, ctx: any)
 	page.title.Text = string.upper(MenuPages.TITLES[kind] or kind)
 	page.storeShowing = kind == "store"

@@ -6,7 +6,6 @@
 ]]
 
 -- ServerScriptService.Revive (ModuleScript), driven by GameServer.
---
 -- Client -> server kinds: "revive", "newCountry", "leave", "buyRevive" (no arguments).
 -- Server -> client kinds:
 --   "defeated" (personal) { by = killer name?, canRevive, reason?, reviveTroops, reviveGold,
@@ -15,7 +14,6 @@
 --   "reviveDenied" (personal) { reason }
 --   "left"     (personal) {}
 --   "shields"  (all)      { { playerId, endsAt (workspace:GetServerTimeNow() time) }, ... }
---
 -- REVIVE respawns near the old spawn (random if nothing free nearby); NEW COUNTRY always picks a
 -- random spawn far from the old one. Both use the same per-round allowance
 -- (Config.REVIVES_PER_ROUND), so a player gets one comeback per round either way.

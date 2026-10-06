@@ -176,9 +176,7 @@ function Doomsday.rotQuota(tilesLeft: number, secondsUnder: number): number
 	return math.ceil(tilesLeft / math.max(1, c.rotDeathSeconds - secondsUnder))
 end
 
---------------------------------------------------------------------------------
 -- Rot noise (integer hashes, no PRNG state)
---------------------------------------------------------------------------------
 local TWO32 = 4294967296
 local function mul32(a: number, b: number): number
 	a, b = a % TWO32, b % TWO32

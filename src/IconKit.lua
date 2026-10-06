@@ -8,7 +8,6 @@
 
 -- StarterPlayer.StarterPlayerScripts.IconKit (ModuleScript), used by GameClient, Leaderboard,
 -- ContextMenu and HoverPanel.
---
 -- IconKit.image(name, props) -> ImageLabel
 --   A transparent, ScaleType.Fit ImageLabel showing icon `name` (see Shared.Icons / gen_icons.py).
 --   `props` are applied to it (Size, Position, AnchorPoint, ImageColor3, LayoutOrder, ZIndex,

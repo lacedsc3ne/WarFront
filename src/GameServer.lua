@@ -84,9 +84,7 @@ local NB3 = table.create(4)
 
 local FALLOUT_OWNER = 65535 -- wire marker: unowned tile with fallout
 
---------------------------------------------------------------------------------
 -- State
---------------------------------------------------------------------------------
 local owner: buffer -- u16 owner id per tile (0 = nobody)
 local fallout: buffer -- u8 per tile
 local changedFlag: buffer
@@ -186,9 +184,7 @@ local function canTrade(a, b): boolean
 	return a ~= nil and b ~= nil and a ~= b and Flow.canTrade(a.id, b.id)
 end
 
---------------------------------------------------------------------------------
 -- Tile ownership
---------------------------------------------------------------------------------
 local function markChanged(t: number)
 	if buffer.readu8(changedFlag, t) == 0 then
 		buffer.writeu8(changedFlag, t, 1)
@@ -292,9 +288,7 @@ local function setOwner(t: number, newOwner: number)
 	end
 end
 
---------------------------------------------------------------------------------
 -- Players
---------------------------------------------------------------------------------
 local function newPlayer(name: string, kind: string, userId: number?)
 	local id = nextId
 	nextId += 1
@@ -457,9 +451,7 @@ Flow.init({
 	end,
 })
 
---------------------------------------------------------------------------------
 -- Spawning
---------------------------------------------------------------------------------
 local function farFromSpawns(t: number, minDist: number, ignore: number?): boolean
 	local x, y = t % W, t // W
 	for _, s in spawnTiles do
@@ -548,9 +540,7 @@ local function nearestTile(x: number, y: number, maxR: number, pred: (number) ->
 	return nil
 end
 
---------------------------------------------------------------------------------
 -- Water pathfinding (BFS over water tiles)
---------------------------------------------------------------------------------
 local bfsStamp = buffer.create(SIZE * 2)
 local bfsParent = buffer.create(SIZE * 4)
 local bfsGen = 0
@@ -686,9 +676,7 @@ function routeJobs.step()
 	end
 end
 
---------------------------------------------------------------------------------
 -- Attacks
---------------------------------------------------------------------------------
 -- Used by warships so they never fire on allied ships.
 local function isAllied(aId: number, bId: number): boolean
 	return Diplomacy.allied(aId, bId)
@@ -937,9 +925,7 @@ local function tickAttack(a)
 	end
 end
 
---------------------------------------------------------------------------------
 -- Boats (transport ships)
---------------------------------------------------------------------------------
 local function launchBoat(p, clickTile: number, troops: number): boolean
 	if p.boats >= Config.MAX_BOATS then
 		return false
@@ -1057,9 +1043,7 @@ local function landBoat(b)
 	end
 end
 
---------------------------------------------------------------------------------
 -- Trade ships
---------------------------------------------------------------------------------
 local function announceBoat(b)
 	local pathBuf = buffer.create(#b.path * 4)
 	for i, t in b.path do
@@ -1285,9 +1269,7 @@ local function finishTrade(b)
 	end
 end
 
---------------------------------------------------------------------------------
 -- Structures
---------------------------------------------------------------------------------
 -- OpenFront costWrapper: levels owned vs levels ever built (Port and Factory share one count).
 local function structureCost(p, kind: string): number
 	return CoreRules.cost(p, kind)
@@ -1335,9 +1317,7 @@ local function tryBuild(p, t: number, kind: string): boolean
 	return true
 end
 
---------------------------------------------------------------------------------
 -- Nukes
---------------------------------------------------------------------------------
 -- Nuking an ally (its land at the target, or a real chunk of it in the blast) ends the alliance first.
 local function breakAlliancesForNuke(p, target: number, radius: number)
 	local hit = {}
@@ -1562,9 +1542,7 @@ local function detonate(n)
 	end
 end
 
---------------------------------------------------------------------------------
 -- Warships (logic lives in the Warships ModuleScript)
---------------------------------------------------------------------------------
 Warships.init({
 	map = map,
 	net = net,
@@ -1763,9 +1741,7 @@ CoreRules.init({
 	end,
 })
 
---------------------------------------------------------------------------------
 -- AI (bots and nations)
---------------------------------------------------------------------------------
 local function scanNeighbors(p, limit: number)
 	local hasNeutral = false
 	local found = {}
@@ -2077,9 +2053,7 @@ AiBehavior.init({
 	end,
 })
 
---------------------------------------------------------------------------------
 -- Networking
---------------------------------------------------------------------------------
 local function rosterPayload()
 	local list = {}
 	for id, p in players do
@@ -2236,9 +2210,7 @@ local function boatsPayload()
 	return list
 end
 
---------------------------------------------------------------------------------
 -- Map vote
---------------------------------------------------------------------------------
 local voteOptions: { any } = {} -- catalog entries offered in this lobby
 local votes: { [number]: string } = {} -- UserId -> map id
 
@@ -2562,9 +2534,7 @@ local function sendPersonal()
 	end
 end
 
---------------------------------------------------------------------------------
 -- Game flow
---------------------------------------------------------------------------------
 local function resetWorld()
 	roundColors = Theme.newRoundColors()
 	owner = buffer.create(SIZE * 2)
@@ -3220,9 +3190,7 @@ local function step()
 	end
 end
 
---------------------------------------------------------------------------------
 -- Client requests
---------------------------------------------------------------------------------
 local lastRequest: { [Player]: number } = {}
 
 net.OnServerEvent:Connect(function(plr: Player, kind: any, a1: any, a2: any, a3: any)
@@ -3526,7 +3494,6 @@ Players.PlayerRemoving:Connect(function(plr)
 	end
 end)
 
---------------------------------------------------------------------------------
 -- Studio-only test hook (never exists in live servers): ServerStorage.WFDev
 -- (BindableFunction) lets Studio tools set up test situations quickly.
 --   ("info", userId) -> { id, tiles, gold, troops, cx, cy, W, H, phase }
@@ -3535,7 +3502,6 @@ end)
 --   ("win", userId)            end the round with that player as the winner
 --   ("item", userId, key, n)   add n boosts (or "revive") to the player's inventory
 --   ("kill", userId)           defeat that player (defeat screen / revive tests)
---------------------------------------------------------------------------------
 if RunService:IsStudio() then
 	local dev = Instance.new("BindableFunction")
 	dev.Name = "WFDev"
@@ -3578,9 +3544,7 @@ if RunService:IsStudio() then
 	dev.Parent = game:GetService("ServerStorage")
 end
 
---------------------------------------------------------------------------------
 -- Main loop
---------------------------------------------------------------------------------
 resetWorld()
 players = nil :: any
 phaseEndTick = math.floor(Config.MAP_VOTE_LOBBY_SECONDS / Config.TICK)

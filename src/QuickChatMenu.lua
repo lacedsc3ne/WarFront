@@ -7,18 +7,15 @@
 
 -- StarterPlayer.StarterPlayerScripts.QuickChat (ModuleScript), used by PlayerPanel / GameClient
 -- (via Interact).
---
 -- Mirrors src/client/hud/layers/ChatModal.ts (o-modal "Quick Chat"): a Category column, then the
 -- Phrase column for the chosen category, then (for phrases with [P1]) a Player column with a
 -- "Sort by territory" toggle and a search box; a preview line ("Build your message...") and a
 -- green Send button. Phrases are resources/QuickChat.json with the English text of en.json chat.*.
 -- Players only ever send a phrase key ("category.key"), never free text, so nothing needs filtering.
---
 -- Network (shared contract): client -> server  net:FireServer("quickChat", recipientId, phraseKey,
 -- targetId?)  (targetId = the [P1] player; an extra argument the server may ignore);
 -- server -> client  "quickChat" { from, to, key, target? }  shown in the events panel as
 -- "From <name>: <msg>" / "Sent <name>: <msg>" (en.json chat.from / chat.to).
---
 -- QuickChat.setup(ctx)   ctx: gui, net, roster, getMyId(), pushFeed(text, kind, owner)
 -- QuickChat.open(recipientId), QuickChat.close(), QuickChat.isOpen()
 -- QuickChat.text(phraseKey, targetName?) -> string?

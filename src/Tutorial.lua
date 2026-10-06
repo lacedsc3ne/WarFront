@@ -6,10 +6,8 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.Tutorial (ModuleScript), used by GameClient.
---
 -- Shown while PlayerGui attribute FrontlinesTutorial == true (the main menu's TUTORIAL button
 -- sets it) and the local player is in a round. The X button sets the attribute back to false.
---
 -- Tutorial.create(ctx) -> api
 --   ctx.parent       GuiObject the box goes into (GameClient's stack above the control panel)
 --   ctx.layoutOrder  LayoutOrder inside that parent
@@ -66,10 +64,8 @@ local function fmt(n: number): string
 	return tostring(n)
 end
 
---------------------------------------------------------------------------------
 -- Steps. text(snap, d) gets the device helpers below; done(snap, entry) compares against the
 -- snapshot taken when the step started. Steps without `done` advance with the Next button.
---------------------------------------------------------------------------------
 local function lower(s: string): string
 	return string.lower(string.sub(s, 1, 1)) .. string.sub(s, 2)
 end
@@ -223,7 +219,6 @@ local STEPS = {
 	},
 }
 
---------------------------------------------------------------------------------
 function Tutorial.create(ctx)
 	local api = {}
 	local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")

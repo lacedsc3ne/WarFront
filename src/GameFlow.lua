@@ -7,11 +7,9 @@
 ]]
 
 -- ServerScriptService.GameFlow (ModuleScript), driven by GameServer.
---
 -- Rules follow OpenFront's WinCheckExecution, PlayerImpl.isImmune/canAttackPlayer, EmbargoExecution,
 -- EmbargoAllExecution, TargetPlayerExecution, QuickChatExecution, MarkDisconnectedExecution,
 -- PlayerImpl relations (relation()/updateRelation()/decayRelations()) and StatsImpl.
---
 -- Client -> server kinds (handled here):
 --   "embargo"   (playerId, on: boolean)        playerId 0 = everyone (EmbargoAllExecution, 10 s cooldown)
 --   "target"    (playerId)                     mark a player as target for 10 s (15 s cooldown)
@@ -72,9 +70,7 @@ function Flow.kindName(kind: string): string
 	return if kind == "Human" then "human" elseif kind == "Nation" then "nation" else "tribe"
 end
 
---------------------------------------------------------------------------------
 -- Disconnected players (MarkDisconnectedExecution)
---------------------------------------------------------------------------------
 -- A human who leaves stays on the map (land, troops, structures) but is "disconnected":
 -- allies no longer count as friendly (they may attack without betraying), alliance requests
 -- to/from them are refused, and nations treat them as easy ("afk") targets.
@@ -84,9 +80,7 @@ function Flow.setDisconnected(p, on: boolean)
 	end
 end
 
---------------------------------------------------------------------------------
 -- Friendliness and spawn immunity
---------------------------------------------------------------------------------
 -- PlayerImpl.isFriendly: allied, unless the other player is disconnected.
 function Flow.isFriendly(p, otherId: number): boolean
 	if otherId == 0 or otherId == p.id then
@@ -155,9 +149,7 @@ function Flow.immunitySeconds(): number
 	return Config.SPAWN_IMMUNITY_TICKS * Config.TICK
 end
 
---------------------------------------------------------------------------------
 -- Relations (only nations act on them; PlayerImpl.relation / updateRelation / decayRelations)
---------------------------------------------------------------------------------
 -- Values run -100..100 and decay 0.05 per tick toward 0 (applied lazily here).
 -- Hostile < -50 <= Distrustful < 0 <= Neutral < 50 <= Friendly.
 Flow.HOSTILE, Flow.DISTRUSTFUL, Flow.NEUTRAL, Flow.FRIENDLY = 0, 1, 2, 3
@@ -237,9 +229,7 @@ end
 
 local ATTACK_RELATION = { Easy = -60, Medium = -70, Hard = -80, Impossible = -100 }
 
---------------------------------------------------------------------------------
 -- Embargoes (EmbargoExecution / EmbargoAllExecution / temporary embargoes)
---------------------------------------------------------------------------------
 function Flow.hasEmbargoAgainst(aId: number, bId: number): boolean
 	local m = embargoes[aId]
 	return m ~= nil and m[bId] ~= nil
@@ -327,9 +317,7 @@ local function embargoAll(p, on: boolean): boolean
 	return any
 end
 
---------------------------------------------------------------------------------
 -- Targets (TargetPlayerExecution)
---------------------------------------------------------------------------------
 function Flow.canTarget(p, otherId: number): boolean
 	if otherId == p.id or Flow.isFriendly(p, otherId) then
 		return false
@@ -401,9 +389,7 @@ local function doTarget(p, otherId: number)
 	end
 end
 
---------------------------------------------------------------------------------
 -- Quick chat (QuickChatExecution)
---------------------------------------------------------------------------------
 local function quickChat(p, toId: number, key: any, targetId: any)
 	if typeof(key) ~= "string" or toId == p.id then
 		return
@@ -443,9 +429,7 @@ local function quickChat(p, toId: number, key: any, targetId: any)
 	end
 end
 
---------------------------------------------------------------------------------
 -- Client requests
---------------------------------------------------------------------------------
 function Flow.handles(kind: string): boolean
 	return KINDS[kind] == true
 end
@@ -477,9 +461,7 @@ function Flow.handle(p, kind: string, id: number, a2: any, a3: any)
 	end
 end
 
---------------------------------------------------------------------------------
 -- Attack hook (AttackExecution.init)
---------------------------------------------------------------------------------
 -- Called when p starts (or reinforces) an attack on a player. Non-bot targets embargo non-bot
 -- attackers for 5 minutes, the attacker turns down a pending alliance request from the target,
 -- and the target's relation to the attacker drops by the difficulty's amount.
@@ -500,9 +482,7 @@ function Flow.onAttack(p, targetId: number)
 	Flow.stat(q, "attacksReceived", 1)
 end
 
---------------------------------------------------------------------------------
 -- Per-tick upkeep
---------------------------------------------------------------------------------
 function Flow.step()
 	local now = ctx.tick()
 	-- Temporary embargoes expire (PlayerExecution).
@@ -535,9 +515,7 @@ function Flow.falloutTiles(): number
 	return falloutCount
 end
 
---------------------------------------------------------------------------------
 -- Win check (WinCheckExecution, FFA)
---------------------------------------------------------------------------------
 local function elapsedSeconds(): number
 	if ctx.phase() ~= "Play" and ctx.phase() ~= "Ended" then
 		return 0
@@ -589,9 +567,7 @@ function Flow.checkWin()
 	return nil, humans == 0
 end
 
---------------------------------------------------------------------------------
 -- Per-match stats (StatsImpl subset)
---------------------------------------------------------------------------------
 local function statsOf(p)
 	local s = stats[p.id]
 	if not s then

@@ -7,7 +7,6 @@
 
 -- StarterPlayer.StarterPlayerScripts.BuildMenu (ModuleScript), used by GameClient (via Interact),
 -- RadialMenu and the unit display.
---
 -- Mirrors src/client/hud/layers/BuildMenu.ts: Ctrl + click on the map opens a centred #1e1e1e
 -- card with one 120x140 button per buildable (buildTable order: Atom Bomb, MIRV, Hydrogen Bomb,
 -- Warship, Port, Missile Silo, SAM Launcher, Defense Post, City, Factory - kinds missing from
@@ -16,7 +15,6 @@
 -- when the player can build there OR upgrade an own structure of that kind near the tile
 -- (PlayerImpl.buildableUnits: canUpgrade wins over canBuild). Clicking sends "upgrade" (tile) or
 -- the build intent and closes. Closes on Esc / gamepad B / a click outside / any map press.
---
 -- BuildMenu.setup(ctx)  ctx: gui, net, roster, fmt(n), getMyId(), getMe(), getMap(),
 --                       getStructures(), getUnits(), ownerOf(tile), getPhase()
 -- BuildMenu.show(tile), BuildMenu.hide(), BuildMenu.isOpen()
@@ -360,9 +358,7 @@ function BuildMenu.perform(kind: string, tile: number)
 	end
 end
 
---------------------------------------------------------------------------------
 -- The grid
---------------------------------------------------------------------------------
 local FONT = Font.fromEnum(Enum.Font.GothamMedium)
 local FONT_BOLD = Font.fromEnum(Enum.Font.GothamBold)
 local WHITE = Color3.new(1, 1, 1)
