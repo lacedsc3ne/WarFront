@@ -15,6 +15,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local MetaConfig = require(Shared:WaitForChild("MetaConfig"))
 local metaEvent = Shared:WaitForChild("Meta")
 local metaFn = Shared:WaitForChild("MetaFn")
+local FavoriteGame = require(localPlayer:WaitForChild("PlayerScripts"):WaitForChild("FavoriteGame")) -- group rewards: join + favourite
 local DeviceLayout = require(localPlayer:WaitForChild("PlayerScripts"):WaitForChild("DeviceLayout"))
 -- Same look as the main menu (OpenFront home screen tokens): MenuKit.
 local MenuKit = require(localPlayer:WaitForChild("PlayerScripts"):WaitForChild("MenuKit"))
@@ -236,7 +237,8 @@ do
 	groupPopup.close = close
 	function groupPopup.open()
   if mobileDevice() then return end
-		if not profile or profile.groupKnown ~= true or profile.inGroup ~= false then return end
+		-- Group rewards need the group and a favourite: open for anyone missing either.
+		if not profile or profile.groupKnown ~= true or (profile.inGroup ~= false and profile.favorited == true) then return end
 		groupPopup.shown = true
   groupPopup.dismissed=false
 		status.Visible = false
@@ -253,15 +255,22 @@ do
 		end
 		groupPopup.busy = true
 		join.Text = "..."
-		local prompted = pcall(function()
-			game:GetService("GroupService"):PromptJoinAsync(G.id)
-		end)
+		local prompted = true
+		if not (profile and profile.inGroup) then
+			prompted = pcall(function()
+				game:GetService("GroupService"):PromptJoinAsync(G.id)
+			end)
+		end
+		if not (profile and profile.favorited) then
+			FavoriteGame.prompt()
+			FavoriteGame.report(metaFn)
+		end
 		local ok, _, msg = pcall(function()
 			return metaFn:InvokeServer("groupCheck")
 		end)
 		groupPopup.busy = false
 		join.Text = "JOIN GROUP"
-		if profile and profile.inGroup then
+		if profile and profile.inGroup and profile.favorited then
 			close() -- the reward popup shows what they got
 			return
 		end
@@ -395,7 +404,7 @@ do
 		end
 		if rewards then
 			rewards.Position, rewards.Size, rewards.TextSize = UDim2.fromOffset(54, 72), UDim2.fromOffset(350, 32), 16
-			rewards.Text = "+" .. MetaConfig.GROUP.MEDALS .. " medals, a free boost every day and a group colour"
+			rewards.Text = "Join + favourite the game: +" .. MetaConfig.GROUP.MEDALS .. " medals, a free boost every day and a group colour"
 		end
 		if join then
 			join.Position, join.Size, join.TextSize = UDim2.fromOffset(16, 114), UDim2.new(1, -32, 0, 40), 20
@@ -413,6 +422,200 @@ do
 			status.FontFace, status.TextSize, status.TextColor3 = F.BOLD, 13, C.YELLOW
 		end
 		card.Size = UDim2.fromOffset(420, 168)
+
+		-- Placement: under the Daily gift card in the home screen's right column, the same width as the
+		-- cards there (narrow layout: rewards wrap, Join spans the card). Bottom right above the page
+		-- buttons as a fallback.
+		local cardScale = card:FindFirstChildOfClass("UIScale")
+		local narrowW: number? = nil
+		local function layout()
+			local w = narrowW or 420
+			local narrow = narrowW ~= nil
+			if heading then
+				heading.Size = UDim2.fromOffset(w - 76 - 50, 28)
+				local size = if narrow then 21 else 24
+				heading.TextSize = size
+				while size > 14 and heading.TextBounds.X > heading.AbsoluteSize.X - 1 do
+					size -= 1
+					heading.TextSize = size
+				end
+			end
+			if groupName then
+				groupName.Size = UDim2.fromOffset(w - 76 - 50, 18)
+			end
+			if medal then
+				medal.Position, medal.Size = UDim2.fromOffset(16, if narrow then 76 else 74), UDim2.fromOffset(if narrow then 24 else 28, if narrow then 24 else 28)
+			end
+			if rewards then
+				rewards.Position = UDim2.fromOffset(if narrow then 48 else 54, 72)
+				rewards.Size = UDim2.fromOffset(w - (if narrow then 64 else 70), if narrow then 52 else 36)
+				rewards.TextSize = if narrow then 14 else 16
+			end
+			local joinY = if narrow then 132 else 116
+			if join then
+				join.Position, join.Size = UDim2.fromOffset(16, joinY), UDim2.new(1, -32, 0, 40)
+			end
+			local status = card:FindFirstChild("Status")
+			local h = joinY + 40 + 14
+			if status then
+				status.Position, status.Size = UDim2.fromOffset(16, h - 4), UDim2.fromOffset(w - 32, 36)
+				if status.Visible then
+					h += 38
+				end
+			end
+			card.Size = UDim2.fromOffset(w, h)
+		end
+		local statusLabel = card:FindFirstChild("Status")
+		if statusLabel then
+			statusLabel:GetPropertyChangedSignal("Visible"):Connect(function()
+				task.defer(layout) -- after the old handler, which resets the size to 420 wide
+			end)
+		end
+		local function findLeft(): GuiObject?
+			local pg = localPlayer:FindFirstChild("PlayerGui")
+			local home = pg and pg:FindFirstChild("WarFrontNight")
+			if not home then
+				return nil
+			end
+			for _, d in home:GetDescendants() do
+				if d.Name == "Right" and d:IsA("GuiObject") and d:FindFirstChild("Gift") then
+					return d
+				end
+			end
+			return nil
+		end
+		local function placeCard()
+			local left = findLeft()
+			local s = if cardScale then math.max(cardScale.Scale, 0.01) else 1
+			if left and left.AbsoluteSize.X > 0 then
+				local origin = gui.AbsolutePosition
+				narrowW = math.floor(left.AbsoluteSize.X / s + 0.5)
+				card.AnchorPoint = Vector2.zero
+				card.Position = UDim2.fromOffset(
+					math.floor(left.AbsolutePosition.X - origin.X),
+					math.floor(left.AbsolutePosition.Y + left.AbsoluteSize.Y + 12 - origin.Y)
+				)
+			else
+				narrowW = nil
+				card.AnchorPoint = Vector2.new(1, 1)
+				card.Position = UDim2.new(1, -24, 1, -80)
+			end
+			layout()
+		end
+		-- Button and heading say what is still missing (group, favourite or both).
+		local function labels()
+			local inGroup = profile and profile.inGroup == true
+			local fav = profile and profile.favorited == true
+			if heading then
+				heading.Text = if inGroup then "Favourite the game" else "Join our group"
+			end
+			if join and join.Text ~= "..." then
+				join.Text = if inGroup then "Favourite the game" elseif fav then "Join group" else "Join group + favourite"
+			end
+		end
+		if join then
+			join:GetPropertyChangedSignal("Text"):Connect(function()
+				if join.Text == "JOIN GROUP" or join.Text == "Join group" and profile and (profile.inGroup or profile.favorited ~= true) then
+					labels()
+				end
+			end)
+		end
+		local baseOpen = groupPopup.open
+		groupPopup.open = function()
+			placeCard()
+			baseOpen()
+			labels()
+			layout()
+		end
+		-- Group + favourite card, two ways (Night menu):
+		--   modal  once, centred over a dimmed screen, the first time a player who has done the
+		--          tutorial reaches the main menu without the rewards; closing it is saved
+		--          (MetaFn "groupModalSeen", profile.groupModalSeen)
+		--   docked after that, always on the home screen under the Daily gift card, no close button,
+		--          until the player is in the group and has favourited the game
+		-- Hidden on menu pages and in battle, and while a brand-new player is sent to the tutorial.
+		-- (applyProfile's one-time timer is not used in this look.)
+		groupPopup.waiting = true
+		local shade = groupPopup.shade
+		local mode: string? = nil
+		local modalClosed = false
+		local function needsRewards(): boolean
+			local p = profile
+			return p ~= nil and p.saving == true and p.groupKnown == true and (p.inGroup ~= true or p.favorited ~= true)
+		end
+		local function goingToTutorial(): boolean
+			return profile ~= nil and profile.tutorialSeen ~= true and (tonumber(profile.games) or 0) == 0
+		end
+		local function onHome(): boolean
+			local left = findLeft()
+			local home = left ~= nil and left.AbsoluteSize.X > 0
+			local a: Instance? = left
+			while home and a and not a:IsA("ScreenGui") do
+				if a:IsA("GuiObject") and not a.Visible then
+					home = false
+				end
+				a = a.Parent
+			end
+			if home and a and a:IsA("ScreenGui") and not a.Enabled then
+				home = false
+			end
+			return home
+		end
+		local function setMode(newMode: string)
+			if mode == newMode then
+				return
+			end
+			mode = newMode
+			if newMode == "modal" then
+				shade.BackgroundColor3, shade.BackgroundTransparency, shade.Active = C.BACKDROP, 0.35, true
+				narrowW = nil
+				card.AnchorPoint, card.Position = Vector2.new(0.5, 0.5), UDim2.fromScale(0.5, 0.5)
+				if later then
+					later.Visible = true
+				end
+			else
+				shade.BackgroundTransparency, shade.Active = 1, false
+				if later then
+					later.Visible = false -- docked: stays until the rewards are earned
+				end
+				placeCard()
+			end
+			labels()
+			layout()
+		end
+		if later then
+			later.Activated:Connect(function()
+				if mode == "modal" then
+					modalClosed = true
+					task.spawn(function()
+						pcall(function()
+							metaFn:InvokeServer("groupModalSeen")
+						end)
+					end)
+				end
+			end)
+		end
+		task.spawn(function()
+			local pg = localPlayer:WaitForChild("PlayerGui")
+			while gui.Parent do
+				task.wait(0.2)
+				local show = false
+				if needsRewards() and not goingToTutorial() and onHome() and pg:GetAttribute("FrontlinesMenuOpen") == true then
+					if not modalClosed and profile.groupModalSeen ~= true then
+						setMode("modal")
+					else
+						setMode("dock")
+						placeCard() -- follows the column if the screen size changes
+						layout()
+					end
+					show = true
+				end
+				shade.Visible = show
+				if show then
+					groupPopup.shown = true
+				end
+			end
+		end)
 	end
 end
 
@@ -635,30 +838,37 @@ local function offerGroupFeedback()
 	end)
 end
 
+local favoriteChecked = false
 local function applyProfile(p)
 	if not p then
 		return
 	end
 	profile = p
 	offerGroupFeedback()
+	if p.saving == true and p.favorited ~= true and not favoriteChecked then
+		favoriteChecked = true -- once per session: already a favourite -> tell the server (rewards follow)
+		task.spawn(FavoriteGame.report, metaFn)
+	end
 	local pg = localPlayer:FindFirstChild("PlayerGui")
 	if pg then
 		pg:SetAttribute("WFInGroup", if p.groupKnown == true then p.inGroup == true else nil)
 	end
-	if p.inGroup == true and groupPopup.close then groupPopup.close() end
-	if p.groupKnown == true and p.inGroup == false and p.saving and not groupPopup.shown and not groupPopup.waiting then
-		-- Once per session: a few seconds after joining, when the main menu is up (never mid-match).
+	if p.inGroup == true and p.favorited == true and groupPopup.close then groupPopup.close() end
+	if p.groupKnown == true and (p.inGroup == false or p.favorited ~= true) and p.saving and not groupPopup.shown and not groupPopup.waiting then
+		-- Once per session: as soon as the main menu is up after joining (never mid-match). A brand-new
+		-- player is sent to the tutorial first, so it waits until they're back from it.
 		groupPopup.waiting = true
-		task.delay(6, function()
+		task.spawn(function()
 			while not groupPopup.shown do
-				if profile and profile.inGroup then
+				if profile and profile.inGroup and profile.favorited then
 					return
 				end
-				if profile and profile.groupKnown == true and profile.inGroup == false and pg and pg:GetAttribute("FrontlinesMenuOpen") == true and not window.Visible then
+				local tutorialFirst = profile and profile.tutorialSeen ~= true and (tonumber(profile.games) or 0) == 0
+				if profile and not tutorialFirst and profile.groupKnown == true and (profile.inGroup == false or profile.favorited ~= true) and pg and pg:GetAttribute("FrontlinesMenuOpen") == true and not window.Visible then
 					groupPopup.open()
 					return
 				end
-				task.wait(2)
+				task.wait(0.25)
 			end
 		end)
 	end

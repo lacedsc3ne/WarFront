@@ -2453,6 +2453,12 @@ if NIGHT then
 			openPage(kind)
 		end,
 		play = function()
+			-- A brand-new player (no games yet, tutorial never started) goes to the tutorial on their
+			-- first Play, in case the automatic start on joining didn't happen (applyProfile).
+			if profile and profile.saving == true and profile.tutorialSeen ~= true and (tonumber(profile.games) or 0) == 0 then
+				play(true)
+				return
+			end
 			if state.lobbies and state.lobbies.ffa then
 				joinPublic({ lobbyType = "ffa", lobby = state.lobbies.ffa })
 				queueRefresh()

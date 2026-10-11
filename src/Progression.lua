@@ -80,7 +80,9 @@ local function defaultProfile()
 		rankedGames = 0,
 		rankedWins = 0,
 		boosts = {}, -- one-use boosts owned: key -> count (MetaConfig.BOOSTS)
-		groupFeedbackPrompted = false, -- client acknowledgement of the rating prompt, not proof of a positive vote
+		groupFeedbackPrompted = false, -- (old) rating prompt acknowledgement; no longer needed for the rewards
+		favorited = false, -- the client reported a favourite (AvatarEditorService, client-only check)
+		groupModalSeen = false, -- closed the group + favourite modal once (it then stays docked in the menu)
 		groupMedals = false, -- the one-time group reward was given
 		lastGroupBoost = 0, -- day number of the last free daily group boost
 		history = {}, -- last HISTORY_MAX games, newest last (see Progression.roundEnded)
@@ -414,7 +416,9 @@ local function publicProfile(plr: Player)
 		boosts = if typeof(p.boosts) == "table" then p.boosts else {},
 		inGroup = if groupChecked[plr] then groupCache[plr] == true else nil,
 		groupKnown = groupChecked[plr] == true,
-		groupFeedbackNeeded = groupChecked[plr] == true and groupCache[plr] == true and p.groupFeedbackPrompted ~= true,
+		groupFeedbackNeeded = false, -- Roblox can't tell us a player's rating, so the rewards no longer ask for it
+		favorited = p.favorited == true,
+		groupModalSeen = p.groupModalSeen == true,
 		groupMedals = p.groupMedals == true,
 		groupBoostToday = p.lastGroupBoost == os.time() // 86400,
 	}
@@ -516,8 +520,8 @@ local function claimGroup(plr: Player): string
 	if not loaded[plr] then
 		return "Group rewards are paused: your progress can't be saved right now."
 	end
-	if p.groupFeedbackPrompted ~= true then
-		return "Open the game rating prompt in the lobby, then claim your group rewards."
+	if p.favorited ~= true then
+		return "Favourite the game too, then your group rewards arrive."
 	end
 	local got = {}
 	local gift = {}
@@ -835,6 +839,22 @@ metaFn.OnServerInvoke = function(plr: Player, action: any, arg: any)
 		-- Roblox does not return the chosen rating. This is only a prompt acknowledgement.
 		if arg == "feedbackPromptClosed" and loaded[plr] and checkGroup(plr) then
 			p.groupFeedbackPrompted = true
+			task.spawn(save, plr)
+		end
+		local msg = claimGroup(plr)
+		push(plr)
+		return true, msg
+	elseif action == "groupModalSeen" then
+		if p.groupModalSeen ~= true then
+			p.groupModalSeen = true
+			task.spawn(save, plr)
+		end
+		push(plr)
+		return true
+	elseif action == "favorited" then
+		-- Only the player's client can check a favourite, so this is the client's report.
+		if p.favorited ~= true then
+			p.favorited = true
 			task.spawn(save, plr)
 		end
 		local msg = claimGroup(plr)

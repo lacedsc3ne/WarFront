@@ -234,6 +234,18 @@ local function buyProduct(ctx: any, id: number)
 	MarketplaceService:PromptProductPurchase(Players.LocalPlayer, id)
 end
 
+-- Roblox's favourite prompt; the client checks the favourite and tells the server (rewards follow).
+local function favoriteGame(ctx: any)
+	task.spawn(function()
+		local FavoriteGame = require(script.Parent.Parent.Parent:WaitForChild("FavoriteGame"))
+		if FavoriteGame.prompt() == true then
+			invoke(ctx, "favorited")
+		else
+			ctx.toast("Not a favourite yet. Tap the star in Roblox's prompt", "info")
+		end
+	end)
+end
+
 -- Roblox's join-group prompt, then the server checks membership and gives the rewards.
 local function joinGroup(ctx: any)
 	task.spawn(function()
@@ -550,7 +562,7 @@ local function groupCard(parent: Instance, order: number, ctx: any, p: any, phon
 	Art.image("Gift", { Size = UDim2.fromOffset(52, 52), LayoutOrder = 1, Parent = head })
 	local col = column(head, 2, 2)
 	Kit.text({ Text = "Join " .. G.name .. " group", FontFace = F.TITLE, TextSize = 20, LayoutOrder = 1, Parent = col })
-	wrapText(col, 2, "Free rewards for group members", 14, C.MUTED)
+	wrapText(col, 2, "Free rewards: join the group and favourite the game", 14, C.MUTED)
 	local rows = {
 		{ text = numberText(G.MEDALS) .. " medals, once when you join", done = p.groupMedals == true, doneText = "Claimed", waitText = "On its way" },
 		{ text = (if colour then colour.name else "Group") .. " colour, only for the group", done = p.inGroup == true, doneText = "Unlocked", waitText = "On its way" },
@@ -562,7 +574,7 @@ local function groupCard(parent: Instance, order: number, ctx: any, p: any, phon
 		local c = column(row, 2, 0)
 		wrapText(c, 1, r.text, 15, C.TEXT, F.BOLD)
 		Kit.text({
-			Text = if r.done then r.doneText elseif p.inGroup then r.waitText else "Join to unlock",
+			Text = if r.done then r.doneText elseif p.inGroup and p.favorited then r.waitText elseif p.inGroup then "Favourite to unlock" else "Join to unlock",
 			FontFace = F.TITLE,
 			TextSize = 14,
 			TextColor3 = if r.done then C.GREEN else C.MUTED,
@@ -570,16 +582,24 @@ local function groupCard(parent: Instance, order: number, ctx: any, p: any, phon
 			Parent = row,
 		})
 	end
-	if p.inGroup then
-		wrapText(card, 10, "You're in " .. G.name .. " group. Rewards are given automatically when you join the game.", 14, C.GREEN)
+	if p.inGroup and p.favorited then
+		wrapText(card, 10, "You're in " .. G.name .. " group and the game is a favourite. Rewards are given automatically when you join the game.", 14, C.GREEN)
 	else
-		local buttons = make("Frame", { Name = "Buttons", BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, if phone then 96 else 44), LayoutOrder = 10, Parent = card })
+		local count = (if p.inGroup then 0 else 1) + (if p.favorited then 0 else 1) + 1
+		local buttons = make("Frame", { Name = "Buttons", BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, if phone then count * 52 - 8 else 44), LayoutOrder = 10, Parent = card })
 		Kit.list(buttons, not phone, 8)
 		local size = if phone then UDim2.new(1, 0, 0, 44) else nil
-		Kit.button("primary", "Join the group", { name = "JoinGroup", icon = "UserPlus", height = 44, textSize = 17, size = size, layoutOrder = 1, parent = buttons, onActivated = function()
-			joinGroup(ctx)
-		end })
-		Kit.button("secondary", "I joined, check again", { name = "CheckGroup", height = 44, textSize = 16, size = size, layoutOrder = 2, parent = buttons, onActivated = function()
+		if not p.inGroup then
+			Kit.button("primary", "Join the group", { name = "JoinGroup", icon = "UserPlus", height = 44, textSize = 17, size = size, layoutOrder = 1, parent = buttons, onActivated = function()
+				joinGroup(ctx)
+			end })
+		end
+		if not p.favorited then
+			Kit.button(if p.inGroup then "primary" else "secondary", "Favourite the game", { name = "FavoriteGame", icon = "Star", height = 44, textSize = 17, size = size, layoutOrder = 2, parent = buttons, onActivated = function()
+				favoriteGame(ctx)
+			end })
+		end
+		Kit.button("secondary", "Check again", { name = "CheckGroup", height = 44, textSize = 16, size = size, layoutOrder = 3, parent = buttons, onActivated = function()
 			invoke(ctx, "groupCheck")
 		end })
 	end
