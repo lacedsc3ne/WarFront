@@ -38,9 +38,10 @@ local INFO = {
 	buildFactory = { "Build Factory", "Build a Factory under your cursor.", "Two" },
 	buildPort = { "Build Port", "Build a Port under your cursor.", "Three" },
 	buildDefensePost = { "Build Defense Post", "Build a Defense Post under your cursor.", "Four" },
-	buildMissileSilo = { "Build Missile Silo", "Build a Missile Silo under your cursor.", "Five" },
+	-- 5-7 follow the build bar left to right (Warship, SAM, Silo); OpenFront has Silo 5, SAM 6, Warship 7.
+	buildMissileSilo = { "Build Missile Silo", "Build a Missile Silo under your cursor.", "Seven" },
 	buildSamLauncher = { "Build SAM Launcher", "Build a SAM Launcher under your cursor.", "Six" },
-	buildWarship = { "Build Warship", "Build a Warship under your cursor.", "Seven" },
+	buildWarship = { "Build Warship", "Build a Warship under your cursor.", "Five" },
 	buildAtomBomb = { "Build Atom Bomb", "Build an Atom Bomb under your cursor.", "Eight" },
 	buildHydrogenBomb = { "Build Hydrogen Bomb", "Build a Hydrogen Bomb under your cursor.", "Nine" },
 	buildMIRV = { "Build MIRV", "Build a MIRV under your cursor.", "Zero" },
@@ -75,7 +76,7 @@ end
 -- UserSettingModal.renderKeybindSettings sections.
 KeybindData.SECTIONS = {
 	{ title = "View Options", actions = { "toggleView", "coordinateGrid", "altKey", "resetGfx" } },
-	{ title = "Build Controls", actions = { "buildCity", "buildFactory", "buildPort", "buildDefensePost", "buildMissileSilo", "buildSamLauncher", "buildWarship", "buildAtomBomb", "buildHydrogenBomb", "buildMIRV" } },
+	{ title = "Build Controls", actions = { "buildCity", "buildFactory", "buildPort", "buildDefensePost", "buildWarship", "buildSamLauncher", "buildMissileSilo", "buildAtomBomb", "buildHydrogenBomb", "buildMIRV" } },
 	{ title = "Menu Shortcuts", actions = { "buildMenuModifier", "emojiMenuModifier", "boxSelectWarships", "selectAllWarships", "pauseGame", "gameSpeedUp", "gameSpeedDown" } },
 	{ title = "Attack Ratio Controls", actions = { "attackRatioDown", "attackRatioUp" } },
 	{ title = "Attack Keybinds", actions = { "boatAttack", "groundAttack", "retaliateAttack", "swapDirection" } },
