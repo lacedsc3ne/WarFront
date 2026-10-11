@@ -1161,9 +1161,13 @@ function MenuKit.modal(gui: Instance, name: string?): any
 		local sz = if root:IsA("GuiBase2d") then root.AbsoluteSize else Vector2.new(1280, 720)
 		local mobile = sz.X < 640 or sz.Y < 420
 		if mobile then
-			box.Size = UDim2.fromScale(1, 1)
+			-- below Roblox's top-bar buttons when this screen covers them
+			local inset = if root:IsA("ScreenGui") and root.IgnoreGuiInset then GuiService.TopbarInset.Height else 0
+			box.Size = UDim2.new(1, 0, 1, -inset)
+			box.Position = UDim2.new(0.5, 0, 0.5, inset / 2)
 			boxCorner.CornerRadius = UDim.new(0, 0)
 		else
+			box.Position = UDim2.fromScale(0.5, 0.5)
 			box.Size = UDim2.fromOffset(math.floor(math.min(900, sz.X * 0.9)), math.floor(math.min(760, sz.Y - 64)))
 			boxCorner.CornerRadius = UDim.new(0, 16)
 		end

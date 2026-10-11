@@ -1768,7 +1768,7 @@ do
 		if not tutorialCounters.target then tutorialCounters.target=make("Frame",{Name="TutorialMapTarget",Size=UDim2.fromOffset(36,36),AnchorPoint=Vector2.new(.5,.5),BackgroundTransparency=1,Active=false,Selectable=false,Parent=gui}) end
 		local p=mapImage.AbsolutePosition;local sz=mapImage.AbsoluteSize
 		if follow then
-			local dev=cp.corner and cp.corner.development
+			local dev=cp.corner and (cp.corner.night or cp.corner.development)
 			local px,py=p.X+(t%W+.5)/W*sz.X,p.Y+(t//W+.5)/H*sz.Y
 			local bottom=if dev and dev.bar then dev.bar.AbsolutePosition.Y-40 else gui.AbsoluteSize.Y-120
 			if py<150 or py>bottom or px<60 or px>gui.AbsoluteSize.X-60 then
@@ -1840,9 +1840,10 @@ do
 	local function tutorialSnapshot()
 		local mine = roster[myId]
 		local s = if mine then mine.stats else nil
-		local attacking, attackingPlayer = false, false
+		local attacking, attackingPlayer, retreating = false, false, false
 		for _, a in me.attacks or {} do
 			attacking = true
+			if a[3] then retreating = true end
 			if a[1] ~= 0 then
 				attackingPlayer = true
 			end
@@ -1850,7 +1851,15 @@ do
   for _,boat in me.boatList or {} do
    if not boat[5] then attacking=true; if boat[3]~=0 then attackingPlayer=true end end
   end
+		local enemyTargetKind = nil
+		if localPlayer.PlayerGui:GetAttribute("FrontlinesTutorialStep") == "players" then
+			local target = fightTarget()
+			local owner = target and ownerOf(target)
+			enemyTargetKind = if not target then "missing" elseif owner == 0 then "neutral" elseif roster[owner] and roster[owner].kind == "Human" then "human" else "ai"
+		end
 		return {
+			enemyTargetKind = enemyTargetKind,
+			retreating = retreating,
 			inRound = myId ~= 0 and s ~= nil and (phase.phase == "Spawn" or phase.phase == "Play"),
 			phase = phase.phase,
 			spawned = s ~= nil and s.tiles > 0,
@@ -1889,7 +1898,7 @@ do
 		snapshot = tutorialSnapshot,
 		targets = function(stepId)
 			local c=cp.corner
-   local dev=c and c.development
+   local dev=c and (c.night or c.development)
    local mobileDefault=dev and dev.mobileLayout
    if mobileDefault then
     if stepId=="growth" then return {dev.population}end
@@ -1933,7 +1942,7 @@ do
 										for _,n in {t-4,t+4,t-W*4,t+W*4} do if not MapUtil.isOwnable(map,n) or ownerOf(n)~=0 then usable=false;break end end
 										end
 									end
-									if usable and dev and dev.bar then
+									if usable and dev and dev.bar and stepId == "spawn" then
           local image=mapImage.AbsolutePosition;local size=mapImage.AbsoluteSize
           local point=Vector2.new(image.X+(x+.5)/W*size.X,image.Y+(y+.5)/H*size.Y)
           local lower=dev.bar.AbsolutePosition.Y-22
@@ -1947,12 +1956,7 @@ do
 					end
 					if target then break end
 				end
-				if target then
-					if not tutorialCounters.target then tutorialCounters.target=make("Frame",{Name="TutorialMapTarget",Size=UDim2.fromOffset(36,36),AnchorPoint=Vector2.new(.5,.5),BackgroundTransparency=1,Active=false,Selectable=false,Parent=gui}) end
-					local p=mapImage.AbsolutePosition;local sz=mapImage.AbsoluteSize
-					tutorialCounters.target.Position=UDim2.fromOffset(p.X-gui.AbsolutePosition.X+(target%W+.5)/W*sz.X,p.Y-gui.AbsolutePosition.Y+(target//W+.5)/H*sz.Y)
-					return {tutorialCounters.target}
-				end
+				if target then return ringTile(target, true) end
 			elseif stepId=="reachSea" then
 				local t=seaInfo().target
 				if t then
@@ -1989,14 +1993,9 @@ do
 					local t=bombTarget()
 					if t then tx,ty=t%W,t//W end
 				end
-				if tx then
-					if not tutorialCounters.target then tutorialCounters.target=make("Frame",{Name="TutorialMapTarget",Size=UDim2.fromOffset(36,36),AnchorPoint=Vector2.new(.5,.5),BackgroundTransparency=1,Active=false,Selectable=false,Parent=gui}) end
-					local p=mapImage.AbsolutePosition;local sz=mapImage.AbsoluteSize
-					tutorialCounters.target.Position=UDim2.fromOffset(p.X-gui.AbsolutePosition.X+(tx+.5)/W*sz.X,p.Y-gui.AbsolutePosition.Y+(ty+.5)/H*sz.Y)
-					return {tutorialCounters.target}
-				end
+				if tx then return ringTile(ty * W + tx, true) end
 			end
-			if stepId=="ratio" then return {if c then c.slider else slider} end
+			if stepId=="ratio" then return {if c and c.night and c.night.phone then c.night.picks elseif c then c.slider else slider} end
 			if stepId=="growth" then return {if c then c.growth else growthPill} end
 			if stepId=="gold" then return {if c then c.gold else goldPill} end
 			if stepId=="win" then return {if c then c.goal else troopsText} end
@@ -2035,6 +2034,21 @@ do
 				end
 				return {}
 			end
+			if kind and c and c.night then
+				local night = c.night
+				if night.phone then
+					if Config.NUKES[kind] then
+						if not night.nukesOpen then return {night.nukeButton} end
+					elseif not night.phoneBuild then
+						if stepId == "city" then
+							night.phoneBuild = true
+							require(script.Parent.NightInGameLayout).layout(c)
+						else return {night.buildButton} end
+					end
+				end
+				local tile = night.tiles[kind]
+				if tile then return {tile.button} end
+			end
 			if kind and mobileDefault then
     for _,card in dev.cards do if card.entry.action.kind==kind then dev.selectedGroup=card.group;require(script.Parent.DevelopmentInGameLayout).layout(c);return {card.entry.button}end end
    end
@@ -2055,6 +2069,14 @@ do
 		end,
 		onFinish = function(reason)
 			localPlayer:WaitForChild("PlayerGui"):SetAttribute("FrontlinesTutorialFinished",reason)
+		end,
+		returnToLobby = function() require(script.Parent:WaitForChild("PauseMenu")).exitGame() end,
+		bottomLimit = function()
+			local dev = cp.corner and (cp.corner.night or cp.corner.development)
+			return if dev and dev.bar and dev.bar.Visible then dev.bar.AbsolutePosition.Y - gui.AbsolutePosition.Y - 12 else gui.AbsoluteSize.Y - 100
+		end,
+		observe = function(step)
+			net:FireServer("tutorialObserve", step, attackRatio)
 		end,
 		-- The tutorial pauses the (solo) game while it waits for the player, and resumes it.
 		setPaused = function(on: boolean)
@@ -2584,7 +2606,9 @@ UserInputService.InputChanged:Connect(function(input, processed)
 			selection.box.Size = UDim2.fromOffset(math.abs(pos.X - b0.X), math.abs(pos.Y - b0.Y))
 			return
 		end
-		if pressPos and (t == Enum.UserInputType.MouseMovement or input == pressInput) then
+		-- a finger press is only dragged by that finger (pointer movement doesn't cancel a tap)
+		local mousePress = pressInput ~= nil and pressInput.UserInputType == Enum.UserInputType.MouseButton1
+		if pressPos and ((t == Enum.UserInputType.MouseMovement and mousePress) or input == pressInput) then
 			if not dragging and math.abs(pos.X - pressPos.X) + math.abs(pos.Y - pressPos.Y) >= 10 then -- OpenFront DRAG_THRESHOLD_PX
 				dragging = true
 			end

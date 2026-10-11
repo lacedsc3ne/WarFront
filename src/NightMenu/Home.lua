@@ -237,8 +237,11 @@ local function tile(parent: Instance, icon: string, label: string, color: Color3
 		local artSize = math.floor(size.Y * 0.52)
 		Art.image(icon, { Name = "Icon", Size = UDim2.fromOffset(artSize, artSize), LayoutOrder = 1, Parent = b })
 	else
-		local iconSize = math.floor(size.Y * 0.36)
-		Kit.icon(icon, { Name = "Icon", Size = UDim2.fromOffset(iconSize, iconSize), ImageColor3 = color, LayoutOrder = 1, Parent = b })
+		-- same slot as the pictures, so the label sits at the same height on every tile
+		local slotSize = math.floor(size.Y * 0.52)
+		local slot = make("Frame", { Name = "IconSlot", BackgroundTransparency = 1, Size = UDim2.fromOffset(slotSize, slotSize), LayoutOrder = 1, Parent = b })
+		local iconSize = math.floor(size.Y * 0.4)
+		Kit.icon(icon, { Name = "Icon", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(iconSize, iconSize), ImageColor3 = color, Parent = slot })
 	end
 	Kit.text({ Name = "Label", Text = label, FontFace = F.TITLE, TextSize = math.max(13, math.floor(size.Y * 0.18)), LayoutOrder = 2, Parent = b })
 	Kit.hover(b, function(state)

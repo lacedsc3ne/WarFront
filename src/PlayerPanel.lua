@@ -216,8 +216,16 @@ local function card(name: string, width: number, zindex: number, radius: number?
   local st=require(script.Parent.DeviceLayout).state
   if st.touch and (st.profile=="phone" or st.profile=="tablet") then
    c.Size=UDim2.fromOffset(math.min(width,gui.AbsoluteSize.X-24),c.Size.Y.Offset)
+   -- between Roblox's top bar and the battle command bar
+   local inset=if gui:IsA("ScreenGui") and gui.IgnoreGuiInset then game:GetService("GuiService").TopbarInset.Height else 0
+   local bottom=gui.AbsoluteSize.Y
+   local hud=gui.Parent and gui.Parent:FindFirstChild("NightBattleHud")
+   local nav=hud and hud.Enabled and hud:FindFirstChild("DevelopmentNavbar",true)
+   if nav and nav:IsA("GuiObject") and nav.Visible and nav.AbsoluteSize.Y>0 then bottom=math.min(bottom,nav.AbsolutePosition.Y-gui.AbsolutePosition.Y) end
+   local avail=math.max(120,bottom-inset-16)
    local height=c.AbsoluteSize.Y/math.max(.01,scale.Scale)
-   scale.Scale=math.min(1,(gui.AbsoluteSize.Y-24)/math.max(1,height))
+   scale.Scale=math.min(1,avail/math.max(1,height))
+   c.Position=UDim2.new(.5,0,0,inset+8+avail/2)
   else scale.Scale=1;c.Size=UDim2.fromOffset(width,c.Size.Y.Offset)end
   fitting=false
  end

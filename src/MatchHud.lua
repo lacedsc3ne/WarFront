@@ -381,7 +381,9 @@ local function refreshAttacks()
 		end
 	end
 	local rows = order
-	local h = rows * ROW_H + math.max(0, rows - 1) * 4
+	local layout = frame:FindFirstChildWhichIsA("UIGridLayout")
+	local rowHeight = if layout then layout.CellSize.Y.Offset else ROW_H
+	local h = rows * rowHeight + math.max(0, rows - 1) * 4
 	frame.Visible = order > 0
 	local available = if frame.Parent and frame.Parent:IsA("GuiObject") and frame.Parent.Name~="Stack" then frame.Parent.AbsoluteSize.Y else MAX_H
 	frame.Size = UDim2.new(1, 0, 0, math.min(h, MAX_H, math.max(0,available)))
@@ -498,6 +500,11 @@ function MatchHud.toast(text: string, color: string?, seconds: number?)
 	if not toastFrame then
 		return
 	end
+	-- (tutorial: only warnings; info notices would cover the step's target, the feed still lists them)
+	local tutorialPg = gui:FindFirstAncestorWhichIsA("PlayerGui")
+	if color ~= "red" and tutorialPg and tutorialPg:GetAttribute("FrontlinesTutorial") == true then
+		return
+	end
 	local c = if color == "red" then Color3.fromRGB(239, 68, 68) else Color3.fromRGB(34, 197, 94)
 	toastFrame.BackgroundColor3 = MatchSkin.C.panel
 	local border = toastFrame:FindFirstChild("Border") :: UIStroke?
@@ -528,7 +535,10 @@ local function refreshTop()
 	end
 	-- (Overtime: "Overtime! ..." for its first 5 seconds, HeadsUpMessage.isOvertimeNotice.)
 	local overtime = not inSpawn and ClockPanels.overtimeNotice()
-	headsUp.Visible = (inSpawn or overtime) and not toastFrame.Visible
+	-- (the tutorial's own bubble says where to start, and the banner would cover its ring)
+	local hudPg = gui:FindFirstAncestorWhichIsA("PlayerGui")
+	local tutorialOn = hudPg ~= nil and hudPg:GetAttribute("FrontlinesTutorial") == true
+	headsUp.Visible = ((inSpawn and not tutorialOn) or overtime) and not toastFrame.Visible
 	if inSpawn then
 		local mine = ctx.roster[ctx.getMyId()]
 		headsUp.Text = if MatchSkin.night then (if ctx.getMyId() ~= 0 and mine then "Pick your starting spot" else "Everyone is picking a starting spot")
@@ -687,10 +697,19 @@ local function buildWin()
  local fitting=false
  local function fitMobile()
   if fitting then return end;fitting=true
-  local st=require(script.Parent.DeviceLayout).state
-  local height=c.AbsoluteSize.Y/math.max(.01,mobileScale.Scale)
-  mobileScale.Scale=if st.touch and (st.profile=="phone" or st.profile=="tablet") then math.min(1,(gui.AbsoluteSize.Y-24)/math.max(1,height)) else 1
-  fitting=false
+  task.defer(function()
+   if c.Parent then
+    local st=require(script.Parent.DeviceLayout).state
+    local height=c.AbsoluteSize.Y/math.max(.01,mobileScale.Scale)
+    -- phones: fit between Roblox's top bar and the bottom edge (this screen covers the top bar)
+    local touchPhone=st.touch and (st.profile=="phone" or st.profile=="tablet")
+    local inset=if touchPhone and gui:IsA("ScreenGui") and gui.IgnoreGuiInset then game:GetService("GuiService").TopbarInset.Height else 0
+    local target=if touchPhone then math.min(1,(gui.AbsoluteSize.Y-inset-24)/math.max(1,height)) else 1
+    if math.abs(mobileScale.Scale-target)>.002 then mobileScale.Scale=target end
+    c.Position=UDim2.new(.5,0,.5,inset/2)
+   end
+   fitting=false
+  end)
  end
  local resize=gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitMobile)
  local contentResize=c:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitMobile)

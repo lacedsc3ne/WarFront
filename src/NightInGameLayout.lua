@@ -22,6 +22,46 @@ local make = Kit.make
 
 local Layout = {}
 
+-- Tutorial state can arrive before/after the round HUD mounts.
+local function tutorialCanSkip(): boolean
+	local pg = Players.LocalPlayer.PlayerGui
+	if pg:GetAttribute("FrontlinesMenuOpen") == true then return false end
+	if pg:GetAttribute("FrontlinesTutorial") == true then return true end
+	return workspace:GetAttribute("WFMatchKind") == "tutorial" and pg:GetAttribute("FrontlinesTutorialFinished") == nil
+end
+
+local skipHexImage
+local function skipHex(parent)
+	if not skipHexImage then
+		local ok, img = pcall(function()
+			local image = game:GetService("AssetService"):CreateEditableImage({ Size = Vector2.new(128, 40) })
+			if not image then return nil end
+			local pixels = buffer.create(128 * 40 * 4)
+			for y = 0, 39 do
+				for x = 0, 127 do
+					local row = math.floor(y / 20)
+					local cx = math.floor((x - (row % 2) * 12) / 24) * 24 + (row % 2) * 12 + 12
+					local cy = row * 20 + 10
+					local dx, dy = math.abs(x - cx), math.abs(y - cy)
+					local edge = math.max(dx / 10, (dx + dy * 1.732) / 20)
+					if edge >= 0.91 and edge <= 1.04 then
+						local a = math.floor(42 * (1 - x / 128))
+						buffer.writeu32(pixels, (y * 128 + x) * 4, 16777215 + a * 16777216)
+					end
+				end
+			end
+			image:WritePixelsBuffer(Vector2.zero, image.Size, pixels)
+			return image
+		end)
+		if ok then skipHexImage = img end
+	end
+	if skipHexImage then
+		local pattern = make("ImageLabel", { Name = "SkipHex", BackgroundTransparency = 1, ImageContent = Content.fromObject(skipHexImage), Size = UDim2.fromScale(1, 1), ZIndex = 63, Parent = parent })
+		Kit.corner(pattern)
+	end
+end
+
+
 -- Build tiles in mockup order; the nukes open from their own tile.
 local TILES = {
 	{ "City", "Factory", "Port", "DefensePost" },
@@ -419,7 +459,7 @@ function Layout.notice(s, text: string)
 	Kit.pad(c, 16, 20)
 	Kit.list(c, true, 10, { VerticalAlignment = Enum.VerticalAlignment.Center })
 	Kit.icon("Info", { Size = UDim2.fromOffset(22, 22), ImageColor3 = K.YELLOW, ZIndex = 71, LayoutOrder = 1, Parent = c })
-	Kit.text({ Text = text, FontFace = F.TITLE, TextSize = 18, ZIndex = 71, LayoutOrder = 2, Parent = c })
+	Kit.text({ Name = "Message", Text = text, FontFace = F.TITLE, TextSize = 18, ZIndex = 71, LayoutOrder = 2, Parent = c })
 	scaleOf(c)
 	s.notice = c
 	Layout.place(s.api)
@@ -613,6 +653,46 @@ function Layout.mount(api)
 	s.right = make("Frame", { Name = "TopRight", BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0), Size = UDim2.fromOffset(0, 40), AutomaticSize = Enum.AutomaticSize.X, ZIndex = 60, Parent = gui })
 	Kit.list(s.right, true, 8, { VerticalAlignment = Enum.VerticalAlignment.Center, HorizontalAlignment = Enum.HorizontalAlignment.Right })
 	s.boostsSlot = make("Frame", { Name = "BoostsSlot", BackgroundTransparency = 1, Size = UDim2.fromOffset(118, 40), LayoutOrder = 1, ZIndex = 60, Parent = s.right })
+	s.skipTutorial = make("TextButton", { Name = "SkipTutorial", Text = "", BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0, AutoButtonColor = false, Size = UDim2.fromOffset(142, 40), LayoutOrder = 0, ZIndex = 63, Visible = false, SelectionImageObject = Kit.ring, Parent = s.right })
+	Kit.corner(s.skipTutorial)
+	Kit.stroke(s.skipTutorial, Color3.fromRGB(247, 113, 119), 1.5)
+	make("UIGradient", { Name = "SkipRedGradient", Color = ColorSequence.new(Color3.fromRGB(222, 70, 81), Color3.fromRGB(145, 32, 55)), Rotation = 90, Parent = s.skipTutorial })
+	skipHex(s.skipTutorial)
+	s.skipTutorialLabel = Kit.text({ Name = "Label", Text = "Skip tutorial", FontFace = F.TITLE, TextSize = 16, TextColor3 = K.TEXT, Size = UDim2.fromScale(1, 1), AutomaticSize = Enum.AutomaticSize.None, TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 64, Parent = s.skipTutorial })
+	local skipConfirmUntil = 0
+	local skipLeaving = false
+	table.insert(s.connections, s.skipTutorial:GetPropertyChangedSignal("Visible"):Connect(function()
+		skipConfirmUntil = 0
+		if s.skipTutorial.Visible then skipLeaving = false end
+		s.skipTutorialLabel.Text = "Skip tutorial"
+	end))
+	table.insert(s.connections, s.skipTutorial.Activated:Connect(function()
+		if skipLeaving or not tutorialCanSkip() then return end
+		if os.clock() >= skipConfirmUntil then
+			skipConfirmUntil = os.clock() + 4
+			local armed = skipConfirmUntil
+			s.skipTutorialLabel.Text = "Are you sure?"
+			task.delay(4, function()
+				if s.skipTutorialLabel.Parent and skipConfirmUntil == armed and not skipLeaving then
+					skipConfirmUntil = 0
+					s.skipTutorialLabel.Text = "Skip tutorial"
+				end
+			end)
+			return
+		end
+		skipLeaving = true
+		s.skipTutorialLabel.Text = "Returning…"
+		require(script.Parent:WaitForChild("Tutorial")).skip()
+	end))
+	local pg = Players.LocalPlayer.PlayerGui
+	for _, attr in { "FrontlinesTutorial", "FrontlinesTutorialFinished", "FrontlinesMenuOpen" } do
+		table.insert(s.connections, pg:GetAttributeChangedSignal(attr):Connect(function()
+			set(s.skipTutorial, "Visible", tutorialCanSkip())
+		end))
+	end
+	table.insert(s.connections, workspace:GetAttributeChangedSignal("WFMatchKind"):Connect(function()
+		set(s.skipTutorial, "Visible", tutorialCanSkip())
+	end))
 	s.bell = roundButton(s.right, "Bell", "Bell", K.CARD, K.TEXT, 40)
 	s.bell.LayoutOrder = 2
 	s.bell.Visible = false
@@ -720,13 +800,15 @@ function Layout.mount(api)
 	Kit.list(stats, true, 12, { VerticalAlignment = Enum.VerticalAlignment.Center })
 	local troops = make("Frame", { Name = "Troops", BackgroundTransparency = 1, Size = UDim2.new(0, 0, 1, 0), LayoutOrder = 1, ZIndex = 61, Parent = stats })
 	Kit.flex(troops)
-	Art.image("Troops", { Position = UDim2.fromOffset(-1, -2), Size = UDim2.fromOffset(20, 20), ZIndex = 62, Parent = troops })
+	s.troopArt = Art.image("Troops", { Position = UDim2.fromOffset(-1, -2), Size = UDim2.fromOffset(20, 20), ZIndex = 62, Parent = troops })
 	s.troops = Kit.text({ Text = "", RichText = true, FontFace = F.TITLE, TextSize = 15, Position = UDim2.fromOffset(22, 0), Size = UDim2.new(1, -80, 0, 18), AutomaticSize = Enum.AutomaticSize.None, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 62, Parent = troops })
 	s.troopRate = Kit.text({ Text = "", FontFace = F.TITLE, TextSize = 13, TextColor3 = K.GREEN, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 1), ZIndex = 62, Parent = troops })
 	local tbar = make("Frame", { BackgroundColor3 = K.DEEP, BorderSizePixel = 0, Position = UDim2.new(0, 0, 0, 22), Size = UDim2.new(1, 0, 0, 5), ZIndex = 62, Parent = troops })
 	Kit.corner(tbar)
 	s.troopFill = make("Frame", { BackgroundColor3 = K.CYAN, BorderSizePixel = 0, Size = UDim2.fromScale(0, 1), ZIndex = 63, Parent = tbar })
 	Kit.corner(s.troopFill)
+	s.populationCount = make("Frame", { Name = "PopulationCount", BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 7), Size = UDim2.fromOffset(0, 20), AutomaticSize = Enum.AutomaticSize.X, Visible = false, ZIndex = 62, Parent = troops })
+	Kit.list(s.populationCount, true, 6, { VerticalAlignment = Enum.VerticalAlignment.Center })
 	make("Frame", { Name = "Divider", BackgroundColor3 = K.LINE, BorderSizePixel = 0, Size = UDim2.fromOffset(1, 24), LayoutOrder = 2, ZIndex = 61, Parent = stats })
 	-- Fixed width (not automatic): changing numbers must not shift the bar.
 	local gold = make("Frame", { Name = "Gold", BackgroundTransparency = 1, Size = UDim2.new(0, 190, 1, 0), LayoutOrder = 3, ZIndex = 61, Parent = stats })
@@ -743,9 +825,13 @@ function Layout.mount(api)
 	s.picks = make("Frame", { Name = "QuickPicks", BackgroundTransparency = 1, Size = UDim2.fromOffset(0, 30), AutomaticSize = Enum.AutomaticSize.X, LayoutOrder = 6, Visible = false, ZIndex = 61, Parent = stats })
 	Kit.list(s.picks, true, 6, { VerticalAlignment = Enum.VerticalAlignment.Center })
 	s.pickButtons = {}
+	s.pickFaces = {}
 	for i, v in { 0.1, 0.3, 0.5, 1 } do
 		local b = make("TextButton", { Name = "Pick" .. i, Text = if v == 1 then "All" else (v * 100) .. "%", FontFace = F.TITLE, TextSize = 14, TextColor3 = K.TEXT, AutoButtonColor = false, BackgroundColor3 = K.DEEP, BorderSizePixel = 0, Size = UDim2.fromOffset(46, 30), LayoutOrder = i, SelectionImageObject = Kit.ring, ZIndex = 62, Parent = s.picks })
 		Kit.corner(b)
+		local face = make("TextLabel", { Name = "CompactFace", Text = b.Text, FontFace = F.TITLE, TextSize = 13, TextColor3 = K.TEXT, BackgroundColor3 = K.DEEP, BorderSizePixel = 0, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(40, 40), Visible = false, Active = false, ZIndex = 61, Parent = b })
+		Kit.corner(face, 7)
+		s.pickFaces[v] = face
 		b.Activated:Connect(function()
 			if ctx.setRatio then
 				ctx.setRatio(v)
@@ -777,6 +863,17 @@ function Layout.mount(api)
 		s.phoneBuild = false
 		Layout.place(api)
 	end)
+	-- The Nukes pop-up closes when the map is tapped (or held for the action wheel), so it never
+	-- stays over the wheel or the player panel.
+	table.insert(s.connections, game:GetService("UserInputService").InputBegan:Connect(function(input, processed)
+		if processed or not s.nukesOpen then
+			return
+		end
+		if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+			s.nukesOpen = false
+			Layout.place(api)
+		end
+	end))
 
 	-- Nukes popup (above the Nukes tile / button).
 	s.nukes = card(gui, "Nukes", { AnchorPoint = Vector2.new(0.5, 1), Size = UDim2.fromOffset(0, 0), AutomaticSize = Enum.AutomaticSize.XY, BackgroundColor3 = K.PAGE, Visible = false, ZIndex = 75 })
@@ -966,7 +1063,7 @@ function Layout.place(api)
 	local state = ctx.device.state or {}
 	local phone = (state.profile == "phone") or X < 700 or Y < 430
 	s.phone = phone
-	local u = if phone then math.clamp(math.min(X / 760, Y / 380), 0.62, 1) else math.clamp(math.min(X / 1280, Y / 720) * (ctx.device.userScale or 1), 0.7, 1.25)
+	local u = if phone then 1 else math.clamp(math.min(X / 1280, Y / 720) * (ctx.device.userScale or 1), 0.7, 1.25)
 	if state.profile == "console" then
 		u *= 1.08
 	end
@@ -988,15 +1085,19 @@ function Layout.place(api)
 	end
 	-- Roblox's buttons sit at the bottom of the top-bar inset (2 px above its edge), not in its middle.
 	local topY = math.max(0, topH - 40 * topU - 2)
+	set(s.clock, "Visible", not phone)
 	set(s.clock, "Position", UDim2.fromOffset(left, topY))
 	set(s.rankPill, "Visible", phone and not learning)
-	set(s.rankPill, "Position", UDim2.fromOffset(left + (s.clock.AbsoluteSize.X + 8), topY))
+	set(s.rankPill, "Position", UDim2.fromOffset(if phone then 12 else left + (s.clock.AbsoluteSize.X + 8), if phone then topY + 52 else topY))
 	set(s.right, "Position", UDim2.new(1, -12, 0, topY))
+	set(s.skipTutorial, "Visible", tutorialCanSkip())
+	set(s.skipTutorial, "Size", UDim2.fromOffset(if phone then 124 else 142, 40))
+	set(s.skipTutorialLabel, "TextSize", if phone then 14 else 16)
 	set(s.bell, "Visible", phone)
 	set(s.goal, "Visible", not phone and not learning)
 	set(s.goal, "Position", UDim2.new(0.5, 0, 0, 8))
-	set(s.menu, "Position", UDim2.new(1, -12, 0, topH + 4))
-	local below = topH + 8
+	set(s.menu, "Position", UDim2.new(1, -12, 0, if phone then topY + 52 else topH + 4))
+	local below = if phone then topH + 8 + (if s.rankPill.Visible then 48 else 0) else topH + 8
 
 	-- Side cards.
 	local showBoard = not learning and (not phone or s.boardOpen == true)
@@ -1021,18 +1122,73 @@ function Layout.place(api)
 	end
 	s.below = below
 
-	-- Bottom.
+	-- Bottom. Compute final visibility once; AutoSize must not see a temporary hidden row.
+	local showTiles = not phone or s.phoneBuild == true or (phone and learning)
+	if phone and learning then s.phoneBuild = true end
+	set(s.bar, "AutomaticSize", if phone then Enum.AutomaticSize.None else Enum.AutomaticSize.Y)
 	set(s.bar, "Position", UDim2.new(0.5, 0, 1, -12))
-	set(s.bar, "Size", UDim2.fromOffset(if phone then math.min(560, (X - 24) / u) else 760, 0))
-	set(s.tileRow, "Visible", not phone)
+	set(s.bar, "Size", UDim2.fromOffset(if phone then math.min(526, (X - 24) / u) else 760, if phone then (if showTiles then 122 else 52) else 0))
+	local barPadding = s.bar:FindFirstChildWhichIsA("UIPadding")
+	set(barPadding, "PaddingLeft", UDim.new(0, if phone then 8 else 14))
+	set(barPadding, "PaddingRight", UDim.new(0, if phone then 8 else 14))
+	set(barPadding, "PaddingTop", UDim.new(0, if phone then 4 else 10))
+	set(barPadding, "PaddingBottom", UDim.new(0, if phone then 4 else 10))
+	set(s.bar:FindFirstChildWhichIsA("UIListLayout"), "Padding", UDim.new(0, if phone then 4 else 8))
+	set(s.tileRow, "Visible", showTiles)
 	set(s.sendRow, "Visible", not phone)
 	set(s.picks, "Visible", phone)
-	set(s.phoneButtons, "Visible", phone)
-	set(s.phoneButtons, "Position", UDim2.new(1, -12, 1, -(s.bar.AbsoluteSize.Y + 20)))
-	-- Phone build card: the tile row floats above the bar.
-	if phone and s.phoneBuild then
-		set(s.tileRow, "Visible", true)
+	set(s.picks, "Parent", s.sendRow.Parent)
+	set(s.picks, "LayoutOrder", 6)
+	local statsWidth = math.min(510, s.bar.Size.X.Offset - 16)
+	local ratioWidth = 194
+	local resourceWidth = statsWidth - ratioWidth - 96 - 26
+	set(s.picks, "AutomaticSize", if phone then Enum.AutomaticSize.None else Enum.AutomaticSize.X)
+	set(s.picks, "Size", UDim2.fromOffset(if phone then ratioWidth else 0, if phone then 44 else 30))
+	set(s.picks:FindFirstChildWhichIsA("UIListLayout"), "HorizontalAlignment", Enum.HorizontalAlignment.Center)
+	for value, b in s.pickButtons do
+		set(s.pickFaces[value], "Visible", phone)
+		set(b, "BackgroundTransparency", if phone then 1 else 0)
+		set(b, "TextTransparency", if phone then 1 else 0)
+		set(b, "TextSize", if phone then 13 else 14)
+		set(b, "Size", UDim2.fromOffset(if phone then 44 else 46, if phone then 44 else 30))
+		set(b:FindFirstChildWhichIsA("UICorner"), "CornerRadius", if phone then UDim.new(0, 8) else UDim.new(0.5, 0))
 	end
+	local stats = s.sendRow.Parent
+	set(stats, "Size", if phone then UDim2.fromOffset(statsWidth, 44) else UDim2.new(1, 0, 0, 30))
+	set(stats:FindFirstChildWhichIsA("UIListLayout"), "Padding", UDim.new(0, if phone then 6 else 12))
+	set(stats.Troops:FindFirstChildWhichIsA("UIFlexItem"), "FlexMode", if phone then Enum.UIFlexMode.None else Enum.UIFlexMode.Fill)
+	set(stats.Troops, "Size", UDim2.new(0, if phone then resourceWidth else 0, 1, 0))
+	set(stats.Gold, "Size", UDim2.new(0, if phone then 96 else 190, 1, 0))
+	set(stats.Gold:FindFirstChildWhichIsA("UIListLayout"), "HorizontalAlignment", if phone then Enum.HorizontalAlignment.Center else Enum.HorizontalAlignment.Left)
+	set(s.populationCount, "Visible", phone)
+	set(s.troops, "Parent", if phone then s.populationCount else stats.Troops)
+	set(s.troopArt, "Parent", if phone then s.populationCount else stats.Troops)
+	set(s.troopArt, "Position", if phone then UDim2.new() else UDim2.fromOffset(-1, -2))
+	set(s.troopArt, "LayoutOrder", 1)
+	set(s.troops, "LayoutOrder", 2)
+	set(s.troops, "AutomaticSize", if phone then Enum.AutomaticSize.X else Enum.AutomaticSize.None)
+	set(s.troops, "Size", if phone then UDim2.fromOffset(0, 18) else UDim2.new(1, -80, 0, 18))
+	set(s.troops, "Position", if phone then UDim2.new() else UDim2.fromOffset(22, 0))
+	local populationBar = s.troopFill.Parent
+	set(populationBar, "AnchorPoint", if phone then Vector2.new(0.5, 0) else Vector2.zero)
+	set(populationBar, "Position", if phone then UDim2.new(0.5, 0, 0, 32) else UDim2.fromOffset(0, 22))
+	set(populationBar, "Size", if phone then UDim2.fromOffset(math.min(150, math.max(44, resourceWidth - 24)), 4) else UDim2.new(1, 0, 0, 5))
+	set(s.troopRate, "Visible", not phone)
+	for _, v in stats:GetChildren() do
+		if v.Name == "Divider" then set(v, "Visible", true) end
+	end
+	local tilesLayout = s.tileRow:FindFirstChildWhichIsA("UIListLayout")
+	set(tilesLayout, "Wraps", false)
+	set(tilesLayout, "HorizontalAlignment", Enum.HorizontalAlignment.Center)
+	set(s.tileRow, "LayoutOrder", 2)
+	set(s.tileRow, "AutomaticSize", if phone then Enum.AutomaticSize.None else Enum.AutomaticSize.X)
+	set(s.tileRow, "Size", if phone then UDim2.new(1, 0, 0, 66) else UDim2.fromOffset(0, 66))
+	for _, v in s.tileRow:GetChildren() do
+		if v:IsA("Frame") and string.sub(v.Name, 1, 3) == "Gap" then set(v, "Visible", not phone) end
+	end
+	set(s.phoneButtons, "Visible", phone and (not learning or Players.LocalPlayer.PlayerGui:GetAttribute("FrontlinesTutorialLesson") ~= nil))
+	set(s.phoneButtons, "Position", UDim2.new(1, -12, 1, -(s.bar.AbsoluteSize.Y + 20)))
+	-- showTiles already includes tutorial building access; do not toggle it again.
 	set(s.nukeTile, "Visible", false) -- desktop shows every nuke on the bar; phones use the Nukes button
 	for i, kind in NUKES do
 		local t = s.tiles[kind]
@@ -1058,7 +1214,15 @@ function Layout.place(api)
 	-- Notice above the bar.
 	if s.notice and s.notice.Parent then
 		set(scaleOf(s.notice), "Scale", u)
-		set(s.notice, "Position", UDim2.new(0.5, 0, 1, -(s.bar.AbsoluteSize.Y + 24)))
+		local label = s.notice:FindFirstChild("Message")
+		set(s.notice, "AutomaticSize", if phone then Enum.AutomaticSize.None else Enum.AutomaticSize.X)
+		set(s.notice, "Size", UDim2.fromOffset(if phone then math.min(300, X - 24) else 0, if phone then 64 else 46))
+		if label then
+			set(label, "TextWrapped", phone)
+			set(label, "TextSize", if phone then 16 else 18)
+			set(label, "AutomaticSize", if phone then Enum.AutomaticSize.Y else Enum.AutomaticSize.XY)
+			set(label, "Size", if phone then UDim2.fromOffset(math.min(300, X - 24) - 68, 0) else UDim2.new())
+		end
 	end
 
 	Layout.borrow(api)
@@ -1287,7 +1451,7 @@ function Layout.borrow(api)
 	-- Attacks strip (MatchHud's AttacksDisplay: your attacks, attacks on you, boats, retreating, with
 	-- Retreat / fight-back buttons). CornerHud keeps it in a popover this HUD hides, so it lives in
 	-- its own dock just above the command bar, left-aligned with it, in the Night look.
-	local list = (r and r.stack and r.stack:FindFirstChild("AttacksDisplay")) or (api.attackBody and api.attackBody:FindFirstChild("AttacksDisplay"))
+	local list = (r and r.stack and r.stack:FindFirstChild("AttacksDisplay")) or (api.attackBody and api.attackBody:FindFirstChild("AttacksDisplay")) or (s.attackDock and s.attackDock:FindFirstChild("AttacksDisplay"))
 	if not s.attackDock then
 		-- fixed height (MatchHud's max list height): it sizes the list from its parent's height
 		s.attackDock = make("Frame", { Name = "NightAttacks", BackgroundTransparency = 1, AnchorPoint = Vector2.new(0, 1), Size = UDim2.fromOffset(330, 112), ZIndex = 60, Parent = gui })
@@ -1324,8 +1488,34 @@ function Layout.borrow(api)
 	end
 	if dock then
 		scaleOf(dock).Scale = u
+		local dockWidth = if phone then math.min(250, (s.bar.AbsoluteSize.X - (if s.phoneButtons.Visible then s.phoneButtons.AbsoluteSize.X + 8 else 0)) / u) else 330
+		if list then
+			local grid = list:FindFirstChildWhichIsA("UIGridLayout")
+			if grid then s.change(grid, { CellSize = UDim2.new(1, -4, 0, if phone then 44 else 32) }) end
+			for _, row in list:GetChildren() do
+				if row:IsA("Frame") then
+					local action = row:FindFirstChild("Action")
+					local main = row:FindFirstChildWhichIsA("TextButton")
+					local statusWidth = 0
+					for _, child in row:GetChildren() do
+						if child:IsA("TextLabel") and child.Visible and child.AutomaticSize == Enum.AutomaticSize.X then statusWidth = math.max(statusWidth, child.TextBounds.X + 8) end
+					end
+					if action then set(action, "Size", if phone then UDim2.fromOffset(44, 44) else UDim2.fromOffset(26, 22)) end
+					if main and main ~= action then set(main, "Size", UDim2.new(1, -(if phone then math.max(48, statusWidth) else 30), 1, 0)) end
+				end
+			end
+		end
+		set(dock, "Size", UDim2.fromOffset(math.max(180, dockWidth), 112))
 		local barPos = s.bar.AbsolutePosition - gui.AbsolutePosition
 		set(dock, "Position", UDim2.fromOffset(math.floor(barPos.X), math.floor(barPos.Y - 8)))
+		if s.notice and s.notice.Parent and s.notice.Visible then
+			local noticeBottom = barPos.Y - 12
+			if list and list.Visible then noticeBottom = math.min(noticeBottom, barPos.Y - 16 - list.AbsoluteSize.Y) end
+			if phone and s.phoneButtons.Visible then noticeBottom = math.min(noticeBottom, s.phoneButtons.AbsolutePosition.Y - gui.AbsolutePosition.Y - 8) end
+			set(s.notice, "AnchorPoint", Vector2.new(if phone then 1 else 0.5, 1))
+			-- One position writer: place() only sizes the notice, preventing periodic jumps.
+			set(s.notice, "Position", UDim2.fromOffset(math.floor(if phone then X - 12 else X / 2), math.floor(noticeBottom)))
+		end
 		set(dock, "Visible", s.bar.Visible)
 	end
 	s.borrowing = false
@@ -1340,6 +1530,7 @@ function Layout.refresh(api)
 	refreshCount += 1
 	local ctx = api.ctx
 	s.gui.Enabled = api.root.Visible
+	set(s.skipTutorial, "Visible", tutorialCanSkip())
 	if not api.root.Visible then
 		s.menu.Visible = false
 		s.nukesOpen = false
@@ -1364,7 +1555,7 @@ function Layout.refresh(api)
 		s.goalFill.Size = UDim2.fromScale(math.clamp(share, 0, 1), 1)
 		s.goalYou.Text = string.format("You %.0f%%", share * 100)
 		local troops, max = tonumber(st.troops) or 0, math.max(1, tonumber(st.maxTroops) or 1)
-		s.troops.Text = string.format('%s <font color="#bcc8e6">/ %s troops</font>', ctx.fmtTroops(troops), ctx.fmtTroops(max))
+		s.troops.Text = string.format(if s.phone then '%s <font color="#bcc8e6">/ %s</font>' else '%s <font color="#bcc8e6">/ %s troops</font>', ctx.fmtTroops(troops), ctx.fmtTroops(max))
 		local rate = if alive and ph.phase == "Play" then math.max(0, Config.troopGrowth(mine.kind, troops, max) / Config.TICK) else 0
 		s.troopRate.Text = "+" .. ctx.fmtTroops(rate) .. "/s"
 		s.troopFill.Size = UDim2.fromScale(math.clamp(troops / max, 0, 1), 1)
@@ -1376,14 +1567,16 @@ function Layout.refresh(api)
 		end
 		local first = s.goldSamples[1]
 		local gps = if now - first[1] > 0.5 then math.max(0, ((tonumber(st.gold) or 0) - first[2]) / (now - first[1])) else 0
-		s.gold.Text = string.format('%s <font color="#bcc8e6">gold</font> <font color="#7ee2a8">+%s/s</font>', ctx.fmt(st.gold or 0), short(gps))
+		s.gold.Text = if s.phone then string.format('%s <font color="#bcc8e6">gold</font>', short(st.gold or 0)) else string.format('%s <font color="#bcc8e6">gold</font> <font color="#7ee2a8">+%s/s</font>', ctx.fmt(st.gold or 0), short(gps))
 		local ratio = api.lastRatio or 0.2
 		s.send.Text = string.format("Send %d%%", math.floor(ratio * 100 + 0.5))
 		s.sendTroops.Text = ctx.fmtTroops(troops * ratio) .. " troops"
 		for v, b in s.pickButtons do
 			local on = math.abs(ratio - v) < 0.02
 			b.BackgroundColor3 = if on then K.PINK else K.DEEP
+			set(s.pickFaces[v], "BackgroundColor3", b.BackgroundColor3)
 			b.TextColor3 = if on then K.BG else K.TEXT
+			set(s.pickFaces[v], "TextColor3", b.TextColor3)
 		end
 		for kind, t in s.tiles do
 			local usable = ctx.usable(t.entry.action, st.gold or 0)

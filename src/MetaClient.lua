@@ -448,6 +448,7 @@ do
 				medal.Position, medal.Size = UDim2.fromOffset(16, if narrow then 76 else 74), UDim2.fromOffset(if narrow then 24 else 28, if narrow then 24 else 28)
 			end
 			if rewards then
+				rewards.Text = (if w < 250 then "+" else "Join + favourite the game: +") .. MetaConfig.GROUP.MEDALS .. " medals, a free boost every day and a group colour"
 				rewards.Position = UDim2.fromOffset(if narrow then 48 else 54, 72)
 				rewards.Size = UDim2.fromOffset(w - (if narrow then 64 else 70), if narrow then 52 else 36)
 				rewards.TextSize = if narrow then 14 else 16
@@ -483,6 +484,12 @@ do
 					return d
 				end
 			end
+			-- Phones: no side columns; the card sits above the left-hand tiles (Missions / Gift / Friends).
+			for _, d in home:GetDescendants() do
+				if d.Name == "LeftTiles" and d:IsA("GuiObject") then
+					return d
+				end
+			end
 			return nil
 		end
 		local function placeCard()
@@ -491,11 +498,16 @@ do
 			if left and left.AbsoluteSize.X > 0 then
 				local origin = gui.AbsolutePosition
 				narrowW = math.floor(left.AbsoluteSize.X / s + 0.5)
-				card.AnchorPoint = Vector2.zero
-				card.Position = UDim2.fromOffset(
-					math.floor(left.AbsolutePosition.X - origin.X),
-					math.floor(left.AbsolutePosition.Y + left.AbsoluteSize.Y + 12 - origin.Y)
-				)
+				if left.Name == "LeftTiles" then
+					card.AnchorPoint = Vector2.new(0, 1)
+					card.Position = UDim2.fromOffset(math.floor(left.AbsolutePosition.X - origin.X), math.floor(left.AbsolutePosition.Y - origin.Y - 10))
+				else
+					card.AnchorPoint = Vector2.zero
+					card.Position = UDim2.fromOffset(
+						math.floor(left.AbsolutePosition.X - origin.X),
+						math.floor(left.AbsolutePosition.Y + left.AbsoluteSize.Y + 12 - origin.Y)
+					)
+				end
 			else
 				narrowW = nil
 				card.AnchorPoint = Vector2.new(1, 1)
@@ -542,6 +554,10 @@ do
 		local modalClosed = false
 		local function needsRewards(): boolean
 			local p = profile
+			-- (Studio test switch: PlayerGui attribute WFForceGroupCard = true shows it anyway)
+			if game:GetService("RunService"):IsStudio() and localPlayer.PlayerGui:GetAttribute("WFForceGroupCard") == true then
+				return p ~= nil
+			end
 			return p ~= nil and p.saving == true and p.groupKnown == true and (p.inGroup ~= true or p.favorited ~= true)
 		end
 		local function goingToTutorial(): boolean
@@ -559,6 +575,15 @@ do
 			end
 			if home and a and a:IsA("ScreenGui") and not a.Enabled then
 				home = false
+			end
+			-- not over a home-screen pop-up (Ways to play, menu, friends...): Kit.popup backdrops
+			if home and a then
+				for _, c in a:GetChildren() do
+					if c:IsA("TextButton") and c.Visible and c.ZIndex >= 50 and c.Size == UDim2.fromScale(1, 1) then
+						home = false
+						break
+					end
+				end
 			end
 			return home
 		end

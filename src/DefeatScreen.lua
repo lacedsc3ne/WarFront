@@ -424,8 +424,13 @@ local function layout()
 	local scale = 1
 	if profile == "phone" then
 		width = math.max(260, screen.X - 32)
-		-- Landscape phones are short: shrink the whole card to fit.
-		scale = math.clamp((screen.Y - 24) / 420, 0.7, 1)
+		-- Landscape phones are short: shrink the whole card to fit between Roblox's top bar and the
+		-- bottom edge (this screen covers the top bar).
+		local top = (if gui.IgnoreGuiInset then GuiService.TopbarInset.Height else 0) + 6
+		local avail = screen.Y - top - 8
+		local natural = if card.AbsoluteSize.Y > 0 then card.AbsoluteSize.Y / math.max(cardScale.Scale, 0.01) else 420
+		scale = math.clamp(avail / natural, 0.5, 1)
+		card.Position = UDim2.new(0.5, 0, 0, top + avail / 2)
 	elseif profile == "console" then
 		scale = DeviceLayout.state.scale or 1.2
 		width = math.min(width, math.floor(screen.X * 0.9 / scale))
@@ -599,9 +604,14 @@ function DefeatScreen.showPanel()
 	end
 	mode = "panel"
 	apply()
-	card.Position = UDim2.new(0.5, 0, 0.5, 24)
+	local target = UDim2.fromScale(0.5, 0.5)
+	if DeviceLayout.state.profile == "phone" then
+		layout() -- phones: placed under the top bar
+		target = card.Position
+	end
+	card.Position = target + UDim2.fromOffset(0, 24)
 	TweenService:Create(card, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-		Position = UDim2.fromScale(0.5, 0.5),
+		Position = target,
 	}):Play()
 	selectDefault()
 end
@@ -723,7 +733,9 @@ end
 local function updateShieldPill()
 	local ends = shields[myId]
 	local left = if ends then ends - SimClock.now() else 0
-	if left > 0 and buy.phase == "Play" then
+	-- (phones in the tutorial: hidden, it would sit on the tutorial's labels; bots can't attack there)
+	local tutorialPhone = playerGui:GetAttribute("FrontlinesTutorial") == true and DeviceLayout.state.profile == "phone"
+	if left > 0 and buy.phase == "Play" and not tutorialPhone then
 		local s = math.ceil(left)
 		if math.abs(ends - shieldSpan.ends) > 0.5 then
 			shieldSpan.ends, shieldSpan.len = ends, math.max(left, 1) -- a new or extended shield

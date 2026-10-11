@@ -5,8 +5,8 @@
 
 -- StarterPlayer.StarterPlayerScripts.Tutorial (ModuleScript), used by GameClient.
 -- Owner's brief: clearly explain each step and show what everything does, no walls of text, and
--- the game is paused until the player does what the step asks.
--- Three short chapters (Grow, Build, Fight). Each step is one spotlight on the thing to use, a
+-- the core match keeps running while contextual hints teach the next action.
+-- Three short chapters (Grow, Fight, Build). Each step is one spotlight on the thing to use, a
 -- short title + one line, a bouncing arrow, and the action itself finishes the step (no "Next").
 -- "Quick look" picture cards replace the old reading steps. A finished chapter gives a one-time
 -- medal reward (server: Progression.tutorialChapter). Optional lessons (How to play page) set
@@ -30,10 +30,15 @@ local K, F = Kit.C, Kit.F
 local make = Kit.make
 
 local Tutorial = {}
+local skipCurrentTutorial: ((boolean?) -> ())? = nil
+
+function Tutorial.skip()
+	if skipCurrentTutorial then skipCurrentTutorial(true) end
+end
 
 local ATTR = "FrontlinesTutorial"
 local LESSON_ATTR = "FrontlinesTutorialLesson"
-local DONE_LINGER = 1.6 -- seconds the game runs after an action before the next step
+local DONE_LINGER = 1.6 -- success feedback; combat proceeds directly to the retreat hint
 local GOLD_ICON = "rbxassetid://122263341747372"
 
 local function fmt(n: number): string
@@ -133,7 +138,7 @@ STEP.ratio = {
 	kind = "action",
 	title = "How many troops to send",
 	art = "Troops",
-	line = function(_, d) return pick(d, "Drag the slider (or press T / Y)", "Drag the slider", "Press LB / RB") end,
+	line = function(_, d) return pick(d, "Drag the slider (or press T / Y)", "Tap 10%, 30%, 50% or All on the right", "Press LB / RB") end,
 	done = function(s, e) return s.ratioMoves > e.ratioMoves end,
 	pause = true,
 	live = function(s) return string.format("%d%% = %s troops", math.floor(s.ratio * 100 + 0.5), s.sendText or fmt(s.troops * s.ratio)) end,
@@ -151,7 +156,7 @@ STEP.city = {
 	kind = "action",
 	build = "City",
 	title = "Build a City",
-	line = function(_, d) return pick(d, "Pick City, then click your land", "Tap City, then tap your land", "Press Y, pick City, then press A on your land") end,
+	line = function(_, d) return pick(d, "Pick City, then click your land", "Tap City below, then tap your land", "Press Y, pick City, then press A on your land") end,
 	key = "1",
 	done = function(s, e) return count(s.counts, "City") > count(e.counts, "City") end,
 	pause = true,
@@ -181,12 +186,19 @@ STEP.look_build = {
 }
 STEP.players = {
 	kind = "action",
-	title = "Attack a player",
+	title = "Attack a country",
 	art = "BeatPlayers",
-	line = function(_, d) return pick(d, "Click a neighbour's land", "Tap a neighbour's land", "Point at a neighbour's land and press A") end,
+	line = function(s, d)
+		if s.enemyTargetKind == "neutral" then
+			return pick(d, "Click the highlighted free land to reach a country", "Tap the highlighted free land to reach a country", "Press A on the highlighted free land to reach a country")
+		elseif s.enemyTargetKind == "missing" then
+			return "No reachable target here. Keep expanding, or return to the lobby with Skip."
+		end
+		return pick(d, "Click the highlighted country to attack", "Tap the highlighted country to attack", "Press A on the highlighted country to attack")
+	end,
 	done = function(s, e) return s.attackingPlayer and (s.playerAttacksSent > e.playerAttacksSent or not e.attackingPlayer) end, -- the server accepted it
 	pause = true,
-	goTo = "enemy",
+	goTo = "home",
 	enemyLabel = true, -- "Another player" on their land
 	waitFor = function(s) return if s.protected then "Everyone is protected for a few seconds" else nil end,
 	success = "Attack sent",
@@ -194,10 +206,11 @@ STEP.players = {
 STEP.cancel = {
 	kind = "action",
 	title = "Pull your troops back",
-	line = function() return "Press Retreat on your attack" end,
-	done = function(s, e) return s.cancelMoves > e.cancelMoves end,
-	pause = true,
-	skipIf = function(s) return not s.attacking end, -- nothing to pull back
+	line = function() return "Use Retreat below to bring your attacking troops home" end,
+	done = function(s, e) return s.retreating or (s.cancelMoves > e.cancelMoves and not s.attacking) end,
+	pause = false,
+	skipIf = function(s) return not s.attacking end,
+	retreat = true, -- nothing to pull back
 	success = "Troops coming home",
 }
 STEP.look_fight = {
@@ -286,13 +299,13 @@ STEP.look_boosts = {
 }
 
 local CHAPTERS = {
-	{ key = "grow", name = "Grow", icon = "MapPin", art = "OwnLand", color = K.GREEN, time = "60 s", sub = "Start, grab land, send troops", steps = { "spawn", "expand", "ratio", "look_basics" } },
-	{ key = "build", name = "Build", icon = "Building", art = "BuildCities", color = K.YELLOW, time = "40 s", sub = "Cities and defense", steps = { "city", "defense", "look_build" } },
-	-- (no "cancel" step: the Night battle screen has no Retreat list to point at)
-	{ key = "fight", name = "Fight", icon = "Swords", art = "BeatPlayers", color = K.PINK, time = "30 s", sub = "Attack other players", steps = { "players", "look_fight" } },
+	{ key = "grow", name = "Grow", icon = "MapPin", art = "OwnLand", color = K.GREEN, time = "First", sub = "Start, grab land, send troops", steps = { "spawn", "expand", "ratio" } },
+	{ key = "fight", name = "Fight", icon = "Swords", art = "BeatPlayers", color = K.PINK, time = "Next", sub = "Attack and retreat", steps = { "players", "cancel" } },
+	{ key = "build", name = "Build", icon = "Building", art = "BuildCities", color = K.YELLOW, time = "Last", sub = "Build your first City", steps = { "city" } },
 }
 -- Optional lessons (How to play page). Every lesson starts by picking a spot.
 Tutorial.LESSONS = {
+	{ key = "defense", name = "Defense and buildings", art = "DefensePost", time = "40 s", steps = { "spawn", "defense", "look_build" } },
 	{ key = "ports", name = "Ports and trade", art = "Port", time = "40 s", steps = { "spawnCoast", "reachSea", "port" } },
 	{ key = "warships", name = "Warships", art = "Warship", time = "40 s", steps = { "spawnCoast", "reachSea", "warshipPort", "warships" } },
 	{ key = "allies", name = "Allies", art = "AllyRequest", time = "20 s", steps = { "spawn", "look_allies" } },
@@ -303,6 +316,13 @@ Tutorial.CHAPTERS = CHAPTERS
 
 function Tutorial.create(ctx)
 	local api = {}
+	local observed = {}
+	local function observe(step: string)
+		if not observed[step] then
+			observed[step] = true
+			if ctx.observe then ctx.observe(step) end
+		end
+	end
 	local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
 	local DeviceLayout = ctx.deviceLayout
 
@@ -322,6 +342,11 @@ function Tutorial.create(ctx)
 	local shortSince: number? = nil -- when this step started saving up
 	local toppedUp = false -- gold already topped up this step
 	local zoomedIn = false -- camera already moved to the new land this step
+	local stepStartedAt = os.clock()
+	local skipConfirmUntil = 0
+	local skipLabel = nil
+	local leaving = false
+	local layoutModal -- assigned before the first update
 
 	-- UI ------------------------------------------------------------------------------------------
 	local gui = make("ScreenGui", { Name = "NightTutorial", IgnoreGuiInset = true, ResetOnSpawn = false, DisplayOrder = 40, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, Enabled = false, Parent = playerGui })
@@ -342,11 +367,13 @@ function Tutorial.create(ctx)
 	local dotsRow = make("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(0, 10), AutomaticSize = Enum.AutomaticSize.X, LayoutOrder = 2, ZIndex = 11, Parent = pill })
 	Kit.list(dotsRow, true, 5, { VerticalAlignment = Enum.VerticalAlignment.Center })
 	local pillCount = Kit.text({ Text = "", FontFace = F.BOLD, TextSize = 13, TextColor3 = K.MUTED, LayoutOrder = 3, ZIndex = 11, Parent = pill })
-	local skip = make("TextButton", { Name = "TutorialSkip", Text = "Skip", FontFace = F.BOLD, TextSize = 13, TextColor3 = K.MUTED, BackgroundTransparency = 1, Size = UDim2.fromOffset(40, 24), LayoutOrder = 4, ZIndex = 11, Parent = pill })
+	local skip = make("TextButton", { Name = "TutorialSkip", Text = "Skip", FontFace = F.BOLD, TextSize = 13, TextColor3 = K.MUTED, BackgroundTransparency = 1, Size = UDim2.fromOffset(84, 44), LayoutOrder = 4, ZIndex = 11, Parent = pill })
 	local dots = {}
 
 	-- Coach bubble: title, one line, extras (live readout / key / saving bar).
-	local bubble = Kit.card({ Name = "Coach", Size = UDim2.fromOffset(290, 0), AutomaticSize = Enum.AutomaticSize.Y, ZIndex = 10, Parent = gui })
+	local bubble = make("ScrollingFrame", { Name = "Coach", BackgroundColor3 = K.CARD, BorderSizePixel = 0, Size = UDim2.fromOffset(290, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(), ScrollingDirection = Enum.ScrollingDirection.Y, ScrollBarThickness = 3, ZIndex = 10, Parent = gui })
+	Kit.corner(bubble, 14)
+	Kit.stroke(bubble)
 	bubble:FindFirstChildWhichIsA("UICorner").CornerRadius = UDim.new(0, 14)
 	Kit.pad(bubble, 14, 14, 11, 12)
 	Kit.list(bubble, false, 4)
@@ -382,6 +409,16 @@ function Tutorial.create(ctx)
 	Kit.corner(savingTrack)
 	local savingFill = make("Frame", { BackgroundColor3 = K.YELLOW, BorderSizePixel = 0, Size = UDim2.fromScale(0, 1), ZIndex = 13, Parent = savingTrack })
 	Kit.corner(savingFill)
+	local helpButton = Kit.button("primary", "Show me", { height = 44, textSize = 15, layoutOrder = 4, parent = bubble, onActivated = function()
+		local def = STEP[steps[index]]
+		if def and def.retreat and ctx.retreat then
+			ctx.retreat()
+		elseif ctx.canGoTo and ctx.canGoTo("home") then
+			ctx.goTo("home")
+		end
+	end })
+	helpButton.Name = "TutorialHelp"
+	helpButton.Visible = false
 	api.frame = bubble
 
 	-- Ring + bouncing arrow on the target.
@@ -413,8 +450,8 @@ function Tutorial.create(ctx)
 	Kit.icon("CheckCircle", { Size = UDim2.fromOffset(22, 22), ImageColor3 = K.GREEN, LayoutOrder = 1, ZIndex = 21, Parent = pop })
 	local popText = Kit.text({ Text = "", FontFace = F.TITLE, TextSize = 16, LayoutOrder = 2, ZIndex = 21, Parent = pop })
 
-	-- Full-screen modal (welcome, quick look, chapter done): blocks clicks to the map.
-	local modal = make("TextButton", { Name = "Modal", Text = "", AutoButtonColor = false, BackgroundColor3 = K.BACKDROP, BackgroundTransparency = 0.3, BorderSizePixel = 0, Size = UDim2.fromScale(1, 1), Visible = false, ZIndex = 30, Parent = gui })
+	-- Content-sized cards retain the Night look without blocking the whole map.
+	local modal = make("ScrollingFrame", { Name = "Modal", BackgroundTransparency = 1, BorderSizePixel = 0, Size = UDim2.fromOffset(440, 0), AnchorPoint = Vector2.new(0.5, 0), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 4, Visible = false, Active = true, ZIndex = 30, Parent = gui })
 	local modalBody = make("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(0, 0), AutomaticSize = Enum.AutomaticSize.XY, ZIndex = 31, Parent = modal })
 	Kit.list(modalBody, false, 14, { HorizontalAlignment = Enum.HorizontalAlignment.Center })
 	local modalScale = Instance.new("UIScale")
@@ -434,6 +471,11 @@ function Tutorial.create(ctx)
 		return { verb = if mobile then "Tap" else verb, input = if mobile then "Touch" else st.input, mobile = mobile, phone = st.profile == "phone" }
 	end
 	api.device = device
+	local function headerBottom(): number
+		local hud = playerGui:FindFirstChild("NightBattleHud")
+		local row = hud and hud:FindFirstChild("TopRight")
+		return if device().mobile and hud and hud.Enabled and row then math.max(70, row.AbsolutePosition.Y + row.AbsoluteSize.Y - gui.AbsolutePosition.Y + 12) else 70
+	end
 
 	-- Pause --------------------------------------------------------------------------------------
 	local function wantPause(on: boolean, s)
@@ -471,6 +513,8 @@ function Tutorial.create(ctx)
 			savedRatio = nil
 		end
 		stage = "finished"
+		observe(reason)
+		if GuiService.SelectedObject and GuiService.SelectedObject:IsDescendantOf(gui) then GuiService.SelectedObject = nil end
 		modal.Visible = false
 		gui.Enabled = false
 		if ctx.onFinish then
@@ -479,8 +523,36 @@ function Tutorial.create(ctx)
 		playerGui:SetAttribute(LESSON_ATTR, nil)
 		playerGui:SetAttribute(ATTR, false)
 	end
+	local function leaveTutorial(reason: string)
+		if leaving then return end
+		leaving = true
+		if reason == "completed" and lesson == nil then
+			playerGui:SetAttribute("WFAutoQueueAfterTutorial", true)
+			pcall(function() game:GetService("TeleportService"):SetTeleportSetting("WFAutoQueueAfterTutorial", true) end)
+		end
+		finish(reason)
+		if ctx.returnToLobby then ctx.returnToLobby() end
+	end
+	local function confirmSkip(confirmed: boolean?)
+		if stage == "finished" or leaving then return end
+		if confirmed or os.clock() < skipConfirmUntil then
+			leaveTutorial("skipped")
+			return
+		end
+		skipConfirmUntil = os.clock() + 4
+		skip.Text = "Are you sure?"
+		if skipLabel then skipLabel.Text = "Are you sure?" end
+		task.delay(4, function()
+			if gui.Parent and os.clock() >= skipConfirmUntil then
+				skip.Text = "Skip"
+				if skipLabel and skipLabel.Parent then skipLabel.Text = if lesson then "Not now" else "I know how to play" end
+			end
+		end)
+	end
 	local function startStep(i: number)
 		index = i
+		stepStartedAt = os.clock()
+		bubble.CanvasPosition = Vector2.zero
 		doneAt = nil
 		shortSince, toppedUp, zoomedIn = nil, false, false
 		if ctx.clearMode then
@@ -544,12 +616,17 @@ function Tutorial.create(ctx)
 			startStep(index + 1)
 			return
 		end
-		-- chapter / lesson finished
+		-- Chapter boundaries run straight into the next action. Rewards retain their existing keys.
 		reward = nil
 		if not lesson and ctx.chapterDone then
 			ctx.chapterDone(CHAPTERS[chapterIndex].key)
 		end
+		if not lesson and chapterIndex < #CHAPTERS then
+			startChapter(chapterIndex + 1)
+			return
+		end
 		stage = "chapter"
+		if not lesson then observe("coreComplete") end
 		showModal("chapter")
 	end
 
@@ -571,19 +648,19 @@ function Tutorial.create(ctx)
 		modal.Visible = true
 		local first: GuiObject? = nil
 		if kind == "welcome" then
-			local card = Kit.card({ Size = UDim2.fromOffset(440, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 1, ZIndex = 32, Parent = modalBody })
+			local card = Kit.card({ Name = "TutorialWelcomeCard", Size = UDim2.fromOffset(440, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 1, ZIndex = 32, Parent = modalBody })
 			card:FindFirstChildWhichIsA("UICorner").CornerRadius = UDim.new(0, 18)
 			Kit.pad(card, 24, 24, 22, 22)
 			Kit.list(card, false, 10, { HorizontalAlignment = Enum.HorizontalAlignment.Center })
 			if lesson then
-				Art.image(lesson.art, { Size = UDim2.fromOffset(84, 84), LayoutOrder = 1, ZIndex = 33, Parent = card })
+				Art.image(lesson.art, { Name = "TutorialWelcomeArt", Size = UDim2.fromOffset(84, 84), LayoutOrder = 1, ZIndex = 33, Parent = card })
 				Kit.text({ Text = lesson.name, FontFace = F.TITLE, TextSize = 26, LayoutOrder = 2, ZIndex = 33, Parent = card })
-				Kit.text({ Text = "A short lesson, about " .. lesson.time, FontFace = F.BOLD, TextSize = 15, TextColor3 = K.MUTED, LayoutOrder = 3, ZIndex = 33, Parent = card })
+				Kit.text({ Name = "TutorialWelcomeDescription", Text = "A short lesson, about " .. lesson.time, FontFace = F.BOLD, TextSize = 15, TextColor3 = K.MUTED, LayoutOrder = 3, ZIndex = 33, Parent = card })
 			else
-				Kit.text({ Text = "Learn War Front in 2 minutes", FontFace = F.TITLE, TextSize = 26, LayoutOrder = 1, ZIndex = 33, Parent = card })
-				Kit.text({ Text = "Play along. Every step is one thing to do.", FontFace = F.BOLD, TextSize = 15, TextColor3 = K.MUTED, LayoutOrder = 2, ZIndex = 33, Parent = card })
-				local row = make("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(0, 0), AutomaticSize = Enum.AutomaticSize.XY, LayoutOrder = 3, ZIndex = 33, Parent = card })
-				Kit.list(row, true, 10)
+				Kit.text({ Text = "Learn the basics", FontFace = F.TITLE, TextSize = 26, LayoutOrder = 1, ZIndex = 33, Parent = card })
+				Kit.text({ Name = "TutorialWelcomeDescription", Text = "Grow your country, fight, then build a City.", FontFace = F.BOLD, TextSize = 15, TextColor3 = K.MUTED, LayoutOrder = 2, ZIndex = 33, Parent = card })
+				local row = make("Frame", { Name = "TutorialWelcomePreview", BackgroundTransparency = 1, Size = UDim2.fromOffset(0, 0), AutomaticSize = Enum.AutomaticSize.XY, LayoutOrder = 3, ZIndex = 33, Parent = card })
+				Kit.list(row, true, 10, { HorizontalAlignment = Enum.HorizontalAlignment.Center })
 				for i, ch in CHAPTERS do
 					local c = make("Frame", { BackgroundColor3 = K.RAISED, BorderSizePixel = 0, Size = UDim2.fromOffset(110, 92), LayoutOrder = i, ZIndex = 34, Parent = row })
 					Kit.corner(c, 12)
@@ -592,7 +669,9 @@ function Tutorial.create(ctx)
 					Kit.text({ Text = ch.time, FontFace = F.BOLD, TextSize = 12, TextColor3 = K.MUTED, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 66), ZIndex = 35, Parent = c })
 				end
 			end
-			first = bigButton("primary", "Start", 5, card, function()
+			local actions = make("Frame", { Name = "TutorialWelcomeActions", BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 5, ZIndex = 33, Parent = card })
+			Kit.list(actions, false, 10, { HorizontalAlignment = Enum.HorizontalAlignment.Center })
+			first = bigButton("primary", "Start", 1, actions, function()
 				modal.Visible = false
 				-- Studio test shortcut: PlayerGui attribute WFTutorialStartChapter = 2 / 3 jumps ahead.
 				local jump = game:GetService("RunService"):IsStudio() and tonumber(playerGui:GetAttribute("WFTutorialStartChapter")) or nil
@@ -600,10 +679,9 @@ function Tutorial.create(ctx)
 				api.update()
 			end)
 			first.Name = "TutorialStart"
-			local later = make("TextButton", { Name = "TutorialKnowHow", Text = if lesson then "Not now" else "I know how to play", FontFace = F.BOLD, TextSize = 14, TextColor3 = K.MUTED, BackgroundTransparency = 1, Size = UDim2.fromOffset(200, 26), LayoutOrder = 6, ZIndex = 33, Parent = card })
-			later.Activated:Connect(function()
-				finish("skipped")
-			end)
+			local later = make("TextButton", { Name = "TutorialKnowHow", Text = if lesson then "Not now" else "I know how to play", FontFace = F.BOLD, TextSize = 14, TextColor3 = K.MUTED, BackgroundTransparency = 1, Size = UDim2.fromOffset(220, 44), LayoutOrder = 2, ZIndex = 33, Parent = actions })
+			skipLabel = later
+			later.Activated:Connect(function() confirmSkip(false) end)
 		elseif kind == "look" then
 			local def = stepDef()
 			local row = make("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(0, 0), AutomaticSize = Enum.AutomaticSize.XY, LayoutOrder = 1, ZIndex = 32, Parent = modalBody })
@@ -631,19 +709,12 @@ function Tutorial.create(ctx)
 			end)
 			first.Name = "TutorialGotIt"
 		elseif kind == "chapter" then
-			local card = Kit.card({ Size = UDim2.fromOffset(420, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 1, ZIndex = 32, Parent = modalBody })
+			local card = Kit.card({ Name = "TutorialCompletionCard", Size = UDim2.fromOffset(420, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 1, ZIndex = 32, Parent = modalBody })
 			card:FindFirstChildWhichIsA("UICorner").CornerRadius = UDim.new(0, 18)
 			Kit.pad(card, 24, 24, 20, 22)
 			Kit.list(card, false, 10, { HorizontalAlignment = Enum.HorizontalAlignment.Center })
-			Art.image("YouWon", { Size = UDim2.fromOffset(84, 84), LayoutOrder = 1, ZIndex = 33, Parent = card })
-			local nextLesson = nil
-			if lesson then
-				for i, l in Tutorial.LESSONS do
-					if l == lesson then nextLesson = Tutorial.LESSONS[i + 1] end
-				end
-			elseif chapterIndex >= #CHAPTERS then
-				nextLesson = Tutorial.LESSONS[1]
-			end
+			Art.image("YouWon", { Name = "TutorialCompletionArt", Size = UDim2.fromOffset(84, 84), LayoutOrder = 1, ZIndex = 33, Parent = card })
+			local nextLesson = nil -- optional lessons are chosen from How to play, never chained
 			local last = lesson ~= nil or chapterIndex >= #CHAPTERS
 			Kit.text({ Text = if lesson then lesson.name .. ": done" elseif last then "Training done" else CHAPTERS[chapterIndex].name .. ": done", FontFace = F.TITLE, TextSize = 26, LayoutOrder = 2, ZIndex = 33, Parent = card })
 			local rewardChip = Kit.chip("…", { name = "Reward", icon = "Medal", iconColor = K.YELLOW, textColor = K.YELLOW, height = 32, layoutOrder = 3, parent = card })
@@ -662,10 +733,10 @@ function Tutorial.create(ctx)
 				Kit.text({ Text = "Next: " .. nextCh.name, FontFace = F.TITLE, TextSize = 17, Position = UDim2.fromOffset(54, 9), ZIndex = 34, Parent = nx })
 				Kit.text({ Text = nextCh.sub, FontFace = F.BOLD, TextSize = 13, TextColor3 = K.MUTED, Position = UDim2.fromOffset(54, 31), ZIndex = 34, Parent = nx })
 			else
-				Kit.text({ Text = if lesson then "More lessons are in How to play." else "You know the basics. More lessons are in How to play.", FontFace = F.BOLD, TextSize = 14, TextColor3 = K.MUTED, TextWrapped = true, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 4, ZIndex = 33, Parent = card })
+				Kit.text({ Name = "TutorialCompletionDescription", Text = if lesson then "More lessons are in How to play." else "You know the basics. More lessons are in How to play.", FontFace = F.BOLD, TextSize = 14, TextColor3 = K.MUTED, TextWrapped = true, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 4, ZIndex = 33, Parent = card })
 			end
 			local buttons = make("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(0, 46), AutomaticSize = Enum.AutomaticSize.X, LayoutOrder = 5, ZIndex = 33, Parent = card })
-			Kit.list(buttons, true, 10)
+			Kit.list(buttons, true, 10, { HorizontalAlignment = Enum.HorizontalAlignment.Center })
 			if not last or nextLesson then
 				first = bigButton("primary", if not last then "Next chapter" else "Next lesson", 1, buttons, function()
 					modal.Visible = false
@@ -678,14 +749,15 @@ function Tutorial.create(ctx)
 				end)
 				keep.Name = "TutorialKeepPlaying"
 			else
-				first = bigButton("primary", "Keep playing", 1, buttons, function()
-					finish("completed")
+				first = bigButton("primary", "Return to lobby", 1, buttons, function()
+					leaveTutorial("completed")
 				end)
-				first.Name = "TutorialKeepPlaying"
+				first.Name = "TutorialReturnToLobby"
+				local practice = bigButton("secondary", "Keep practicing", 2, buttons, function() finish("practice") end)
+				practice.Name = "TutorialKeepPlaying"
 			end
 		end
-		local size = gui.AbsoluteSize
-		modalScale.Scale = math.clamp(math.min(size.X / 760, size.Y / 520), 0.6, 1.2)
+		layoutModal()
 		focus(first)
 	end
 
@@ -697,6 +769,59 @@ function Tutorial.create(ctx)
 			local t = c:FindFirstChildWhichIsA("TextLabel", true)
 			if t then t.Text = "+" .. reward .. " medals" end
 		end
+	end
+
+	layoutModal = function()
+		local size = gui.AbsoluteSize
+		local bottom = if ctx.bottomLimit then math.min(size.Y - 16, ctx.bottomLimit()) else size.Y - 16
+		local narrow = size.X < 680
+		local available = math.max(240, size.X - 32)
+		local compact = device().phone and size.X > size.Y
+		modalScale.Scale = 1
+		-- Preserve each card\'s artwork and style; adapt its width and row direction.
+		for _, row in modalBody:GetChildren() do
+			if row:IsA("GuiObject") then
+				for _, child in row:GetChildren() do
+					if child.Name == "TutorialWelcomePreview" or child.Name == "TutorialWelcomeDescription" or child.Name == "TutorialWelcomeArt" or child.Name == "TutorialCompletionArt" or child.Name == "TutorialCompletionDescription" then child.Visible = not compact end
+				end
+				local padding = row:FindFirstChildWhichIsA("UIPadding")
+				if padding then
+					padding.PaddingTop = UDim.new(0, if compact then 12 elseif stage == "welcome" then 22 else 20)
+					padding.PaddingBottom = UDim.new(0, if compact then 12 else 22)
+				end
+				local layout = row:FindFirstChildWhichIsA("UIListLayout")
+				if row.BackgroundTransparency == 1 and layout then
+					layout.FillDirection = if narrow then Enum.FillDirection.Vertical else Enum.FillDirection.Horizontal
+					row.AutomaticSize = Enum.AutomaticSize.Y
+					row.Size = UDim2.fromOffset(math.min(612, available), 0)
+				else
+					row.Size = UDim2.fromOffset(math.min(if stage == "welcome" then 440 else 420, available), 0)
+				end
+				-- Chapter buttons and the welcome chapter tiles must fit without reducing text size.
+				for _, inner in row:GetChildren() do
+					if inner:IsA("Frame") and inner.BackgroundTransparency == 1 then
+						local innerLayout = inner:FindFirstChildWhichIsA("UIListLayout")
+						if innerLayout then
+							innerLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+							local buttons = inner:FindFirstChildWhichIsA("TextButton") ~= nil
+							innerLayout.FillDirection = if inner.Name == "TutorialWelcomeActions" then (if compact then Enum.FillDirection.Horizontal else Enum.FillDirection.Vertical) elseif narrow and buttons then Enum.FillDirection.Vertical else Enum.FillDirection.Horizontal
+							if not buttons then
+								for _, tile in inner:GetChildren() do
+									if tile:IsA("Frame") then tile.Size = UDim2.fromOffset(math.min(110, (available - 68) / 3), 92) end
+								end
+							end
+							inner.AutomaticSize = Enum.AutomaticSize.Y
+							inner.Size = UDim2.new(1, 0, 0, 0)
+						end
+					end
+				end
+			end
+		end
+		local top = if compact then headerBottom() else math.max(64, math.min(100, size.Y * 0.15), if device().mobile then headerBottom() else 0)
+		modal.Position = UDim2.new(0.5, 0, 0, top)
+		modal.Size = UDim2.fromOffset(math.min(628, available + 8), math.min(math.max(80, modalBody.AbsoluteSize.Y + 8), math.max(80, bottom - top)))
+		modalBody.AnchorPoint = Vector2.new(0.5, 0)
+		modalBody.Position = UDim2.new(0.5, 0, 0, 0)
 	end
 
 	-- Layout helpers -------------------------------------------------------------------------------
@@ -787,12 +912,23 @@ function Tutorial.create(ctx)
 		local size = gui.AbsoluteSize
 		-- Progress pill where the win card normally is (hidden in the tutorial); pop-ups and the
 		-- bubble stay below the "Protected" pill.
-		local topY = 8
-		local lowY = 130
-		pill.Position = UDim2.new(0.5, 0, 0, topY)
+		local landscapePhone = d.phone and size.X > size.Y
+		local topY = if landscapePhone then math.max(0, GuiService.TopbarInset.Max.Y - 46) elseif d.mobile then headerBottom() else 8
+		local lowY = if landscapePhone then math.max(64, topY + 52) elseif d.mobile then topY + 52 else 76
+		local bottom = if ctx.bottomLimit then math.min(size.Y - 12, ctx.bottomLimit()) else size.Y - 12
+		local hud = playerGui:FindFirstChild("NightBattleHud")
+		local dock = hud and hud:FindFirstChild("NightAttacks")
+		local attacks = dock and dock:FindFirstChild("AttacksDisplay")
+		if d.phone and attacks and attacks.Visible then bottom = math.min(bottom, attacks.AbsolutePosition.Y - gui.AbsolutePosition.Y - 8) end
+		if modal.Visible then layoutModal() end
+		skip.Visible = not landscapePhone
+		pillCount.Visible = not landscapePhone
+		pill.AnchorPoint = if landscapePhone then Vector2.zero else Vector2.new(0.5, 0)
+		pill.Position = if landscapePhone then UDim2.fromOffset(math.max(12, GuiService.TopbarInset.Min.X + 8), topY) else UDim2.new(0.5, 0, 0, topY)
 		pill.Visible = stage == "steps"
 
 		if stage == "welcome" then
+			observe("loaded")
 			if not modal.Visible then
 				showModal("welcome")
 			end
@@ -801,7 +937,7 @@ function Tutorial.create(ctx)
 			return
 		end
 		if stage == "chapter" then
-			wantPause(true, s)
+			wantPause(false, s)
 			bubble.Visible, ring.Visible, arrow.Visible, youLabel.Visible, freeLabel.Visible, enemyLabel.Visible, spot.Visible = false, false, false, false, false, false, false
 			hideShade()
 			return
@@ -813,7 +949,7 @@ function Tutorial.create(ctx)
 			return
 		end
 		if def.kind == "look" then
-			wantPause(true, s)
+			wantPause(false, s)
 			if not modal.Visible then
 				showModal("look")
 			end
@@ -826,7 +962,7 @@ function Tutorial.create(ctx)
 		if doneAt then
 			wantPause(false, s)
 			wantFast(false)
-			if os.clock() - doneAt >= DONE_LINGER then
+			if os.clock() - doneAt >= (if steps[index] == "players" then 0 else DONE_LINGER) then
 				pop.Visible = false
 				nextStep()
 			end
@@ -842,10 +978,12 @@ function Tutorial.create(ctx)
 			end
 		end
 		if def.skipIf and def.skipIf(s) then
+			observe(steps[index] .. "Unavailable")
 			nextStep()
 			return
 		end
 		if def.done(s, entry) then
+			observe(steps[index])
 			doneAt = os.clock()
 			if def.success then
 				popText.Text = def.success
@@ -865,7 +1003,7 @@ function Tutorial.create(ctx)
 		local cost = def.build and (tonumber(s.costs[def.build]) or 0) or 0
 		local short = def.build and cost > 0 and s.gold < cost
 		local waitText = def.waitFor and def.waitFor(s)
-		wantPause(def.pause and not short and not waitText and not actedSince(s, entry), s)
+		wantPause(lesson ~= nil and def.pause and not short and not waitText and not actedSince(s, entry), s)
 		wantFast(short or waitText ~= nil or def.fast == true) -- saving up / reloading / growing goes by quickly
 		-- Saving up never takes long: after a few seconds the rest of the gold is given.
 		if short then
@@ -876,7 +1014,9 @@ function Tutorial.create(ctx)
 			end
 		end
 
-		bTitle.Text = if short then "Save up for: " .. def.title:gsub("^Build an? ", ""):gsub("^Launch an? ", "") elseif waitText then def.title else def.title
+		helpButton.Visible = def.retreat == true or os.clock() - stepStartedAt >= 12
+		Kit.setButtonText(helpButton, if def.retreat then "Retreat" else "Show me")
+		bTitle.Text = if short then "Save up for: " .. def.title:gsub("^Build an? ", ""):gsub("^Launch an? ", "") elseif waitText then def.title elseif steps[index] == "players" and s.enemyTargetKind == "neutral" then "Reach another country" else def.title
 		local artName = def.art or def.build
 		Art.set(bIcon, artName)
 		bIcon.Visible = artName ~= nil
@@ -905,7 +1045,8 @@ function Tutorial.create(ctx)
 			end
 		end
 		local bw = math.min(300, size.X - 24)
-		bubble.Size = UDim2.fromOffset(bw, 0)
+		local coachHeight = bubble:FindFirstChildWhichIsA("UIListLayout").AbsoluteContentSize.Y + 23
+		bubble.Size = UDim2.fromOffset(bw, math.min(coachHeight, math.max(64, bottom - lowY)))
 		bubble.Visible = true
 		local holes = {}
 		if target then
@@ -928,10 +1069,11 @@ function Tutorial.create(ctx)
 			arrow.Visible = true
 			arrow.Position = UDim2.fromOffset(p.X + z.X / 2, p.Y + z.Y / 2 - rh / 2 - 6 - pulse * 8)
 			-- Bubble beside the target (right, else left; above it for the bottom bar).
-			local bh = bubble.AbsoluteSize.Y
+			local bh = bubble.Size.Y.Offset
 			local bx, by
 			if d.phone then
-				bx, by = (size.X - bw) / 2, lowY
+				bx = if landscapePhone then 12 else (size.X - bw) / 2
+				by = if p.Y + z.Y / 2 < size.Y / 2 then bottom - bh else lowY
 			elseif p.Y > size.Y * 0.62 then
 				bx, by = math.clamp(p.X + z.X / 2 - bw / 2, 12, size.X - bw - 12), p.Y - pad - bh - 52
 			elseif p.X + z.X + pad + 20 + bw < size.X - 12 then
@@ -939,10 +1081,19 @@ function Tutorial.create(ctx)
 			else
 				bx, by = p.X - pad - 20 - bw, p.Y + z.Y / 2 - bh / 2
 			end
-			bubble.Position = UDim2.fromOffset(math.clamp(bx, 12, size.X - bw - 12), math.clamp(by, lowY, math.max(lowY, size.Y - bh - 12)))
+			bx = math.clamp(bx, 12, size.X - bw - 12)
+			by = math.clamp(by, lowY, math.max(lowY, bottom - bh))
+			-- Keep the highlighted control and its arrow clear of the coach on either orientation.
+			if bx < p.X + z.X + 20 and bx + bw > p.X - 20 and by < p.Y + z.Y + 40 and by + bh > p.Y - 48 then
+				if p.Y - bh - 56 >= lowY then by = p.Y - bh - 56
+				elseif p.Y + z.Y + 48 + bh <= bottom then by = p.Y + z.Y + 48
+				elseif p.X - bw - 24 >= 12 then bx = p.X - bw - 24
+				elseif p.X + z.X + 24 + bw <= size.X - 12 then bx = p.X + z.X + 24 end
+			end
+			bubble.Position = UDim2.fromOffset(bx, by)
 		else
 			ring.Visible, arrow.Visible = false, false
-			bubble.Position = UDim2.fromOffset((size.X - bw) / 2, lowY)
+			bubble.Position = UDim2.fromOffset(if landscapePhone then 12 else (size.X - bw) / 2, lowY)
 		end
 		-- Map labels (expand step): this is you / free land.
 		if def.labels and target then
@@ -964,6 +1115,8 @@ function Tutorial.create(ctx)
 			youLabel.Visible, freeLabel.Visible = false, false
 		end
 		if def.enemyLabel and target then
+			local label = enemyLabel:FindFirstChildWhichIsA("TextLabel")
+			if label then label.Text = if s.enemyTargetKind == "neutral" then "Free land" elseif s.enemyTargetKind == "human" then "Human player" else "AI country" end
 			local p, z = rectOf(target)
 			-- below the ring, so it doesn't sit on your own name
 			enemyLabel.Visible = true
@@ -980,6 +1133,7 @@ function Tutorial.create(ctx)
 
 	function api.reset()
 		release()
+		playerGui:SetAttribute("FrontlinesTutorialFinished", nil)
 		local key = playerGui:GetAttribute(LESSON_ATTR)
 		lesson = nil
 		for _, l in Tutorial.LESSONS do
@@ -988,6 +1142,12 @@ function Tutorial.create(ctx)
 			end
 		end
 		stage = "welcome"
+		leaving = false
+		table.clear(observed)
+		skipConfirmUntil = 0
+		skipLabel = nil
+		skip.Text = "Skip"
+		modal.CanvasPosition = Vector2.zero
 		modal.Visible = false
 		pop.Visible = false
 		steps = if lesson then lesson.steps else CHAPTERS[1].steps
@@ -995,9 +1155,13 @@ function Tutorial.create(ctx)
 		entry = ctx.snapshot()
 	end
 
-	skip.Activated:Connect(function()
-		finish("skipped")
-	end)
+	local function skipGuide(confirmed: boolean?)
+		if playerGui:GetAttribute(ATTR) == true or workspace:GetAttribute("WFMatchKind") == "tutorial" then
+			confirmSkip(confirmed)
+		end
+	end
+	skipCurrentTutorial = skipGuide
+	skip.Activated:Connect(function() skipGuide(false) end)
 	local attrConn = playerGui:GetAttributeChangedSignal(ATTR):Connect(function()
 		if playerGui:GetAttribute(ATTR) == true then
 			api.reset()
@@ -1008,6 +1172,7 @@ function Tutorial.create(ctx)
 	end)
 	local menuConn = playerGui:GetAttributeChangedSignal("FrontlinesMenuOpen"):Connect(api.update)
 	gui.Destroying:Connect(function()
+		if skipCurrentTutorial == skipGuide then skipCurrentTutorial = nil end
 		attrConn:Disconnect()
 		menuConn:Disconnect()
 	end)

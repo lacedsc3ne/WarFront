@@ -799,6 +799,60 @@ function Kit.popup(screenGui: Instance, opts: { [string]: any }?)
 	local scale = make("UIScale", { Scale = 0.92, Parent = card })
 	TweenService:Create(scale, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
 	local popup = { frame = backdrop, card = card }
+	-- Phones: a card taller than the screen scrolls inside itself instead of running off the top and
+	-- bottom (and under Roblox's top-bar buttons).
+	local scroll: ScrollingFrame? = nil
+	local fitting = false
+	local function fit()
+		if fitting or not card.Parent then
+			return
+		end
+		fitting = true
+		local avail = backdrop.AbsoluteSize.Y - 24
+		local s = math.max(scale.Scale, 0.01)
+		if avail > 40 then
+			if not scroll and card.AbsoluteSize.Y / s > avail then
+				scroll = make("ScrollingFrame", {
+					Name = "Scroll",
+					BackgroundTransparency = 1,
+					BorderSizePixel = 0,
+					Size = UDim2.fromScale(1, 1),
+					CanvasSize = UDim2.new(),
+					AutomaticCanvasSize = Enum.AutomaticSize.Y,
+					ScrollBarThickness = 4,
+					ScrollBarImageColor3 = C.LINE,
+					ScrollingDirection = Enum.ScrollingDirection.Y,
+					ZIndex = card.ZIndex,
+					Parent = card,
+				})
+				for _, c in card:GetChildren() do
+					if c ~= scroll and not c:IsA("UICorner") and not c:IsA("UIStroke") and not c:IsA("UIPadding") and not c:IsA("UIScale") then
+						c.Parent = scroll
+					end
+				end
+				card.AutomaticSize = Enum.AutomaticSize.None
+			end
+			if scroll then
+				local content = scroll.AbsoluteCanvasSize.Y + 40
+				card.Size = UDim2.fromOffset(card.Size.X.Offset, math.floor(math.min(avail, content) / s))
+			end
+		end
+		fitting = false
+	end
+	card:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+		task.defer(fit)
+	end)
+	backdrop:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+		task.defer(fit)
+	end)
+	card.ChildAdded:Connect(function(c)
+		if scroll and c ~= scroll and c:IsA("GuiObject") then
+			task.defer(function()
+				c.Parent = scroll
+			end)
+		end
+	end)
+	task.defer(fit)
 	function popup.close()
 		if backdrop.Parent then
 			backdrop:Destroy()
