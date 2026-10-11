@@ -4,10 +4,12 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.FavoriteGame (ModuleScript), used by MetaClient and the Night shop.
--- Roblox only lets the player's own client check a favourite (AvatarEditorService:GetFavoriteAsync),
--- so the server trusts the client's report ("favorited"); group membership is still checked on the server.
+-- Roblox only lets the player's own client check a favourite, and GetFavoriteAsync also needs the
+-- player to allow inventory reading (PromptAllowInventoryReadAccess). So the favourite prompt's own
+-- result (PromptSetFavoriteCompleted: Success) counts; the server trusts the client's report
+-- ("favorited"); group membership is still checked on the server.
 -- FavoriteGame.isFavorite() -> boolean?   nil when Roblox couldn't answer
--- FavoriteGame.prompt() -> boolean?       Roblox's favourite prompt, then the same check
+-- FavoriteGame.prompt() -> boolean?       Roblox's favourite prompt: true when the player confirmed it
 -- FavoriteGame.report(metaFn) -> (ok, message?)   tells the server (only when it is a favourite)
 
 local AvatarEditorService = game:GetService("AvatarEditorService")
@@ -40,8 +42,10 @@ end
 
 function FavoriteGame.prompt(): boolean?
 	local done = false
-	local conn = AvatarEditorService.PromptSetFavoriteCompleted:Connect(function()
+	local confirmed = false
+	local conn = AvatarEditorService.PromptSetFavoriteCompleted:Connect(function(result)
 		done = true
+		confirmed = result == Enum.AvatarPromptResult.Success
 	end)
 	local ok = pcall(function()
 		AvatarEditorService:PromptSetFavorite(placeId(), Enum.AvatarItemType.Asset, true)
@@ -53,7 +57,10 @@ function FavoriteGame.prompt(): boolean?
 		end
 	end
 	conn:Disconnect()
-	return FavoriteGame.isFavorite()
+	if confirmed then
+		return true
+	end
+	return FavoriteGame.isFavorite() -- only works with inventory read access; nil otherwise
 end
 
 function FavoriteGame.report(metaFn: RemoteFunction): (boolean, string?)

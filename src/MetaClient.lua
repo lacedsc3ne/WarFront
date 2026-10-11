@@ -261,9 +261,10 @@ do
 				game:GetService("GroupService"):PromptJoinAsync(G.id)
 			end)
 		end
-		if not (profile and profile.favorited) then
-			FavoriteGame.prompt()
-			FavoriteGame.report(metaFn)
+		if not (profile and profile.favorited) and FavoriteGame.prompt() == true then
+			pcall(function()
+				metaFn:InvokeServer("favorited")
+			end)
 		end
 		local ok, _, msg = pcall(function()
 			return metaFn:InvokeServer("groupCheck")
