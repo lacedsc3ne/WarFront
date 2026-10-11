@@ -4,6 +4,7 @@
 	Based on OpenFront: © OpenFront and Contributors - https://github.com/openfrontio/OpenFrontIO
 ]]
 
+local Config = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Config"))
 local MapUtil = {}
 
 local DECODE = {}
@@ -36,12 +37,15 @@ export type GameMap = {
 	nations: { any },
 	landTiles: number,
 	compact: boolean?, -- MapUtil.compact
+	refined: boolean?, -- runtime claiming grid
 }
 
 function MapUtil.load(mapModule: ModuleScript): GameMap
 	local def = require(mapModule)
 	local size = def.width * def.height
 	local terrain = decodeBase64(def.data, size)
+	MapUtil.cleanTerrain(terrain, def.width, def.height, math.huge)
+	MapUtil.removeTinyIslands(terrain, def.width, def.height, def.nations, 64)
 	local land = 0
 	for t = 0, size - 1 do
 		local b = buffer.readu8(terrain, t)
@@ -49,7 +53,7 @@ function MapUtil.load(mapModule: ModuleScript): GameMap
 			land += 1
 		end
 	end
-	return {
+	return MapUtil.refine({
 		name = def.name,
 		width = def.width,
 		height = def.height,
@@ -57,7 +61,7 @@ function MapUtil.load(mapModule: ModuleScript): GameMap
 		terrain = terrain,
 		nations = def.nations,
 		landTiles = land,
-	}
+	}, Config.GRID_DETAIL or 1)
 end
 
 function MapUtil.isLand(map: GameMap, t: number): boolean
@@ -112,6 +116,68 @@ local function fixShore(terrain: buffer, w: number, size: number, t: number)
 	end
 end
 
+-- Fill enclosed inland water before refining the grid.
+-- Preserve ocean-connected and ocean-flagged water. Runtime water nukes bypass this.
+function MapUtil.cleanTerrain(terrain: buffer, w: number, h: number, limit: number): number
+ local size = w * h
+ local seen = buffer.create(size)
+ local filled = 0
+ local queue = {}
+ for start = 0, size - 1 do
+  if buffer.readu8(terrain,start) < LAND and buffer.readu8(seen,start) == 0 then
+   table.clear(queue); queue[1] = start; buffer.writeu8(seen,start,1)
+   local head, edge, ocean, landByte = 1, false, false, nil
+   while head <= #queue do
+    local t = queue[head]; head += 1
+    local x,y = t % w,t // w
+    if bit32.band(buffer.readu8(terrain,t),OCEAN) ~= 0 then ocean = true end
+    if x == 0 or y == 0 or x == w-1 or y == h-1 then edge = true end
+    local function visit(n)
+     local b = buffer.readu8(terrain,n)
+     if b < LAND then
+      if buffer.readu8(seen,n) == 0 then buffer.writeu8(seen,n,1);queue[#queue+1]=n end
+     elseif not impassableByte(b) and landByte == nil then landByte = LAND + bit32.band(b,MAG) end
+    end
+    if x>0 then visit(t-1) end; if x<w-1 then visit(t+1) end
+    if y>0 then visit(t-w) end; if y<h-1 then visit(t+w) end
+   end
+   if not edge and not ocean and #queue <= limit and landByte then
+    for _,t in queue do buffer.writeu8(terrain,t,landByte);filled += 1 end
+   end
+  end
+ end
+ if filled > 0 then for t=0,size-1 do fixShore(terrain,w,size,t) end end
+ return filled
+end
+
+-- Delete isolated raster dots, preserving meaningful islands and nation spawn cells.
+function MapUtil.removeTinyIslands(terrain: buffer, w: number, h: number, nations, limit: number): number
+ local size=w*h;local seen=buffer.create(size);local protected={}
+ for _,n in nations or {} do protected[n[3]*w+n[2]]=true end
+ local q={};local removed=0;local changed={}
+ for start=0,size-1 do
+  if buffer.readu8(terrain,start)>=LAND and buffer.readu8(seen,start)==0 then
+   table.clear(q);q[1]=start;buffer.writeu8(seen,start,1)
+   local head,keep=1,false
+   while head<=#q do
+    local t=q[head];head+=1;local x,y=t%w,t//w
+    if protected[t] or bit32.band(buffer.readu8(terrain,t),MAG)==MAG or x==0 or y==0 or x==w-1 or y==h-1 then keep=true end
+    local function visit(n)
+     if buffer.readu8(terrain,n)>=LAND and buffer.readu8(seen,n)==0 then buffer.writeu8(seen,n,1);q[#q+1]=n end
+    end
+    if x>0 then visit(t-1) end;if x<w-1 then visit(t+1) end
+    if y>0 then visit(t-w) end;if y<h-1 then visit(t+w) end
+   end
+   if not keep and #q<=limit then
+    for _,t in q do removed+=1;changed[#changed+1]=t end
+   end
+  end
+ end
+ -- Recompute shores and depth too, removing the bright shallow-water halos.
+ if #changed>0 then MapUtil.toWater({terrain=terrain,width=w,height=h,size=size,landTiles=size},changed) end
+ return removed
+end
+
 local function countLand(terrain: buffer, size: number): number
 	local land = 0
 	for t = 0, size - 1 do
@@ -121,6 +187,40 @@ local function countLand(terrain: buffer, size: number): number
 		end
 	end
 	return land
+end
+
+-- A finer claiming grid preserves existing land/water and terrain classes.
+-- This is a runtime copy, not a replacement for unfinished source map data.
+function MapUtil.refine(src: GameMap, factor: number): GameMap
+	if factor <= 1 or src.refined then return src end
+	local w, h = math.max(1, math.floor(src.width * factor + 0.5)), math.max(1, math.floor(src.height * factor + 0.5))
+	local terrain = buffer.create(w * h)
+	for y = 0, h - 1 do
+		local sy = math.min(src.height - 1, math.floor((y + 0.5) * src.height / h))
+		for x = 0, w - 1 do
+			local sx = math.min(src.width - 1, math.floor((x + 0.5) * src.width / w))
+			local b = buffer.readu8(src.terrain, sy * src.width + sx)
+			b -= bit32.band(b, SHORE)
+			if b < LAND then
+				local mag = bit32.band(b, MAG)
+				b = b - mag + math.min(31, math.floor(mag * factor + 0.5))
+			end
+			buffer.writeu8(terrain, y * w + x, b)
+		end
+	end
+	for t = 0, w * h - 1 do fixShore(terrain, w, w * h, t) end
+	local nations = {}
+	for _, n in src.nations do
+		local row = table.clone(n)
+		row[2] = math.clamp(math.floor((n[2] + 0.5) * w / src.width), 0, w - 1)
+		row[3] = math.clamp(math.floor((n[3] + 0.5) * h / src.height), 0, h - 1)
+		table.insert(nations, row)
+	end
+	local result = table.clone(src)
+	result.width, result.height, result.size = w, h, w * h
+	result.terrain, result.nations, result.landTiles = terrain, nations, countLand(terrain, w * h)
+	result.refined = true
+	return result
 end
 
 -- Compact map (GameMapSize.Compact): half the width and height. Each 2x2 block becomes land when
@@ -357,3 +457,4 @@ function MapUtil.neighbors(map: GameMap, t: number, out: { number }): number
 end
 
 return MapUtil
+

@@ -14,6 +14,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local MapUtil = require(Shared:WaitForChild("MapUtil"))
+local MapStyles = require(Shared:WaitForChild("MapStyles"))
 
 local MapPreview = {}
 
@@ -74,6 +75,8 @@ local function render(id: string, targetW: number)
 	end
 	local buf = buffer.create(tw * th * 4)
 	local terrain = map.terrain
+	local pixels = MapStyles.previewPixels(map.name) or PIXEL
+	local pixelAt = MapStyles.palette(map.name).pixelAt
 	local xs = table.create(tw, 0)
 	for x = 0, tw - 1 do
 		xs[x + 1] = math.min(w - 1, math.floor((x + 0.5) * w / tw))
@@ -82,7 +85,8 @@ local function render(id: string, targetW: number)
 	for y = 0, th - 1 do
 		local row = math.min(h - 1, math.floor((y + 0.5) * h / th)) * w
 		for x = 1, tw do
-			buffer.writeu32(buf, o, PIXEL[buffer.readu8(terrain, row + xs[x]) + 1])
+			local byte = buffer.readu8(terrain, row + xs[x])
+			buffer.writeu32(buf, o, if pixelAt then pixelAt(byte, xs[x], row // w, w, h) else pixels[byte + 1])
 			o += 4
 		end
 		if y % 48 == 47 then

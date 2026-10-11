@@ -11,7 +11,7 @@
 -- StarterPlayer.StarterPlayerScripts.LobbyPages (ModuleScript), used by MainMenu.
 -- LobbyPages.init(ctx)          ctx: net, toast(text), preview(mapId, width) -> EditableImage?,
 --                                    mapPool() -> { MapCatalog info }
--- LobbyPages.handles(kind)      "host" | "join" | "ranked" | "public" (waiting in a public lobby)
+-- LobbyPages.handles(kind)      "host" | "join" | "ranked"
 --                               | "solo" (SinglePlayerModal: the same game settings, then Start)
 -- LobbyPages.render(kind, page) fills a MenuKit page (MainMenu's inline page)
 -- LobbyPages.closed(kind)       the page was closed: leave the lobby / the ranked queue
@@ -26,6 +26,8 @@ local SocialService = game:GetService("SocialService")
 local GuiService = game:GetService("GuiService")
 
 local MenuKit = require(script.Parent:WaitForChild("MenuKit"))
+local QueueBar = require(script.Parent:WaitForChild("QueueBar"))
+local CustomLobbyBar = require(script.Parent:WaitForChild("CustomLobbyBar"))
 local C, F, make = MenuKit.C, MenuKit.F, MenuKit.make
 
 local LobbyPages = {}
@@ -40,7 +42,9 @@ local lobby: any = nil -- last "mm" lobby view (code, host, isHost, settings, me
 -- started }, members = { { userId, name } }, at = os.clock() when it arrived }.
 local public: any = nil
 local ranked = { state = "idle", queueSize = nil :: number?, elo = nil :: number? }
-local shown: { page: any?, kind: string? } = { page = nil, kind = nil }
+-- shown.night: a Night menu page (NightMenu.Pages host / join / solo) shows this kind and wants
+-- shown.night() after every change (shown.page stays nil then, so the old renderers stay idle).
+local shown: { page: any?, kind: string?, night: (() -> ())? } = { page = nil, kind = nil, night = nil }
 local pendingSettings: any = nil -- host edits not yet echoed
 local sendAt = 0 -- when to send pendingSettings (0 = sent)
 local editedAt = 0 -- last host edit (echoes older than this are ignored for a moment)
@@ -220,6 +224,9 @@ local function pushSettings(change: { [string]: any })
 		for _, f in refreshers do
 			f()
 		end
+		if shown.night then
+			shown.night()
+		end
 		return
 	end
 	local s = table.clone(settings())
@@ -231,6 +238,9 @@ local function pushSettings(change: { [string]: any })
 	editedAt = os.clock()
 	for _, f in refreshers do
 		f()
+	end
+	if shown.night then
+		shown.night()
 	end
 end
 
@@ -607,6 +617,40 @@ local function inviteFriends()
 	end)
 end
 
+local function customSettingsLines()
+ local s=settings()
+ local lines={}
+ local function bullet(title,value) table.insert(lines,title..": "..tostring(value)) end
+ local function on(value) return if value then "On" else "Off" end
+ bullet("Visibility",if (visibilityWanted or lobby.visibility)=="public" then "Public" else "Private")
+ bullet("Game mode",if s.mode=="Team" then "Teams" else "Free for All")
+ if s.mode=="Team" then
+  local value=tostring(s.teams or 2)
+  for _,choice in TEAM_CHOICES do if choice[1]==s.teams then value=choice[2];break end end
+  bullet("Team format",value)
+ end
+ bullet("Nations",if s.nations~=false then s.difficulty or "Easy" else "Off")
+ bullet("Tribes",s.bots or 400)
+ for _,option in {
+  {"randomMap","Random map"},{"randomSpawn","Random spawn"},{"instantBuild","Instant build"},
+  {"infiniteTroops","Infinite troops"},{"infiniteGold","Infinite gold"},{"compact","Compact map"},
+  {"donateGold","Donate gold"},{"donateTroops","Donate troops"},{"waterNukes","Water nukes"},{"overtime","Overtime"},
+ } do bullet(option[2],on(s[option[1]]==true)) end
+ bullet("Alliances",on(s.noAlliances~=true))
+ bullet("Alliance duration",tostring(if (s.allianceMinutes or 0)==0 then 5 else s.allianceMinutes).." min")
+ bullet("Spawn immunity",tostring(s.immunitySeconds or 5).." s")
+ bullet("Gold multiplier","x"..tostring(s.goldMultiplier or 1))
+ bullet("Starting gold",tostring(s.startingGold or 0))
+ bullet("Doomsday Clock",s.doomsday or "off")
+ if (s.maxTimer or 0)>0 then bullet("Game length",tostring(s.maxTimer).." min") end
+ for _,unit in UNIT_TOGGLES do bullet(unit[2],on(not table.find(s.disabledUnits or {},unit[1]))) end
+ return lines
+end
+local function showCustomLobby()
+ if not lobby then return end
+ CustomLobbyBar.show(lobby,if settings().randomMap then "RANDOM MAP" else string.upper(mapName(settings().map)),customSettingsLines())
+end
+
 -- Who can join: Public (listed on everyone's Join Lobby page) or Private (lobby ID or invite only).
 local function visibilityCard(body: Instance, order: number)
 	local card = MenuKit.card(body, order, 16, 14, 10)
@@ -657,6 +701,25 @@ end
 local LOBBY_DEFAULTS = table.clone(SOLO_DEFAULTS)
 LOBBY_DEFAULTS.map = "Europe"
 
+local function buildHostSettings(page,base,isSolo)
+ local body=page.body
+ return require(script.Parent:WaitForChild("HostLobbyView")).build(body,base,{
+  page=page,solo=isSolo==true,get=settings,set=pushSettings,refreshers=refreshers,pool=ctx.mapPool,preview=ctx.preview,
+  teams=TEAM_CHOICES,units=UNIT_TOGGLES,
+  getVisibility=function()
+   local current=if setupMode() then host.visibility else ((lobby and lobby.visibility) or "private")
+   if visibilityWanted==current then visibilityWanted=nil end
+   return visibilityWanted or current
+  end,
+  setVisibility=function(value)
+   if setupMode() then host.visibility=value
+   elseif isHost() and lobby then visibilityWanted=value;ctx.net:FireServer("lobbyVisibility",value)
+   else return end
+   for _,f in refreshers do f() end
+  end,
+ })
+end
+
 local renderLobby
 
 -- Create Lobby, step 1: the game settings and who can join, then CREATE LOBBY.
@@ -664,16 +727,15 @@ local function renderHostSetup(page)
 	resetPage(page)
 	local body = page.body
 	if host.creating then
-		spinner(body, 1, C.MALIBU, "Creating lobby...")
+		local status=MenuKit.paragraph(body,1,"Creating lobby…",{TextSize=18,FontFace=F.BOLD,TextColor3=C.MALIBU})
+		status.Name="CreatingStatus";status.TextXAlignment=Enum.TextXAlignment.Center
 		return
 	end
 	if not host.draft then
 		host.draft = table.clone(LOBBY_DEFAULTS)
 		host.draft.disabledUnits = {}
 	end
-	MenuKit.paragraph(body, 1, "Pick the settings, then create the lobby. You can still change them while people join.", { TextSize = 14, TextTransparency = 0.4 })
-	visibilityCard(body, 2)
-	local order = buildSettings(body, 10, true)
+	local order = buildHostSettings(page, 0)
 	local create = MenuKit.button("primary", { Name = "CreateLobby", LayoutOrder = order + 1, Size = UDim2.new(1, 0, 0, 52), FontFace = F.BOLD, Text = "CREATE LOBBY", Parent = body })
 	create.Activated:Connect(function()
 		if host.creating then
@@ -697,6 +759,7 @@ end
 
 -- The host editing an open lobby's settings (changes reach the players as they're made).
 local function renderLobbySettings(page)
+ CustomLobbyBar.setEditing(true)
 	resetPage(page)
 	local body = page.body
 	local back = MenuKit.button("secondary", { Name = "BackToLobby", LayoutOrder = 1, Size = UDim2.new(1, 0, 0, 44), FontFace = F.BOLD, Text = "BACK TO LOBBY", Parent = body })
@@ -704,7 +767,7 @@ local function renderLobbySettings(page)
 		host.view = "room"
 		renderLobby(page, true)
 	end)
-	local order = buildSettings(body, 10, true)
+	local order = buildHostSettings(page, 10)
 	local done = MenuKit.button("primary", { Name = "Done", LayoutOrder = order + 1, Size = UDim2.new(1, 0, 0, 52), FontFace = F.BOLD, Text = "BACK TO LOBBY", Parent = body })
 	done.Activated:Connect(function()
 		host.view = "room"
@@ -725,42 +788,16 @@ renderLobby = function(page, hosting: boolean)
 		renderLobbySettings(page)
 		return
 	end
-	resetPage(page)
-	local body = page.body
-	if not lobby or lobby.state ~= "open" then
-		spinner(body, 1, C.MALIBU, "Joining lobby...")
-		return
-	end
-	lobbyIdCard(body, 1)
-	visibilityCard(body, 9)
-	if not isHost() then
-		MenuKit.paragraph(body, 2, "Lobby joined! Waiting for host to start...", { FontFace = F.BOLD, TextSize = 16 }) -- private_lobby.joined_waiting
-	end
-	buildPlayers(body, 3)
-	local order = buildSettings(body, 10, false)
-	if isHost() then
-		local row = make("Frame", { LayoutOrder = order + 1, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 52), Parent = body })
-		local edit = MenuKit.button("secondary", { Name = "EditSettings", Size = UDim2.new(0, 180, 1, 0), FontFace = F.BOLD, Text = "EDIT SETTINGS", Parent = row })
-		edit.Activated:Connect(function()
-			host.view = "settings"
-			renderLobby(page, true)
-		end)
-		local start = MenuKit.button("primary", { Name = "StartGame", Position = UDim2.fromOffset(190, 0), Size = UDim2.new(1, -190, 1, 0), FontFace = F.BOLD, Text = "START GAME", Parent = row })
-		start.Activated:Connect(function()
-			start.Text = "STARTING…" -- game_settings.starting
-			ctx.net:FireServer("lobbyStart")
-		end)
-	end
-	for _, f in refreshers do
-		f()
-	end
+	showCustomLobby()
+ CustomLobbyBar.setEditing(false)
+ if ctx.close then ctx.close() end
 end
 
 -- Single player (SinglePlayerModal): the game settings, then START GAME.
 local function renderSolo(page)
 	resetPage(page)
 	local body = page.body
-	local order = buildSettings(body, 10, true)
+	local order = buildHostSettings(page, 0, true)
 	local row = make("Frame", { LayoutOrder = order + 1, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 52), Parent = body })
 	local reset = MenuKit.button("gray", { Size = UDim2.new(0, 140, 1, 0), FontFace = F.BOLD, Text = "RESET", Parent = row })
 	reset.Activated:Connect(function()
@@ -951,118 +988,61 @@ local function renderRanked(page)
 	end
 end
 
--- "Waiting for Game Start..." (JoinLobbyModal, public lobby): the game's map, mode and modifiers,
--- the players in the lobby and a status bar ("Starting in {time}" / "Waiting for players" /
--- "Started", players n/max). Closing the page leaves the lobby.
-local function renderPublic(page)
-	resetPage(page)
-	local body = page.body
-	if not public or not public.lobby then
-		spinner(body, 1, C.MALIBU, "Connecting to lobby...") -- public_lobby.connecting
-		return
-	end
-	-- Game config: map preview, map name, mode, modifier pills.
-	local card = MenuKit.card(body, 1, 16, 14, 8)
-	local top = make("Frame", { LayoutOrder = 1, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 96), Parent = card })
-	local img = make("ImageLabel", { Name = "Preview", BackgroundTransparency = 1, Size = UDim2.fromOffset(150, 96), ScaleType = Enum.ScaleType.Fit, Parent = top })
-	local mapLabel = text({ Position = UDim2.fromOffset(166, 8), Size = UDim2.new(1, -166, 0, 26), FontFace = F.BOLD, TextSize = 22, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Text = "", Parent = top })
-	local modeLabel = text({ Position = UDim2.fromOffset(166, 38), Size = UDim2.new(1, -166, 0, 18), TextSize = 14, TextTransparency = 0.3, TextXAlignment = Enum.TextXAlignment.Left, Text = "", Parent = top })
-	local pills = make("Frame", { LayoutOrder = 2, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Parent = card })
-	make("UIGridLayout", { CellSize = UDim2.fromOffset(200, 26), CellPadding = UDim2.fromOffset(6, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = pills })
-	-- Players
-	local title = MenuKit.heading(body, 2, "People", "Players")
-	local list = make("Frame", { Name = "Players", LayoutOrder = 3, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Parent = body })
-	make("UIGridLayout", { CellSize = UDim2.fromOffset(220, 40), CellPadding = UDim2.fromOffset(8, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = list })
-	-- Status bar
-	local statusBar = MenuKit.card(body, 4, 16, 12, 2)
-	local statusTitle = text({ LayoutOrder = 1, Size = UDim2.new(1, 0, 0, 14), TextSize = 10, FontFace = F.BOLD, TextTransparency = 0.6, TextXAlignment = Enum.TextXAlignment.Left, Text = "STATUS", Parent = statusBar })
-	local statusRow = make("Frame", { LayoutOrder = 2, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 20), Parent = statusBar })
-	local status = text({ Size = UDim2.new(1, -90, 1, 0), FontFace = F.BOLD, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, Text = "", Parent = statusRow })
-	local count = text({ AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -22, 0, 0), Size = UDim2.fromOffset(60, 20), FontFace = F.BOLD, TextSize = 12, TextTransparency = 0.2, TextXAlignment = Enum.TextXAlignment.Right, Text = "", Parent = statusRow })
-	MenuKit.icon("People", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0), Size = UDim2.fromOffset(16, 16), Parent = statusRow })
-	local _ = statusTitle
-
-	local shownImg, pillSig, memberSig = nil, "", ""
-	refreshers[#refreshers + 1] = function()
-		local l = public and public.lobby
-		if not l then
-			return
-		end
-		mapLabel.Text = string.upper(tostring(l.name or l.map))
-		modeLabel.Text = string.upper(tostring(l.sub or ""))
-		if shownImg ~= l.map then
-			local e = ctx.preview(l.map, 150)
-			if e and pcall(function()
-				img.ImageContent = Content.fromObject(e)
-			end) then
-				shownImg = l.map
-			end
-		end
-		local mods = table.clone(l.mods or {})
-		table.sort(mods, function(a, b)
-			return #a > #b
-		end)
-		local sig = table.concat(mods, "|")
-		if sig ~= pillSig then
-			pillSig = sig
-			for _, c in pills:GetChildren() do
-				if c:IsA("GuiObject") then
-					c:Destroy()
-				end
-			end
-			for i, m in mods do
-				local pill = text({ LayoutOrder = i, BackgroundTransparency = 0, BackgroundColor3 = C.MALIBU, FontFace = F.BOLD, TextSize = 12, Text = string.upper(m), Parent = pills })
-				MenuKit.corner(pill, 4)
-			end
-			pills.Visible = #mods > 0
-		end
-		-- Players
-		local members = public.members or {}
-		local ms = ""
-		for _, m in members do
-			ms ..= tostring(m.userId) .. ":"
-		end
-		if ms ~= memberSig then
-			memberSig = ms
-			local label = title:FindFirstChildWhichIsA("TextLabel", true)
-			if label then
-				label.Text = string.upper(#members .. (if #members == 1 then " Player" else " Players"))
-			end
-			for _, c in list:GetChildren() do
-				if c:IsA("GuiObject") then
-					c:Destroy()
-				end
-			end
-			for i, m in members do
-				local r = make("Frame", { LayoutOrder = i, BackgroundColor3 = C.WHITE, BackgroundTransparency = 0.95, BorderSizePixel = 0, Parent = list })
-				MenuKit.corner(r, 8)
-				MenuKit.stroke(r, if m.userId == localPlayer.UserId then 0.3 else 0.9, if m.userId == localPlayer.UserId then C.MALIBU else C.WHITE)
-				text({ Position = UDim2.fromOffset(12, 0), Size = UDim2.new(1, -24, 1, 0), TextSize = 14, FontFace = F.MEDIUM, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Text = tostring(m.name), Parent = r })
-			end
-		end
-		-- Status
-		local left = if type(l.secs) == "number" then l.secs - (os.clock() - (public.at or os.clock())) else nil
-		if l.started then
-			status.Text = "Started" -- public_lobby.started
-		elseif left == nil then
-			status.Text = "Waiting for players" -- public_lobby.waiting_for_players
-		elseif left > 0 then
-			local whole = math.ceil(left)
-			local m, sec = whole // 60, whole % 60
-			status.Text = "Starting in " .. (if m > 0 then m .. "min" .. (if sec > 0 then " " .. sec .. "s" else "") else sec .. "s")
-		else
-			status.Text = "Started"
-		end
-		count.Text = tostring(l.count or #members) .. "/" .. tostring(l.max or "?")
-	end
-	for _, f in refreshers do
-		f()
-	end
-end
-
 -- "Joining the match" screen
 local overlay: any = nil
+-- Night look: a centred card with the battle picture, a running bar and a tip.
+local NIGHT_TIPS = {
+	"Build cities to grow a bigger army.",
+	"Ports send trade ships that earn you gold.",
+	"Allies can't attack you. Breaking an alliance makes you a traitor!",
+	"Send boats to attack across the sea.",
+	"Shields shoot down incoming nukes.",
+}
+local function nightOverlay()
+	local NightMenu = script.Parent:WaitForChild("NightMenu")
+	local Kit = require(NightMenu:WaitForChild("Kit"))
+	local Art = require(NightMenu:WaitForChild("Art"))
+	local K, F = Kit.C, Kit.F
+	local gui = Kit.make("ScreenGui", { Name = "FrontlinesTeleport", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 200, Enabled = false, Parent = playerGui })
+	local dim = Kit.make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = K.BACKDROP, BackgroundTransparency = 0.15, BorderSizePixel = 0, Active = true, Parent = gui })
+	local card = Kit.card({ AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(380, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundColor3 = K.PAGE, Parent = dim })
+	card:FindFirstChildWhichIsA("UICorner").CornerRadius = UDim.new(0, 16)
+	Kit.pad(card, 24, 24, 22, 22)
+	Kit.list(card, false, 10, { HorizontalAlignment = Enum.HorizontalAlignment.Center })
+	local pic = Art.image("BattleStarting", { Size = UDim2.fromOffset(84, 84), LayoutOrder = 1, Parent = card })
+	local title = Kit.text({ Text = "", FontFace = F.TITLE, TextSize = 26, LayoutOrder = 2, Parent = card })
+	Kit.text({ Text = "Getting everyone onto the map", FontFace = F.BOLD, TextSize = 15, TextColor3 = K.MUTED, LayoutOrder = 3, Parent = card })
+	local track = Kit.make("Frame", { BackgroundColor3 = K.DEEP, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 8), ClipsDescendants = true, LayoutOrder = 4, Parent = card })
+	Kit.corner(track)
+	local run = Kit.make("Frame", { BackgroundColor3 = K.YELLOW, BorderSizePixel = 0, Size = UDim2.fromScale(0.35, 1), Parent = track })
+	Kit.corner(run)
+	local tip = Kit.text({ Text = "", FontFace = F.BOLD, TextSize = 14, TextColor3 = K.MUTED, TextWrapped = true, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 5, Parent = card })
+	local scale = Instance.new("UIScale")
+	scale.Parent = card
+	local TweenService = game:GetService("TweenService")
+	gui:GetPropertyChangedSignal("Enabled"):Connect(function()
+		if gui.Enabled then
+			tip.Text = "Tip: " .. NIGHT_TIPS[math.random(1, #NIGHT_TIPS)]
+			scale.Scale = math.clamp(math.min(gui.AbsoluteSize.X / 520, gui.AbsoluteSize.Y / 420), 0.7, 1.2)
+		end
+	end)
+	task.spawn(function()
+		while gui.Parent do
+			if gui.Enabled then
+				run.Position = UDim2.fromScale(-0.35, 0)
+				TweenService:Create(run, TweenInfo.new(1.1, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut), { Position = UDim2.fromScale(1, 0) }):Play()
+				TweenService:Create(pic, TweenInfo.new(0.55, Enum.EasingStyle.Sine, Enum.EasingDirection.Out, 0, true), { Rotation = 6 }):Play()
+			end
+			task.wait(1.15)
+		end
+	end)
+	return { gui = gui, text = title, shownAt = 0, night = true }
+end
+
 local function showOverlay(label: string?)
+	if not overlay and LobbyPages.nightMode then
+		overlay = nightOverlay()
+	end
 	if not overlay then
 		local gui = make("ScreenGui", { Name = "FrontlinesTeleport", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 200, Enabled = false, Parent = playerGui })
 		local dim = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C.BLACK, BackgroundTransparency = 0.25, BorderSizePixel = 0, Active = true, Parent = gui })
@@ -1072,6 +1052,10 @@ local function showOverlay(label: string?)
 		overlay = { gui = gui, text = t, shownAt = 0 }
 	end
 	overlay.text.Text = label or "Starting..."
+	if overlay.night then
+		local t = string.gsub(label or "Starting...", "%.%.%.$", "")
+		overlay.text.Text = if t == "Starting" then "Starting your battle" elseif t == "Returning to the lobby" then "Back to the menu" else t
+	end
 	overlay.gui.Enabled = true
 	overlay.shownAt = os.clock()
 end
@@ -1083,10 +1067,10 @@ local function hideOverlay()
 end
 
 function LobbyPages.handles(kind: string): boolean
-	return kind == "host" or kind == "join" or kind == "ranked" or kind == "public" or kind == "solo"
+	return kind == "host" or kind == "join" or kind == "ranked" or kind == "solo"
 end
 
-LobbyPages.TITLES = { host = "Create Lobby", join = "Join Lobby", ranked = "1v1 Ranked Matchmaking", public = "Waiting for Game Start...", solo = "Solo" }
+LobbyPages.TITLES = { host = "Create Lobby", join = "Join Lobby", ranked = "1v1 Ranked Matchmaking", solo = "Solo" }
 
 function LobbyPages.render(kind: string, page)
 	shown.page, shown.kind = page, kind
@@ -1099,7 +1083,7 @@ function LobbyPages.render(kind: string, page)
 		if not lobby or lobby.state ~= "open" then
 			pendingSettings = nil
 		end
-		host.view = "room"
+		host.view = if CustomLobbyBar.active() and lobby and lobby.isHost then "settings" else "room"
 		renderLobby(page, true)
 	elseif kind == "join" then
 		renderJoin(page)
@@ -1107,41 +1091,57 @@ function LobbyPages.render(kind: string, page)
 		ranked.state = "connecting"
 		ctx.net:FireServer("rankedJoin")
 		renderRanked(page)
-	elseif kind == "public" then
-		page.title.Text = "Waiting for Game Start..." -- public_lobby.title
-		renderPublic(page)
 	elseif kind == "solo" then
 		renderSolo(page)
 	end
 end
 
--- Joins a public lobby ("ffa" | "team" | "special") and shows its waiting page.
+-- Joins a premade game without opening a page; QueueBar stays on the main menu.
 function LobbyPages.joinPublic(lobbyType: string, view: any?)
 	if not public or public.type ~= lobbyType then
 		public = { type = lobbyType, lobby = view, members = {}, at = os.clock() }
 	end
+	QueueBar.show(public.lobby, true)
 	ctx.net:FireServer("play", lobbyType)
+end
+
+function LobbyPages.queued(lobbyType: string?): boolean
+	return (public ~= nil and (lobbyType == nil or public.type == lobbyType)) or (lobbyType==nil and CustomLobbyBar.active())
+end
+
+function LobbyPages.queueHeight(): number
+	return math.max(QueueBar.height(),CustomLobbyBar.height())
+end
+
+function LobbyPages.leavePublic()
+	if public then
+		ctx.net:FireServer("leave")
+		public = nil
+	end
+	QueueBar.clear()
+end
+
+function LobbyPages.leaveCustom()
+ if lobby then ctx.net:FireServer("lobbyLeave") end
+ lobby=nil;pendingSettings=nil;visibilityWanted=nil
+ host.view,host.creating="room",false
+ CustomLobbyBar.clear()
+ if shown.page and (shown.kind=="host" or shown.kind=="join") and ctx.close then ctx.close() end
+ if shown.night then shown.night() end
 end
 
 function LobbyPages.closed(kind: string?)
 	if kind == "host" or kind == "join" then
-		if lobby then
-			ctx.net:FireServer("lobbyLeave")
+		-- Closing the page (Esc, B, back) keeps you in your party; only Leave leaves it.
+		if CustomLobbyBar.active() then
+			CustomLobbyBar.setEditing(false)
 		end
-		lobby = nil
-		pendingSettings = nil
-		visibilityWanted = nil
 		host.view, host.creating = "room", false
 	elseif kind == "ranked" then
 		ctx.net:FireServer("rankedLeave")
 		ranked.state = "idle"
-	elseif kind == "public" then
-		if public then
-			ctx.net:FireServer("leave")
-		end
-		public = nil
 	end
-	shown.page, shown.kind = nil, nil
+	shown.page, shown.kind, shown.night = nil, nil, nil
 	table.clear(refreshers)
 end
 
@@ -1151,7 +1151,11 @@ local function onMM(data: any)
 	end
 	if data.kind == "notice" then
 		hideOverlay()
+		if QueueBar.teleporting() then
+			LobbyPages.leavePublic()
+		end
 		ctx.toast(tostring(data.text))
+  if CustomLobbyBar.active() then CustomLobbyBar.retry() end
 		if host.creating and not lobby then
 			host.creating = false -- CREATE LOBBY was refused (too soon / error): back to the settings
 			if shown.kind == "host" and shown.page then
@@ -1160,17 +1164,31 @@ local function onMM(data: any)
 		end
 	elseif data.kind == "studioMatch" then
 		-- Studio: the match is played in this server (no teleport).
+  lobby=nil;pendingSettings=nil;CustomLobbyBar.clear()
 		hideOverlay()
+		public = nil
+		QueueBar.clear()
 		if ctx.studioMatch then
 			ctx.studioMatch(data.tutorial == true)
 		end
 	elseif data.kind == "studioLobby" then
+  lobby=nil;pendingSettings=nil;CustomLobbyBar.clear()
 		hideOverlay()
+		public = nil
+		QueueBar.clear()
 		if ctx.studioLobby then
 			ctx.studioLobby()
 		end
 	elseif data.kind == "teleport" then
-		showOverlay(data.text)
+		if LobbyPages.nightMode then
+			showOverlay(data.text) -- the Night menu has no queue / lobby bars
+		elseif public then
+			QueueBar.teleport()
+  elseif CustomLobbyBar.active() then
+   CustomLobbyBar.teleport()
+		else
+			showOverlay(data.text)
+		end
 		if require(script.Parent:WaitForChild("Settings")).values.lobbyStartAlerts then
 			pcall(function()
 				require(script.Parent:WaitForChild("SoundKit")).play("game-start") -- OpenFront lobby start alert
@@ -1179,18 +1197,10 @@ local function onMM(data: any)
 	elseif data.kind == "public" then
 		if data.type == nil then
 			public = nil
+			QueueBar.clear()
 		elseif public == nil or public.type == data.type then
-			local first = public == nil or public.lobby == nil
 			public = { type = data.type, lobby = data.lobby, members = data.members or {}, at = os.clock() }
-			if shown.kind == "public" and shown.page then
-				if first then
-					renderPublic(shown.page)
-				else
-					for _, f in refreshers do
-						f()
-					end
-				end
-			end
+			QueueBar.show(public.lobby)
 		end
 	elseif data.kind == "lobbyList" then
 		lobbyList = if type(data.lobbies) == "table" then data.lobbies else {}
@@ -1225,6 +1235,7 @@ local function onMM(data: any)
 		end
 		if data.state == "closed" or data.state == "left" then
 			local wasIn = lobby ~= nil
+   CustomLobbyBar.clear()
 			lobby = nil
 			pendingSettings = nil
 			if wasIn and data.reason then
@@ -1239,27 +1250,172 @@ local function onMM(data: any)
 		end
 		local first = lobby == nil or lobby.code ~= data.code or lobby.isHost ~= data.isHost
 		lobby = data
+  public=nil;QueueBar.clear()
 		host.creating = false
 		if pendingSettings and sendAt == 0 and os.clock() > editedAt + 1.5 then
 			pendingSettings = nil -- the server has our edit by now
 		end
-		if shown.page and (shown.kind == "host" or shown.kind == "join") then
-			if first then
-				renderLobby(shown.page, shown.kind == "host")
-			else
-				for _, f in refreshers do
-					f()
-				end
-			end
+		showCustomLobby()
+		if first and LobbyPages.nightMode and shown.night and (shown.kind == "host" or shown.kind == "join") and ctx.close then
+			ctx.close() -- Night menu: no room screen, Home shows the party (code, Start, Leave)
 		end
+  if shown.page and (shown.kind=="host" or shown.kind=="join") then
+   if shown.kind=="host" and lobby.isHost and host.view=="settings" then
+    if first then renderLobbySettings(shown.page)
+    else for _,f in refreshers do f() end end
+   elseif ctx.close then ctx.close() end
+  end
 	end
 end
 
+-- Night menu interface (NightMenu.Pages host / join / solo and NightMenu.Home) ------------------
+-- LobbyPages.nightMode = true      set by MainMenu when the Night menu is on (teleports show the overlay)
+-- LobbyPages.attach(kind, onChange) a Night page now shows kind ("host" | "join" | "solo");
+--                                  MainMenu's closePage still calls LobbyPages.closed(kind)
+-- LobbyPages.night.*               read state and act exactly like the old pages
+LobbyPages.nightMode = false
+local nightListeners: { () -> () } = {}
+
+function LobbyPages.attach(kind: string, onChange: () -> ())
+	shown.page, shown.kind, shown.night = nil, kind, onChange
+	table.clear(refreshers)
+	if kind == "host" then
+		if not lobby or lobby.state ~= "open" then
+			pendingSettings = nil
+		end
+		host.view = "room"
+		if not host.draft then
+			host.draft = table.clone(LOBBY_DEFAULTS)
+			host.draft.disabledUnits = {}
+		end
+	elseif kind == "join" then
+		LobbyPages.askList(true)
+	end
+end
+
+-- Home listens too (the battle room card): fn() after every server update.
+function LobbyPages.onNightChange(fn: () -> ())
+	table.insert(nightListeners, fn)
+end
+
+local function nightNotify()
+	if shown.night then
+		shown.night()
+	end
+	for _, fn in nightListeners do
+		task.spawn(fn)
+	end
+end
+
+LobbyPages.night = {
+	TEAMS = TEAM_CHOICES,
+	UNITS = UNIT_TOGGLES,
+	DIFFICULTIES = DIFFICULTIES,
+	settings = function()
+		return settings()
+	end,
+	isHost = function()
+		return isHost()
+	end,
+	setupMode = function()
+		return setupMode()
+	end,
+	push = function(change)
+		pushSettings(change)
+	end,
+	lobby = function()
+		return if lobby and lobby.state == "open" then lobby else nil
+	end,
+	creating = function()
+		return host.creating
+	end,
+	visibility = function()
+		local current = if setupMode() then host.visibility else ((lobby and lobby.visibility) or "private")
+		if visibilityWanted == current then
+			visibilityWanted = nil
+		end
+		return visibilityWanted or current
+	end,
+	setVisibility = function(value: string)
+		if setupMode() then
+			host.visibility = value
+		elseif isHost() and lobby then
+			visibilityWanted = value
+			ctx.net:FireServer("lobbyVisibility", value)
+		else
+			return
+		end
+		nightNotify()
+	end,
+	-- Create the battle from the draft settings (CREATE LOBBY).
+	create = function()
+		if host.creating or not host.draft then
+			return
+		end
+		host.creating = true
+		LobbyPages.leavePublic() -- making a party leaves the public queue (opening pages doesn't)
+		ctx.net:FireServer("lobbyCreate", { settings = host.draft, visibility = host.visibility })
+		nightNotify()
+		task.delay(12, function()
+			if host.creating and not lobby then
+				host.creating = false -- no answer: back to the settings
+				nightNotify()
+			end
+		end)
+	end,
+	start = function()
+		if lobby and lobby.isHost then
+			ctx.net:FireServer("lobbyStart")
+		end
+	end,
+	leave = function()
+		LobbyPages.leaveCustom()
+	end,
+	invite = function()
+		inviteFriends()
+	end,
+	kick = function(userId: number)
+		if lobby and lobby.isHost then
+			ctx.net:FireServer("lobbyKick", userId)
+		end
+	end,
+	join = function(code: string)
+		LobbyPages.leavePublic()
+		ctx.net:FireServer("lobbyJoin", code)
+	end,
+	askList = function(force: boolean?)
+		LobbyPages.askList(force)
+	end,
+	list = function()
+		return lobbyList
+	end,
+	soloStart = function()
+		LobbyPages.leavePublic()
+		ctx.net:FireServer("play", "solo", solo.settings)
+	end,
+	soloReset = function()
+		solo.settings = table.clone(SOLO_DEFAULTS)
+		solo.settings.disabledUnits = {}
+		nightNotify()
+	end,
+	mapName = function(id: string?)
+		return mapName(id)
+	end,
+}
+
 function LobbyPages.init(c)
 	ctx = c
+	QueueBar.setup({ parent = ctx.queueParent, preview = ctx.preview, leave = LobbyPages.leavePublic, changed = ctx.queueChanged, toast = ctx.toast })
+ CustomLobbyBar.setup({
+  parent=ctx.queueParent,changed=ctx.queueChanged,
+  leave=LobbyPages.leaveCustom,invite=inviteFriends,
+  start=function() if lobby and lobby.isHost then ctx.net:FireServer("lobbyStart") end end,
+  edit=function() if lobby and lobby.isHost and ctx.open then ctx.open("host") end end,
+ })
 	ctx.net.OnClientEvent:Connect(function(kind: string, data: any)
 		if kind == "mm" then
 			onMM(data)
+			nightNotify()
 		end
 	end)
 	local acc = 0
@@ -1288,7 +1444,7 @@ function LobbyPages.init(c)
 		if acc >= 0.5 then
 			acc = 0
 			-- Map previews arrive asynchronously.
-			if shown.kind == "host" or shown.kind == "join" or shown.kind == "public" or shown.kind == "solo" then
+			if shown.kind == "host" or shown.kind == "join" or shown.kind == "solo" then
 				for _, f in refreshers do
 					f()
 				end

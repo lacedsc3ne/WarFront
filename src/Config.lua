@@ -13,6 +13,13 @@
 ]]
 
 local Config = {}
+local MatchRules = require(script.Parent:WaitForChild("MatchRules"))
+-- Cache the replicated mode once per rules change, rather than reading attributes per tile.
+local casual = MatchRules.get().casual
+MatchRules.changed(function() casual = MatchRules.get().casual end)
+function Config.buildTicks(ticks: number): number
+ return math.max(1, math.ceil(ticks / (if casual then 2 else 1)))
+end
 
 Config.GAME_TITLE = "War Front"
 Config.CREDIT = "© OpenFront and Contributors"
@@ -39,16 +46,17 @@ end
 Config.PUBLIC_LOBBY_SECONDS = 60 -- countdown once the first player is in the public lobby
 Config.PUBLIC_MAX_PLAYERS = 50 -- Roblox server size of the match place (Max Players setting)
 Config.PRIVATE_MAX_PLAYERS = 50
-Config.MATCH_WAIT_SECONDS = 20 -- match server: wait this long for everyone teleported in
+Config.MATCH_WAIT_SECONDS = 12 -- match server: wait at most this long for everyone teleported in
 Config.MATCH_END_SECONDS = 60 -- match server: end screen, then everyone goes back to the lobby
 Config.RANKED_START_ELO = 1000
 Config.RANKED_K = 32
 Config.RANKED_TIMER_MINUTES = 15 -- MapPlaylist.get1v1Config maxTimerValue (normal size)
 
--- The Roblox map uses the 1/4-scale terrain, so one tile here covers 16 tiles of the
--- full-size map. Formulas are evaluated in full-size units so the balance stays the same.
-Config.AREA_SCALE = 16
-Config.LINEAR_SCALE = 4
+-- Refine the source grid at runtime; source map modules remain unchanged.
+-- Evaluate balance in full-size units so smaller tiles do not change territory value.
+Config.GRID_DETAIL = 1.5
+Config.LINEAR_SCALE = 4 / Config.GRID_DETAIL
+Config.AREA_SCALE = Config.LINEAR_SCALE * Config.LINEAR_SCALE
 
 Config.LOBBY_SECONDS = 10
 -- Map vote (maps feature): lobby length when a vote runs, and how many maps are offered.
@@ -63,11 +71,12 @@ Config.NUM_BOTS = 100
 -- SpawnExecution.getSpawnTiles: every tile within Euclidean distance 4 (full-size) of the click,
 -- i.e. 1 of our tiles: a small round blob (MapRender rounds its corners), not a square.
 Config.SPAWN_RADIUS = 4 / Config.LINEAR_SCALE
-Config.MIN_SPAWN_DISTANCE = 8
+Config.MIN_SPAWN_DISTANCE = 8 * Config.GRID_DETAIL
 -- Game flow (rules_flow, OpenFront parity; public FFA lobby values from MapPlaylist.ts).
 Config.SPAWN_IMMUNITY_TICKS = 50 -- DEFAULT_SPAWN_IMMUNITY_TICKS: 5 s of PVP immunity after the spawn phase
+Config.TUTORIAL_AI_GROWTH_MULTIPLIER = 0.35 -- tutorial AI recruit at 35% of their normal rate
 Config.NATION_DIFFICULTY = "Medium" -- public FFA lobbies (Easy | Medium | Hard | Impossible)
-Config.NATION_SPAWN_DELTA = math.floor(25 / 4) -- NationExecution.randomSpawnLand delta 25, / LINEAR_SCALE
+Config.NATION_SPAWN_DELTA = math.floor(25 / Config.LINEAR_SCALE) -- NationExecution.randomSpawnLand delta 25, / LINEAR_SCALE
 Config.OVERTIME_START_MINUTES = 30 -- public FFA: overtime on; win % drops after 30 min...
 Config.OVERTIME_DROP_PER_MINUTE = 2 -- ...by 2 whole points a minute, no floor
 Config.HARD_TIME_LIMIT_SECONDS = 170 * 60 -- WinCheckExecution: force a winner after 170 min
@@ -81,7 +90,7 @@ Config.START_TROOPS = { Human = 25000, Nation = 18750, Bot = 10000 }
 Config.REVIVES_PER_ROUND = 1
 Config.REVIVE_GOLD = 50000
 Config.REVIVE_SHIELD_SECONDS = 60
-Config.REVIVE_SEARCH_RADIUS = 40 -- tiles around the old spawn searched for free land
+Config.REVIVE_SEARCH_RADIUS = 40 * Config.GRID_DETAIL -- tiles around the old spawn searched for free land
 
 Config.CITY_TROOP_BONUS = 250000 -- per city level (OpenFront cityTroopIncrease)
 -- OpenFront City / Port / Factory price: min(1M, 2^n * 125K).
@@ -199,11 +208,16 @@ Config.NUKES = {
 	-- player's land. inner/outer here are the warhead's; the carrier itself never explodes.
 	MIRV = { name = "MIRV", glyph = "V", cost = 25000000, costStep = 15000000, inner = 3, outer = 4.5, speed = 3.75, mirv = true },
 }
+for _, nuke in Config.NUKES do
+	nuke.inner *= Config.GRID_DETAIL
+	nuke.outer *= Config.GRID_DETAIL
+	nuke.speed *= Config.GRID_DETAIL
+end
 Config.SILO_COOLDOWN = 90 -- ticks
-Config.SAM_RANGE = 17 -- tiles
+Config.SAM_RANGE = 17 * Config.GRID_DETAIL -- runtime tiles
 Config.SAM_COOLDOWN = 90
 -- Defined before the warship values below, which are derived from it.
-Config.BOAT_SPEED = 0.25 -- tiles per tick: OpenFront ships move 1 full-size tile per tick (1 / LINEAR_SCALE here)
+Config.BOAT_SPEED = 1 / Config.LINEAR_SCALE -- runtime tiles per tick
 -- Warships (OpenFront Warship/Shell rules). Full-size distances are divided by LINEAR_SCALE.
 -- Speeds are relative to BOAT_SPEED, because in OpenFront warships and transports both move
 -- one tile per tick and shells three.
@@ -221,7 +235,7 @@ Config.WARSHIP_SPEED = Config.BOAT_SPEED -- tiles per tick (doubled while huntin
 Config.WARSHIP_PATROL_RANGE = 100 / Config.LINEAR_SCALE -- tiles
 Config.WARSHIP_TARGET_RANGE = 130 / Config.LINEAR_SCALE -- tiles
 Config.WARSHIP_SHELL_RATE = 20 -- ticks between shells at warships (transports: no cooldown)
-Config.WARSHIP_CAPTURE_RANGE = 2 -- Manhattan tiles to capture a trade ship (5 full-size)
+Config.WARSHIP_CAPTURE_RANGE = 2 * Config.GRID_DETAIL -- preserve capture range in source-map units
 Config.WARSHIP_HEAL_RANGE = 150 / Config.LINEAR_SCALE -- passive repair near own ports
 Config.WARSHIP_HEAL_PER_TICK = 1
 Config.SHELL_DAMAGE = 250 -- base; each shell rolls 200..300 at this base
@@ -237,7 +251,7 @@ Config.ALLIANCE_RENEW_TICKS = 300 -- renewal can be requested in the last 30 s
 Config.TRAITOR_TICKS = 300 -- 30 s
 Config.TRAITOR_LOSS_MULT = 0.5 -- attacker losses against a traitor
 Config.TRAITOR_SPEED_MULT = 0.8 -- tile cost against a traitor (lower = faster)
-Config.NUKE_ALLY_BREAK_TILES = 6 -- a nuke hitting this many of an ally's tiles breaks the alliance
+Config.NUKE_ALLY_BREAK_TILES = math.ceil(6 * Config.GRID_DETAIL ^ 2) -- preserve the affected area
 Config.NATION_MAX_ALLIES = 3
 Config.NATION_BETRAY_RATIO = 3 -- nations may betray allies this many times weaker than them
 
@@ -246,15 +260,22 @@ Config.TRADE_INTERVAL = 120 -- ticks between ship launches per port (randomised 
 -- goldMultiplier (public "x2 Gold Multiplier" modifier): passive gold, trade ships and trains.
 -- Set by the server at the start of each round.
 Config.GOLD_MULTIPLIER = 1
+-- Relative pacing adjustments; preserve mode, perk and terrain modifiers.
+Config.INCOME_RATE = 0.85
+Config.CLAIM_RATE = 0.85
+-- Casual (non-ranked) capture speed vs ranked: free land / land taken from players. Owner, 11 Oct
+-- 2026: halved from 3 / 2 ("takes over land way too quickly").
+local CASUAL_WILDERNESS_SPEED = 1.5
+local CASUAL_COMBAT_SPEED = 1.25
 
 function Config.tradeGold(pathLength: number): number
 	-- Longer routes pay more (distance measured in full-size tiles).
 	local d = pathLength * Config.LINEAR_SCALE
-	return math.floor((75000 / (1 + math.exp(-0.03 * (d - 300))) + 50 * d) * Config.GOLD_MULTIPLIER)
+	return math.floor((75000 / (1 + math.exp(-0.03 * (d - 300))) + 50 * d) * Config.GOLD_MULTIPLIER * Config.INCOME_RATE * (if casual then 2 else 1))
 end
 
 function Config.goldPerTick(kind: string): number
-	return math.floor((if kind == "Bot" then 50 else 100) * Config.GOLD_MULTIPLIER)
+	return math.floor((if kind == "Bot" then 50 else 100) * Config.GOLD_MULTIPLIER * Config.INCOME_RATE * (if casual then 2 else 1))
 end
 
 -- OpenFront Config.maxTroops. `cities` = summed levels of the player's finished cities.
@@ -270,13 +291,14 @@ function Config.maxTroops(kind: string, tiles: number, cities: number): number
 end
 
 function Config.troopGrowth(kind: string, troops: number, maxT: number): number
-	local add = 10 + troops ^ 0.73 / 4
+	local add = (10 + troops ^ 0.73 / 4) * 1.10 * Config.INCOME_RATE -- 15% slower than the previous generation rate
 	add *= 1 - troops / maxT
 	if kind == "Bot" then
 		add *= 0.5
 	elseif kind == "Nation" then
 		add *= Config.NATION_TROOP_GROWTH_MULT[Config.NATION_DIFFICULTY or "Medium"] or 0.95
 	end
+	add *= if casual then 2.25 else 1
 	return math.min(troops + add, maxT) - troops
 end
 
@@ -338,7 +360,8 @@ function Config.attackTile(attacker, defender, attackTroops: number, terrain: nu
 		local lossPerReal = mag / (attacker.kind == "Bot" and 10 or 5)
 		local perReal = clamp(2000 * cost / math.max(1, attackTroops), 5, 100)
 		-- full-size: perReal / (borderReal * 2), borderReal = borderSize * L, then x A tiles
-		return lossPerReal * A, 0, perReal * A / (borderSize * L * 2)
+		-- Wilderness only: 20% fewer troop losses and 20% faster expansion.
+		return lossPerReal * A * 0.8, 0, perReal * A / (borderSize * L * 2 * 1.2 * Config.CLAIM_RATE * (if casual then CASUAL_WILDERNESS_SPEED else 1))
 	end
 
 	if attacker.kind ~= "Bot" and defender.kind == "Bot" then
@@ -352,7 +375,8 @@ function Config.attackTile(attacker, defender, attackTroops: number, terrain: nu
 	local speed = clamp(ratio, 0.82, 7.5) * clamp(ratio / 20, 1, 50) / 8.55
 	local bAs = largeTerritoryBonus(attacker.tiles, 0.73)
 	local fracReal = speed * cost * bAs * bD / (borderSize * L)
-	return lossReal * A, density * A, fracReal * A
+	return lossReal * A, density * A, fracReal * A / (Config.CLAIM_RATE * (if casual then CASUAL_COMBAT_SPEED else 1))
 end
 
 return Config
+

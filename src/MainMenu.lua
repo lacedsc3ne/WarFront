@@ -39,6 +39,7 @@ local RunService = game:GetService("RunService")
 local localPlayer = Players.LocalPlayer
 local playerGui = localPlayer:WaitForChild("PlayerGui")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
+local MapStyles = require(Shared:WaitForChild("MapStyles"))
 local net = Shared:WaitForChild("Net")
 
 -- Round state (listen as early as possible so the first "init"/"phase" isn't missed)
@@ -177,11 +178,18 @@ TICK = Config.TICK
 
 
 local MenuKit = require(script.Parent:WaitForChild("MenuKit"))
+local MenuStyle = require(script.Parent:WaitForChild("MenuStyle"))
+local MapMenu = require(script.Parent:WaitForChild("MapMenu"))
 local MenuPages = require(script.Parent:WaitForChild("MenuPages"))
 local LobbyPages = require(script.Parent:WaitForChild("LobbyPages")) -- Create / Join Lobby, Ranked
 -- "lobby" | "match" | "standalone" (Shared.Place): the lobby place runs the matchmaking pages, a
 -- match server skips the menu and drops the player straight into the round.
 local Place = require(Shared:WaitForChild("Place"))
+-- Night menu redesign (test experience only, Workspace attribute WFNightMenu = true): the new
+-- NightMenu.Home screen replaces the home view; pages still open in this menu until they move too.
+-- Default since 11 Oct 2026; set Workspace attribute WFNightMenu = false to bring the old menu back.
+local NIGHT = workspace:GetAttribute("WFNightMenu") ~= false
+local night: any = nil
 
 -- Style (MenuKit holds OpenFront's colour tokens and component looks)
 local C, F = MenuKit.C, MenuKit.F
@@ -202,8 +210,8 @@ local function place(o: GuiObject, x: number, y: number, w: number, h: number)
 	o.Size = UDim2.fromOffset(math.max(0, math.floor(w + 0.5)), math.max(0, math.floor(h + 0.5)))
 end
 
--- OpenFront Utils.renderDuration: "1h 2min 3s", trailing zero parts dropped.
-local function formatTime(sec: number): string
+-- OpenFront duration formatting; countdown badges always show seconds and use "m".
+local function formatTime(sec: number, countdown: boolean?): string
 	local whole = math.floor(sec)
 	if whole <= 0 then
 		return "0s"
@@ -214,9 +222,9 @@ local function formatTime(sec: number): string
 		parts[#parts + 1] = h .. "h"
 	end
 	if m > 0 then
-		parts[#parts + 1] = m .. "min"
+		parts[#parts + 1] = m .. (if countdown then "m" else "min")
 	end
-	if s > 0 or #parts == 0 then
+	if countdown or s > 0 or #parts == 0 then
 		parts[#parts + 1] = s .. "s"
 	end
 	return table.concat(parts, " ")
@@ -321,6 +329,7 @@ local function loadMapData(id: string)
 			return thumbFn:InvokeServer(id)
 		end)
 		if ok and type(thumb) == "table" and typeof(thumb.terrain) == "buffer" then
+			thumb.name = id -- Thumbnail replies omit the name; retain the map-specific palette.
 			mapData[id] = thumb
 			return thumb
 		end
@@ -339,7 +348,7 @@ local function loadMapData(id: string)
 	return result
 end
 
-local function renderPreview(map, targetW: number)
+local function renderPreview(map, targetW: number, cutout: boolean?)
 	local w, h = map.width, map.height
 	local tw = math.clamp(math.floor(targetW), 16, 1024)
 	local th = math.clamp(math.floor(tw * h / w + 0.5), 8, 1024)
@@ -349,6 +358,8 @@ local function renderPreview(map, targetW: number)
 	end
 	local buf = buffer.create(tw * th * 4)
 	local terrain = map.terrain
+	local pixels = MapStyles.previewPixels(map.name) or PIXEL
+	local pixelAt = MapStyles.palette(map.name).pixelAt
 	local xs = table.create(tw, 0)
 	for x = 0, tw - 1 do
 		xs[x + 1] = math.min(w - 1, math.floor((x + 0.5) * w / tw))
@@ -357,7 +368,8 @@ local function renderPreview(map, targetW: number)
 	for y = 0, th - 1 do
 		local row = math.min(h - 1, math.floor((y + 0.5) * h / th)) * w
 		for x = 1, tw do
-			buffer.writeu32(buf, o, PIXEL[buffer.readu8(terrain, row + xs[x]) + 1])
+			local byte = buffer.readu8(terrain, row + xs[x])
+			buffer.writeu32(buf, o, if cutout and byte < 128 and bit32.band(byte, 32) ~= 0 then 0 else (if pixelAt then pixelAt(byte, xs[x], row // w, w, h) else pixels[byte + 1]))
 			o += 4
 		end
 		if y % 48 == 47 then
@@ -368,13 +380,13 @@ local function renderPreview(map, targetW: number)
 	return img
 end
 
-local function requestPreview(id: string, width: number)
-	local key = id .. "@" .. width
+local function requestPreview(id: string, width: number, cutout: boolean?)
+	local key = id .. "@" .. width .. (if cutout then "@cutout" else "")
 	if previews[key] ~= nil or previewPending[key] then
 		return
 	end
 	previewPending[key] = true
-	table.insert(previewQueue, { id = id, width = width, key = key })
+	table.insert(previewQueue, { id = id, width = width, key = key, cutout = cutout })
 	if previewWorker then
 		return
 	end
@@ -385,7 +397,7 @@ local function requestPreview(id: string, width: number)
 			local img = nil
 			local map = loadMapData(job.id)
 			if map then
-				local ok, res = pcall(renderPreview, map, job.width)
+				local ok, res = pcall(renderPreview, map, job.width, job.cutout)
 				if ok then
 					img = res
 				else
@@ -436,6 +448,27 @@ local gui = make("ScreenGui", {
 	Parent = playerGui,
 })
 
+-- Main-menu button feedback, including buttons added by its inline pages.
+-- Activated also covers touch and gamepad; background click-catchers stay silent.
+do
+	local SoundKit = require(script.Parent:WaitForChild("SoundKit"))
+	local wired = setmetatable({}, { __mode = "k" })
+	local silent = { Backdrop = true, DrawerBackdrop = true, AccountCatcher = true }
+	local function bindButton(o)
+		if not o:IsA("GuiButton") or silent[o.Name] or wired[o] then
+			return
+		end
+		wired[o] = true
+		o.Activated:Connect(function()
+			SoundKit.play("slider", 1.5)
+		end)
+	end
+	gui.DescendantAdded:Connect(bindButton)
+	for _, o in gui:GetDescendants() do
+		bindButton(o)
+	end
+end
+
 -- body bg-neutral-800 with the map background at 30% opacity: here the live match shows
 -- through at 30%. Swallows clicks so they don't reach the map.
 local backdrop = make("TextButton", {
@@ -443,8 +476,8 @@ local backdrop = make("TextButton", {
 	Text = "",
 	AutoButtonColor = false,
 	Selectable = false,
-	BackgroundColor3 = C.NEUTRAL800,
-	BackgroundTransparency = 0.3,
+	BackgroundColor3 = C.SURFACE,
+	BackgroundTransparency = 0.25,
 	BorderSizePixel = 0,
 	Size = UDim2.fromScale(1, 1),
 	Parent = gui,
@@ -456,19 +489,9 @@ setSelectionGroup(screen)
 
 local VERSION = "v" .. tostring(game.PlaceVersion)
 
--- "WAR FRONT" wordmark in place of OpenFront's logo image: malibu-blue heavy type with the
--- white outline of OpenFront's .l-header__logo.
-local function wordmark(parent: Instance, name: string): TextLabel
-	local w = text({
-		Name = name,
-		FontFace = F.LOGO,
-		Text = Config.GAME_TITLE and string.upper(Config.GAME_TITLE) or "WAR FRONT",
-		TextColor3 = C.MALIBU,
-		TextScaled = true,
-		Parent = parent,
-	})
-	make("UIStroke", { Color = WHITE, Thickness = 1.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual, Parent = w })
-	return w
+-- Original cut-letter wordmark, shared by desktop, mobile and drawer.
+local function wordmark(parent: Instance, name: string)
+	return MapMenu.wordmark(parent, name)
 end
 
 local function versionLabel(parent: Instance): TextLabel
@@ -478,7 +501,7 @@ end
 -- Page links (DesktopNavBar / MobileNavBar order).
 local NAV = {
 	{ key = "play", label = "Play" },
-	{ key = "store", label = "Store" },
+	{ key = "store", label = "Shop" },
 	{ key = "inventory", label = "Inventory" },
 	{ key = "leaderboard", label = "Leaderboard" },
 	{ key = "friends", label = "Friends" },
@@ -510,8 +533,8 @@ local function navLink(parent: Instance, key: string, label: string, order: numb
 		BackgroundTransparency = 1,
 		AutomaticSize = if drawer then Enum.AutomaticSize.None else Enum.AutomaticSize.X,
 		Size = if drawer then UDim2.new(1, 0, 0, 44) else UDim2.fromOffset(0, 40),
-		FontFace = if drawer then F.BOLD else F.MEDIUM,
-		TextSize = if drawer then 24 else 16,
+		FontFace = Font.fromEnum(Enum.Font.GothamBlack),
+		TextSize = if drawer then 24 else 24,
 		Text = string.upper(label),
 		TextColor3 = WHITE,
 		TextTransparency = 0.3,
@@ -519,11 +542,22 @@ local function navLink(parent: Instance, key: string, label: string, order: numb
 		Parent = parent,
 	})
 	local pad = if drawer then MenuKit.pad(b, 0, 0, 0, 0) else nil
+	if not drawer then
+		MenuKit.pad(b, 12, 12, 0, 0)
+		corner(b, 8)
+		make("Frame", { Name = "ActiveLine", AnchorPoint = Vector2.new(0, 1), Position = UDim2.fromScale(0, 1), Size = UDim2.new(1, 0, 0, 3), BackgroundColor3 = C.AQUARIUS, BorderSizePixel = 0, Visible = false, Parent = b })
+	end
 	local state = "idle"
 	local function paint()
 		local lit = state ~= "idle" or b:GetAttribute("Active") == true
 		local hi = if drawer then C.BLUE600 else C.MALIBU
-		b.TextColor3 = if lit then hi else WHITE
+		b.TextColor3 = if drawer and lit then hi else WHITE
+		if not drawer then
+			b.BackgroundColor3 = C.MALIBU
+			b.BackgroundTransparency = if state ~= "idle" then 0.9 else 1
+			local line = b:FindFirstChild("ActiveLine")
+			if line then line.Visible = b:GetAttribute("Active") == true end
+		end
 		b.TextTransparency = if lit then 0 else 0.3
 		if pad then
 			-- hover:translate-x-2.5 on the drawer items
@@ -540,7 +574,7 @@ local function navLink(parent: Instance, key: string, label: string, order: numb
 	return b
 end
 
--- NavAccountMenu trigger: round avatar + caret.
+-- NavAccountMenu trigger: avatar, optional clan tag, level and custom name.
 local accountButtons: { TextButton } = {}
 local function accountButton(parent: Instance, order: number): TextButton
 	local b = make("TextButton", {
@@ -565,11 +599,16 @@ local function accountButton(parent: Instance, order: number): TextButton
 		Parent = b,
 	})
 	round(img)
-	local caret = MenuKit.icon("Caret", { Position = UDim2.fromOffset(40, 14), Size = UDim2.fromOffset(12, 12), ImageColor3 = WHITE, ImageTransparency = 0.1, Parent = b })
-	MenuKit.hover(b, function(s)
-		b.BackgroundTransparency = if s == "idle" then 1 else 0.92
-		caret.ImageTransparency = if s == "idle" then 0.1 else 0
-	end)
+	local identity=text({Name="Identity",Position=UDim2.fromOffset(44,0),Size=UDim2.new(1,-66,1,0),FontFace=F.BOLD,TextSize=14,RichText=true,Text="",TextXAlignment=Enum.TextXAlignment.Left,TextYAlignment=Enum.TextYAlignment.Center,TextTruncate=Enum.TextTruncate.AtEnd,Parent=b})
+ local caret = MenuKit.icon("Caret", { AnchorPoint=Vector2.new(1,0),Position=UDim2.new(1,-6,0,14), Size = UDim2.fromOffset(12, 12), ImageColor3 = WHITE, ImageTransparency = 0.1, Parent = b })
+ local xpTip=text({Name="XpTooltip",AnchorPoint=Vector2.new(1,0),Position=UDim2.new(1,0,1,8),Size=UDim2.fromOffset(188,34),BackgroundColor3=Color3.fromRGB(5,22,40),BackgroundTransparency=0,FontFace=F.BOLD,TextSize=13,TextColor3=Color3.fromRGB(155,184,219),Text="Loading XP...",Visible=false,ZIndex=30,Parent=b})
+ xpTip.BackgroundTransparency=0
+ corner(xpTip,6);MenuKit.stroke(xpTip,.2,Color3.fromRGB(71,145,197),1)
+ MenuKit.hover(b, function(s)
+  b.BackgroundTransparency = if s == "idle" then 1 else 0.92
+  caret.ImageTransparency = if s == "idle" then 0.1 else 0
+  xpTip.Visible=s=="hover"
+ end)
 	table.insert(accountButtons, b)
 	return b
 end
@@ -586,35 +625,40 @@ local function utility(parent: Instance, size: number, order0: number): { [strin
 end
 
 -- Desktop nav bar -------------------------------------------------------------------
-local nav = make("Frame", { Name = "NavBar", BackgroundColor3 = C.ZINC900, BackgroundTransparency = 0.1, BorderSizePixel = 0, ZIndex = 5, Parent = screen })
+local nav = make("Frame", { Name = "NavBar", BackgroundColor3 = Color3.fromRGB(3, 20, 37), BackgroundTransparency = 0.05, BorderSizePixel = 0, ZIndex = 5, Parent = screen })
 local navRow = make("Frame", {
 	Name = "Row",
 	AnchorPoint = Vector2.new(0.5, 0.5),
 	Position = UDim2.fromScale(0.5, 0.5),
 	AutomaticSize = Enum.AutomaticSize.X,
 	Size = UDim2.fromOffset(0, 52),
+	BackgroundColor3 = Color3.fromRGB(3, 17, 32),
 	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
 	Parent = nav,
 })
+corner(navRow, 26)
+MenuKit.pad(navRow, 12, 12, 0, 0)
 local navRowScale = make("UIScale", { Parent = navRow })
-MenuKit.list(navRow, true, 32, { VerticalAlignment = Enum.VerticalAlignment.Center })
+MenuKit.list(navRow, true, 6, { VerticalAlignment = Enum.VerticalAlignment.Center })
 do
-	local logo = make("Frame", { Name = "Logo", LayoutOrder = 0, BackgroundTransparency = 1, Size = UDim2.fromOffset(170, 52), Parent = navRow })
+	local logo = make("Frame", { Name = "Logo", BackgroundTransparency = 1, AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 190, 0.5, 0), Size = UDim2.fromOffset(210, 34), Parent = nav })
 	local w = wordmark(logo, "Wordmark")
-	w.Size = UDim2.fromOffset(170, 32)
-	local v = versionLabel(logo)
-	v.Position = UDim2.fromOffset(0, 34)
-	v.Size = UDim2.fromOffset(170, 18)
+	w.Size = UDim2.fromScale(1, 1)
 	for i, item in NAV do
-		navLink(navRow, item.key, item.label, i, false)
+		if item.key ~= "friends" and item.key ~= "leaderboard" then
+			navLink(navRow, item.key, item.label, i, false)
+		end
 	end
-	local util = make("Frame", { Name = "Utility", LayoutOrder = 10, BackgroundTransparency = 1, AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, 40), Parent = navRow })
+	local util = make("Frame", { Name = "Utility", AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -16, 0.5, 0), BackgroundColor3 = Color3.fromRGB(3, 17, 32), BackgroundTransparency = 0.05, BorderSizePixel = 0, AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, 52), Parent = nav })
+	corner(util, 24)
 	MenuKit.list(util, true, 4, { VerticalAlignment = Enum.VerticalAlignment.Center })
 	-- ml-1 border-l border-white/10 pl-5
-	MenuKit.pad(util, 4, 0, 0, 0)
-	make("Frame", { Name = "Divider", LayoutOrder = -2, Size = UDim2.fromOffset(1, 40), BackgroundColor3 = WHITE, BackgroundTransparency = 0.9, BorderSizePixel = 0, Parent = util })
-	make("Frame", { Name = "Gap", LayoutOrder = -1, Size = UDim2.fromOffset(12, 40), BackgroundTransparency = 1, Parent = util })
-	utility(util, 40, 0)
+	MenuKit.pad(util, 12, 12, 0, 0)
+	local friends = MenuKit.iconButton("People", 36, { Name = "Nav_friends", LayoutOrder = 1, Parent = util })
+	navButtons.friends = { friends }
+	local settings = MenuKit.iconButton("Gear", 36, { Name = "Util_settings", LayoutOrder = 2, Parent = util })
+	utilButtons.settings = { settings }
 	accountButton(util, 10)
 end
 
@@ -668,13 +712,11 @@ local newsDismissed: { [string]: boolean } = {}
 local newsIndex = 1
 
 local news = make("Frame", { Name = "News", BackgroundColor3 = C.SURFACE, BorderSizePixel = 0, Parent = playPage })
-local newsCorner = corner(news, 12)
-local newsBorderT = make("Frame", { Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = WHITE, BackgroundTransparency = 0.9, BorderSizePixel = 0, Parent = news })
-local newsBorderB = make("Frame", { AnchorPoint = Vector2.new(0, 1), Position = UDim2.fromScale(0, 1), Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = WHITE, BackgroundTransparency = 0.9, BorderSizePixel = 0, Parent = news })
+MenuStyle.panel(news, C.SURFACE)
 local newsTag = text({ Name = "Type", AnchorPoint = Vector2.new(0, 0.5), AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, 18), BackgroundTransparency = 0.8, FontFace = F.BOLD, TextSize = 10, Parent = news })
 corner(newsTag, 4)
 padding(newsTag, 8)
-local newsTitle = text({ Name = "Title", FontFace = F.MEDIUM, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Parent = news })
+local newsTitle = text({ Name = "Title", FontFace = F.BOLD, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Parent = news })
 local newsDesc = text({ Name = "Desc", TextSize = 12, TextTransparency = 0.5, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Parent = news })
 local newsDots = make("Frame", { Name = "Dots", AnchorPoint = Vector2.new(1, 0.5), BackgroundTransparency = 1, Size = UDim2.fromOffset(0, 6), AutomaticSize = Enum.AutomaticSize.X, Parent = news })
 MenuKit.list(newsDots, true, 4, { VerticalAlignment = Enum.VerticalAlignment.Center })
@@ -738,9 +780,9 @@ end
 -- The name field is editable (NameInput); the TAG button shows your clan tag (ClanPages sets the
 -- PlayerGui attribute WFClanTag) and opens the Clans page.
 local identity = make("Frame", { Name = "Identity", BackgroundColor3 = C.SURFACE, BorderSizePixel = 0, Parent = playPage })
-local identityCorner = corner(identity, 12)
+MenuStyle.panel(identity, C.SURFACE)
 local idInner = make("Frame", { Name = "Inner", BackgroundColor3 = C.SURFACE, BackgroundTransparency = 0.2, BorderSizePixel = 0, Parent = identity })
-corner(idInner, 12)
+idInner.BackgroundTransparency = 1
 local tagBtn = make("TextButton", { Name = "ClanTag", Text = "", AutoButtonColor = false, BackgroundColor3 = WHITE, BackgroundTransparency = 1, Size = UDim2.fromOffset(116, 44), Parent = idInner })
 corner(tagBtn, 8)
 text({ Name = "Label", Position = UDim2.fromOffset(6, 0), Size = UDim2.new(1, -24, 1, 0), FontFace = F.SEMIBOLD, TextSize = 16, TextTransparency = 0.55, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Text = "TAG", Parent = tagBtn })
@@ -753,7 +795,7 @@ local myName = make("TextBox", {
 	Name = "Name",
 	BackgroundTransparency = 1,
 	BorderSizePixel = 0,
-	FontFace = F.MEDIUM,
+	FontFace = F.BOLD,
 	TextSize = 24,
 	TextColor3 = WHITE,
 	PlaceholderColor3 = C.GRAY400,
@@ -764,6 +806,8 @@ local myName = make("TextBox", {
 	Parent = idInner,
 })
 make("UIStroke", { Color = BLACK, Transparency = 0.6, Thickness = 1, Parent = myName }) -- text-shadow
+myName.TextEditable=false -- Customise the name in View Account.
+local nameController: any=nil
 
 -- Lobby cards (LobbyCard.ts) ----------------------------------------------------------
 local cards = {}
@@ -780,16 +824,20 @@ local function lobbyPill(parent: Instance, order: number?): TextLabel
 		TextSize = 12,
 		Parent = parent,
 	})
-	corner(p, 4)
-	padding(p, 8)
+	p.AutomaticSize = Enum.AutomaticSize.None
+	local function fitPill()
+		p.Size = UDim2.fromOffset(math.max(24, p.TextBounds.X + 24), 24)
+	end
+	p:GetPropertyChangedSignal("TextBounds"):Connect(fitPill)
+	MenuStyle.panel(p, C.MALIBU)
+	fitPill()
 	return p
 end
 
 local function makeCard()
 	local c: any = { previewSize = 360 }
 	c.button = make("TextButton", { Name = "LobbyCard", Text = "", AutoButtonColor = false, BackgroundColor3 = C.SURFACE, BorderSizePixel = 0, Parent = playPage })
-	corner(c.button, 16)
-	local glow = MenuKit.stroke(c.button, 1, C.MALIBU, 2)
+	-- Angular border and clip retain the existing card input.
 	-- CanvasGroup so the image and the bottom bar get the rounded corners too.
 	local okCanvas, canvas = pcall(Instance.new, "CanvasGroup")
 	if not okCanvas then
@@ -800,12 +848,7 @@ local function makeCard()
 	canvas.BackgroundColor3 = C.SURFACE
 	canvas.BorderSizePixel = 0
 	canvas.Parent = c.button
-	corner(canvas, 16)
-	c.image = make("ImageLabel", { Name = "Map", BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromScale(1.05, 1.05), ScaleType = Enum.ScaleType.Crop, Visible = false, Parent = canvas })
-	MenuKit.hover(c.button, function(s)
-		glow.Transparency = if s == "idle" then 1 else 0
-		c.image.Size = if s == "idle" then UDim2.fromScale(1.05, 1.05) else UDim2.fromScale(1.12, 1.12)
-	end)
+	c.image = make("ImageLabel", { Name = "Map", BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromScale(1, 1), ScaleType = Enum.ScaleType.Stretch, Visible = false, Parent = canvas })
 	local pills = make("Frame", { Name = "Pills", Position = UDim2.fromOffset(8, 8), Size = UDim2.new(1, -110, 0, 84), BackgroundTransparency = 1, Parent = canvas })
 	MenuKit.list(pills, false, 4)
 	c.pill1 = lobbyPill(pills, 1)
@@ -814,16 +857,17 @@ local function makeCard()
 	c.timer = lobbyPill(canvas)
 	c.timer.AnchorPoint = Vector2.new(1, 0)
 	c.timer.Position = UDim2.new(1, -8, 0, 8)
-	local bar = make("Frame", { Name = "Bar", AnchorPoint = Vector2.new(0, 1), Position = UDim2.fromScale(0, 1), Size = UDim2.new(1, 0, 0, 48), BackgroundColor3 = BLACK, BackgroundTransparency = 0.35, BorderSizePixel = 0, Parent = canvas })
+	local bar = make("Frame", { Name = "Bar", AnchorPoint = Vector2.new(0, 1), Position = UDim2.fromScale(0, 1), Size = UDim2.new(1, 0, 0, 48), BackgroundColor3 = BLACK, BackgroundTransparency = 1, BorderSizePixel = 0, Parent = canvas })
 	c.bar = bar
-	c.title = text({ Position = UDim2.fromOffset(12, 7), Size = UDim2.new(1, -24, 0, 18), FontFace = F.BOLD, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Parent = bar })
-	c.sub = text({ Position = UDim2.fromOffset(12, 26), Size = UDim2.new(1, -24, 0, 15), TextSize = 12, TextTransparency = 0.3, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Parent = bar })
-	c.badge = make("Frame", { Name = "Count", AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -8, 1, -52), AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, 22), BackgroundColor3 = BLACK, BackgroundTransparency = 0.3, BorderSizePixel = 0, Parent = canvas })
+	c.title = text({ Position = UDim2.fromOffset(12, 7), Size = UDim2.new(1, -112, 0, 18), FontFace = F.BOLD, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Parent = bar })
+	c.sub = text({ Position = UDim2.fromOffset(12, 26), Size = UDim2.new(1, -112, 0, 15), TextSize = 12, TextTransparency = 0.3, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Parent = bar })
+	c.badge = make("Frame", { Name = "Count", AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -24, 1, -14), AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, 22), BackgroundColor3 = BLACK, BackgroundTransparency = 0.3, BorderSizePixel = 0, Parent = canvas })
 	corner(c.badge, 4)
 	padding(c.badge, 8)
 	MenuKit.list(c.badge, true, 4, { VerticalAlignment = Enum.VerticalAlignment.Center })
 	c.count = text({ LayoutOrder = 1, AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, 22), FontFace = F.BOLD, TextSize = 12, Parent = c.badge })
 	c.countIcon = MenuKit.icon("People", { LayoutOrder = 2, Size = UDim2.fromOffset(16, 16), Parent = c.badge })
+	MenuStyle.card(c.button, canvas)
 	cards[#cards + 1] = c
 	return c
 end
@@ -833,32 +877,28 @@ local small = { makeCard(), makeCard() }
 
 -- "Upcoming" heading: also the way into the full list (GameModeSelector.renderUpcomingHeading).
 local upHeader = make("TextButton", { Name = "Upcoming", Text = "", AutoButtonColor = false, BackgroundColor3 = WHITE, BackgroundTransparency = 0.96, BorderSizePixel = 0, Parent = playPage })
-corner(upHeader, 8)
-local upStroke = MenuKit.stroke(upHeader, 0.9)
-local upLabel = text({ Position = UDim2.fromOffset(10, 0), Size = UDim2.new(1, -140, 1, 0), FontFace = F.BOLD, TextSize = 14, TextTransparency = 0.3, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Text = "UPCOMING", Parent = upHeader })
-local seeAll = make("Frame", { Name = "SeeAll", AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -6, 0.5, 0), AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, 22), BackgroundColor3 = C.MALIBU, BorderSizePixel = 0, Parent = upHeader })
-corner(seeAll, 4)
-MenuKit.pad(seeAll, 8, 4, 0, 0)
-MenuKit.list(seeAll, true, 2, { VerticalAlignment = Enum.VerticalAlignment.Center })
-local seeAllText = text({ LayoutOrder = 1, AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, 22), FontFace = F.BOLD, TextSize = 12, Text = "SEE ALL", Parent = seeAll })
-MenuKit.icon("Chevron", { LayoutOrder = 2, Size = UDim2.fromOffset(16, 16), Parent = seeAll })
+MenuStyle.panel(upHeader, C.SURFACE)
+local upLabel = text({ Position = UDim2.fromOffset(20, 0), Size = UDim2.new(1, -140, 1, 0), FontFace = F.BOLD, TextSize = 14, TextTransparency = 0.3, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Text = "UPCOMING", Parent = upHeader })
+local seeAll = make("Frame", { Name = "SeeAll", AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -14, 0.5, 0), AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, 22), BackgroundColor3 = C.MALIBU, BorderSizePixel = 0, Parent = upHeader })
+MenuStyle.panel(seeAll, C.MALIBU)
+seeAll.AutomaticSize = Enum.AutomaticSize.None
+seeAll.Size = UDim2.fromOffset(100, 24)
+local seeAllText = text({ Position = UDim2.fromOffset(10, 0), Size = UDim2.new(1, -26, 1, 0), FontFace = F.BOLD, TextSize = 12, Text = "SEE ALL", Parent = seeAll })
+MenuKit.icon("Chevron", { Position = UDim2.new(1, -22, 0.5, -8), Size = UDim2.fromOffset(16, 16), Parent = seeAll })
 MenuKit.hover(upHeader, function(s)
 	local on = s ~= "idle"
-	upStroke.Color = if on then C.MALIBU else WHITE
-	upStroke.Transparency = if on then 0.5 else 0.9
-	upHeader.BackgroundColor3 = if on then C.MALIBU else WHITE
-	upHeader.BackgroundTransparency = if on then 0.85 else 0.96
-	upLabel.TextTransparency = if on then 0 else 0.3
-	seeAll.BackgroundColor3 = if on then C.AQUARIUS else C.MALIBU
+	upHeader.BackgroundTransparency = 1
+	upLabel.TextTransparency = if on then 0 else 0.1
+	seeAll.BackgroundTransparency = 1
 end)
 
 -- Action cards ----------------------------------------------------------------------
 -- Our primary action joins the server's round (OpenFront's slot here is "Solo").
-local playBtn = MenuKit.button("primary", { Name = "Play", Text = if Place.role() == "lobby" then "SOLO" else "PLAY", Parent = playPage })
-local tutBtn = MenuKit.button("tutorial", { Name = "Tutorial", Text = "TUTORIAL", Parent = playPage })
+local playBtn = MenuStyle.button("primary", { Name = "Play", Text = if Place.role() == "lobby" then "SOLO" else "PLAY", Parent = playPage })
+local tutBtn = MenuStyle.button("tutorial", { Name = "Tutorial", Text = "TUTORIAL", Parent = playPage })
 local soonButtons = {}
 for i, label in { "CREATE LOBBY", "RANKED", "JOIN LOBBY" } do
-	soonButtons[i] = MenuKit.button("secondary", { Name = "Soon" .. i, Text = label, Parent = playPage })
+	soonButtons[i] = MenuStyle.button("secondary", { Name = "Soon" .. i, Text = label, Parent = playPage })
 end
 
 -- Footer ----------------------------------------------------------------------------
@@ -931,21 +971,29 @@ end
 
 -- Account menu dropdown (NavAccountMenu) -------------------------------------------------
 local accountCatcher = make("TextButton", { Name = "AccountCatcher", Text = "", AutoButtonColor = false, Selectable = false, BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Visible = false, ZIndex = 30, Parent = screen })
-local accountMenu = make("Frame", { Name = "AccountMenu", BackgroundColor3 = C.ZINC900, BorderSizePixel = 0, Size = UDim2.fromOffset(240, 0), AutomaticSize = Enum.AutomaticSize.Y, Visible = false, ZIndex = 31, Parent = screen })
-corner(accountMenu, 12)
-MenuKit.stroke(accountMenu, 0.9)
-MenuKit.list(accountMenu, false, 0)
+local accountMenu = make("Frame", { Name = "AccountMenu", BackgroundColor3 = Color3.fromRGB(5,22,40), BackgroundTransparency=0, BorderSizePixel = 0, Size = UDim2.fromOffset(264, 0), AutomaticSize = Enum.AutomaticSize.Y, Visible = false, ZIndex = 31, Parent = screen })
+corner(accountMenu, 8)
+MenuKit.stroke(accountMenu, 0.15,Color3.fromRGB(63,131,187),1.5)
+MenuKit.pad(accountMenu,8,8,8,8)
+MenuKit.list(accountMenu, false, 4)
+text({Name="Heading",LayoutOrder=0,Text="YOUR ACCOUNT",FontFace=F.BOLD,TextSize=12,TextColor3=C.AQUARIUS,TextXAlignment=Enum.TextXAlignment.Left,Size=UDim2.new(1,0,0,24),ZIndex=32,Parent=accountMenu})
 setSelectionGroup(accountMenu)
 local accountItems: { TextButton } = {}
 local function accountItem(order: number, iconName: string, label: string, onClick: () -> ())
-	local b = make("TextButton", { Name = label, LayoutOrder = order, Text = "", AutoButtonColor = false, BackgroundColor3 = WHITE, BackgroundTransparency = 1, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 44), ZIndex = 32, Parent = accountMenu })
-	MenuKit.icon(iconName, { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 16, 0.5, 0), Size = UDim2.fromOffset(16, 16), ImageTransparency = 0.2, ZIndex = 33, Parent = b })
-	text({ Position = UDim2.fromOffset(44, 0), Size = UDim2.new(1, -56, 1, 0), FontFace = F.MEDIUM, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, Text = label, ZIndex = 33, Parent = b })
-	MenuKit.hover(b, function(s)
-		b.BackgroundTransparency = if s == "idle" then 1 else 0.95
-	end)
-	b.Activated:Connect(onClick)
-	accountItems[#accountItems + 1] = b
+ local base=Color3.fromRGB(11,37,63)
+ local b = make("TextButton", { Name = label, LayoutOrder = order, Text = "", AutoButtonColor = false, BackgroundColor3 = base, BackgroundTransparency = 0, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 44), ZIndex = 32, Parent = accountMenu })
+ corner(b,6)
+ local outline=MenuKit.stroke(b,0.6,Color3.fromRGB(63,131,187),1)
+ local icon=MenuKit.icon(iconName, { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 12, 0.5, 0), Size = UDim2.fromOffset(20, 20), ImageColor3=C.WHITE, ZIndex = 33, Parent = b })
+ text({ Position = UDim2.fromOffset(44, 0), Size = UDim2.new(1, -70, 1, 0), FontFace = F.BOLD, TextSize = 16, TextXAlignment = Enum.TextXAlignment.Left, Text = label, ZIndex = 33, Parent = b })
+ MenuKit.icon("Chevron",{AnchorPoint=Vector2.new(1,0.5),Position=UDim2.new(1,-12,0.5,0),Size=UDim2.fromOffset(12,12),ImageColor3=Color3.fromRGB(155,184,219),ZIndex=33,Parent=b})
+ MenuKit.hover(b, function(s)
+  b.BackgroundTransparency=0;b.BackgroundColor3=if s=="idle" then base else Color3.fromRGB(18,53,82)
+  icon.ImageColor3=if s=="idle" then C.WHITE else C.AQUARIUS
+  outline.Color=if s=="idle" then Color3.fromRGB(63,131,187) else C.AQUARIUS;outline.Transparency=if s=="idle" then 0.6 else 0.1
+ end)
+ b.Activated:Connect(onClick)
+ accountItems[#accountItems + 1] = b
 end
 
 -- Toasts (own ScreenGui so they also show over the match) ------------------------------
@@ -968,6 +1016,10 @@ MenuKit.stroke(toast, 0.9)
 padding(toast, 18)
 local toastSeq = 0
 local function showToast(msg: string, seconds: number?)
+	if night and night.isVisible() then
+		night.toast(msg)
+		return
+	end
 	toastSeq += 1
 	local mine = toastSeq
 	toast.Text = msg
@@ -1033,7 +1085,7 @@ local function setCard(c, info)
 	c.badge.Visible = info.count ~= nil
 	c.count.Text = info.count or ""
 	c.countIcon.Visible = info.countIcon ~= false
-	setPreview(c)
+	-- MapMenu requests only the selected terrain preview; legacy cards are hidden.
 end
 
 local function timerText(mode: string?, c: any?): string?
@@ -1044,12 +1096,12 @@ local function timerText(mode: string?, c: any?): string?
 			return "STARTING…"
 		elseif l.endAt then
 			local left = l.endAt - os.clock()
-			return if left > 0 then formatTime(math.ceil(left)) else "STARTING…"
+			return if left > 0 then formatTime(math.ceil(left), true) else "STARTING…"
 		end
-		return formatTime(l.default or 60)
+		return formatTime(l.default or 60, true)
 	elseif mode == "remaining" then
 		local left = state.phaseEnd - os.clock()
-		return if left > 0 then formatTime(left) else "STARTING…"
+		return if left > 0 then formatTime(math.ceil(left), true) else "STARTING…"
 	elseif mode == "elapsed" and state.playStart then
 		return formatTime(os.clock() - state.playStart)
 	end
@@ -1069,6 +1121,7 @@ local function updateTimers()
 	if upcomingRefresh then
 		upcomingRefresh()
 	end
+	MapMenu.update()
 end
 
 local function leadingOption()
@@ -1103,7 +1156,27 @@ local function poolAfter(current: string?, count: number)
 end
 
 local function renderAccount()
-	for _, b in accountButtons do
+ local function escape(v)
+  return tostring(v):gsub("&","&amp;"):gsub("<","&lt;"):gsub(">","&gt;"):gsub('"',"&quot;")
+ end
+ local clan=playerGui:GetAttribute("WFClanTag")
+ local tag=if type(clan)=="string" and clan~="" then "["..clan.."]" else ""
+ local level="[Lvl "..tostring(math.max(1,math.floor(tonumber(profile and profile.level) or 1))).."]"
+ local name=if myName.Text~="" then myName.Text else localPlayer.DisplayName
+ local tagText=if tag~="" then '<font color="#00b1eb">'..escape(tag)..'</font> ' else ""
+ local levelText='<font color="#ffd337">'..level..'</font>'
+ for _, b in accountButtons do
+  local mobile=b.Parent==topRight
+  local plain=(if tag~="" then tag.." " else "")..level.." "..name
+  local width=game:GetService("TextService"):GetTextSize(plain,14,Enum.Font.GothamBold,Vector2.new(2000,40)).X
+  b.Size=UDim2.fromOffset(if mobile then 150 else math.clamp(width+72,150,280),40)
+  local xpTip=b:FindFirstChild("XpTooltip")
+  if xpTip then xpTip.Text=if profile and tonumber(profile.xpInto) and tonumber(profile.xpNeed) then string.format("%d / %d XP",math.max(0,math.floor(profile.xpInto)),math.max(1,math.floor(profile.xpNeed))) else "Loading XP..." end
+  local identity=b:FindFirstChild("Identity")
+  if identity then
+   identity.TextSize=if mobile then 12 else 14
+   identity.Text=tagText..levelText..(if mobile then "\n" else "  ")..escape(name)
+  end
 		local img = b:FindFirstChild("Avatar") :: ImageLabel
 		local cached = thumbs[localPlayer.UserId]
 		if type(cached) == "string" then
@@ -1116,6 +1189,9 @@ local function renderAccount()
 		end
 	end
 end
+
+myName:GetPropertyChangedSignal("Text"):Connect(renderAccount)
+playerGui:GetAttributeChangedSignal("WFClanTag"):Connect(renderAccount)
 
 local function tutorialShown(): boolean
 	-- GameModeSelector TUTORIAL_CARD_MAX_GAMES: the card shows until 5 games are played.
@@ -1233,7 +1309,32 @@ local updateFloating: () -> ()
 local relayout: () -> ()
 local tutorialWasShown = true
 
+local function nightSnapshot()
+	local queuedKind = nil
+	for _, kind in { "ffa", "team", "special" } do
+		if LobbyPages.queued(kind) then
+			queuedKind = kind
+		end
+	end
+	return {
+		role = Place.role(),
+		phase = state.phase,
+		phaseLeft = state.phaseEnd - os.clock(),
+		mapId = state.mapId,
+		mode = state.mode,
+		lobbies = state.lobbies,
+		queue = state.queue,
+		queuedKind = queuedKind,
+		room = if night then LobbyPages.night.lobby() else nil,
+		profile = profile,
+		name = if myName.Text ~= "" then myName.Text else localPlayer.DisplayName,
+	}
+end
+
 refresh = function()
+	if night then
+		night.update(nightSnapshot())
+	end
 	renderAccount()
 	renderCards()
 	if tutorialShown() ~= tutorialWasShown then
@@ -1283,7 +1384,7 @@ end
 local function layoutCard(c, x: number, y: number, w: number, h: number)
 	place(c.button, x, y, w, h)
 	local compact = w < 320
-	c.title.TextSize = if compact then 14 else 16
+	c.title.TextSize = if compact then 14 else 20
 	c.previewSize = if w > 420 then 480 else 320
 end
 
@@ -1306,7 +1407,7 @@ relayout = function()
 	screenScale.Scale = s
 	local LX, LY = X / s, Y / s
 	screen.Size = UDim2.fromOffset(LX, LY)
-	local mobile = LX < 1024 -- Tailwind lg
+	local mobile = LX < 1200 -- use the floating desktop header where all controls fit
 	local sm = LX >= 640 -- Tailwind sm
 
 	-- Bars.
@@ -1316,24 +1417,24 @@ relayout = function()
 	if mobile then
 		navH = 56
 		place(topBar, 0, 0, LX, navH)
-		topLogo.Size = UDim2.fromOffset(math.clamp(LX - 2 * 190, 90, 170), 26)
+		topLogo.Size = UDim2.fromOffset(math.clamp(LX - 2 * 190, 90, 140), 22)
 	else
-		navH = 84
+		navH = 88
 		place(nav, 0, 0, LX, navH)
-		task.defer(function()
-			local w = navRow.AbsoluteSize.X / math.max(0.01, navRowScale.Scale * s)
-			if w > 0 then
-				navRowScale.Scale = math.min(1, (LX - 24) / w)
-			end
-		end)
+		local logo = nav:FindFirstChild("Logo")
+		logo.AnchorPoint = Vector2.new(1, 0.5)
+		logo.Position = UDim2.new(0.54, -navRow.AbsoluteSize.X / s / 2 - 24, 0.5, 0)
+		logo.Size = UDim2.fromOffset(if LX < 1440 then 150 else 165, 24)
+		navRowScale.Scale = if LX < 1440 then 0.88 else 1
+		navRow.Position = UDim2.new(0.54, 0, 0.5, 0)
 	end
 	if not mobile then
 		drawer.Visible = false
 		drawerBackdrop.Visible = false
 	end
 	place(drawer, 0, 0, LX * 0.7, LY)
-	place(scroll, 0, navH, LX, LY - navH)
-	local viewH = LY - navH
+	local viewH = math.max(0, LY - navH - LobbyPages.queueHeight())
+	place(scroll, 0, navH, LX, viewH)
 
 	-- Main column (MainLayout: lg:max-w-[20cm] 2xl:max-w-[24cm], clamp() paddings).
 	local mainX, W, pt, pb
@@ -1341,7 +1442,7 @@ relayout = function()
 		local px = math.clamp(0.03 * LX, 24, 48)
 		pt = math.clamp(0.015 * LX, 12, 24)
 		pb = math.clamp(0.0075 * LX, 6, 12)
-		W = math.min(LX - 2 * px, if LX >= 1536 then 907 else 756)
+		W = math.min(LX - 2 * px, if LX >= 1536 then 960 else 800)
 		mainX = (LX - W) / 2
 	else
 		pt, pb = 0, 0
@@ -1355,10 +1456,20 @@ relayout = function()
 	if currentPage then
 		playPage.Visible = false
 		page.frame.Visible = true
+		page.storeShowing = currentPage == "store"
+		page.inventoryShowing = currentPage == "inventory"
 		page:layout(mobile)
 		local pageH = if mobile then viewH else math.max(320, viewH - pt - pb - footerH)
 		local px = if mobile then 0 else mainX
-		place(page.frame, px, y, if mobile then LX else W, pageH)
+		if currentPage == "store" or currentPage == "inventory" or currentPage == "clans" then
+			local pageW = if LX < 650 then LX - 24 else math.min(1440, LX * 0.80)
+			local topGap = if mobile then 12 else 16
+			pageH = math.max(0,viewH-topGap)
+			place(page.frame, (LX-pageW)/2, topGap, pageW, pageH)
+			page:layout(mobile)
+		else
+			place(page.frame, px, y, if mobile then LX else W, pageH)
+		end
 		y += pageH + pb
 	else
 		playPage.Visible = true
@@ -1373,13 +1484,9 @@ relayout = function()
 		local items = visibleNews()
 		news:SetAttribute("LayoutVisible", #items > 0)
 		renderNews()
-		local rounded = not mobile
-		newsCorner.CornerRadius = UDim.new(0, if rounded then 12 else 0)
-		newsBorderT.Visible = not rounded
-		newsBorderB.Visible = not rounded
 		if #items > 0 then
-			local p = if mobile then 8 else 12
-			local h = p * 2 + 36
+			local p = if mobile then 16 else 24
+			local h = if mobile then 52 else 64
 			place(news, stripX, y, stripW, h)
 			newsTag.Position = UDim2.new(0, p, 0.5, 0)
 			local tagW = newsTag.AbsoluteSize.X / s
@@ -1388,50 +1495,50 @@ relayout = function()
 			end
 			local tx = p + tagW + 12
 			local right = 24 + 8 + (if #newsDotButtons > 1 then #newsDotButtons * 10 + 8 else 0)
-			place(newsTitle, tx, p, stripW - tx - right - p, 20)
-			place(newsDesc, tx, p + 20, stripW - tx - right - p, 16)
+			place(newsTitle, tx, (h - 36) / 2, stripW - tx - right - p, 20)
+			place(newsDesc, tx, (h - 36) / 2 + 20, stripW - tx - right - p, 16)
 			newsClose.Position = UDim2.new(1, -p, 0.5, 0)
 			newsDots.Position = UDim2.new(1, -(p + 24 + 8), 0.5, 0)
 			y += h + (if mobile then 16 else 8)
 		end
-		local idH = if mobile and not sm then 48 else 60
+		local idH = if mobile and not sm then 48 else (if mobile then 60 else 64)
 		place(identity, stripX, y, stripW, idH)
-		identityCorner.CornerRadius = UDim.new(0, if mobile and not sm then 0 else 12)
-		place(idInner, 4, 4, stripW - 8, idH - 8)
+		place(idInner, 24, 4, stripW - 48, idH - 8)
 		local inH = idH - 8
 		place(tagBtn, 4, (inH - math.min(44, inH)) / 2, 116, math.min(44, inH))
-		place(myName, 128, 0, stripW - 8 - 140, inH)
+		place(myName, 128, 0, stripW - 48 - 140, inH)
 		myName.TextSize = if mobile and not sm then 20 else 24
 		y += idH + (if mobile then 16 + 8 else 8)
 
 		-- Game mode selector.
 		local tut = tutorialShown()
 		tutBtn.Visible = tut
-		local btnText = if mobile then 14 else 16
+		local btnText = if mobile then 14 else 19
+		local actionH = if mobile then 56 else 60
 		local function actionRows(x: number, yy: number, w: number): number
 			if tut then
-				local w2 = (w - 16) * 2 / 3
-				place(playBtn, x, yy, w2, 56)
-				place(tutBtn, x + w2 + 16, yy, w - w2 - 16, 56)
+				local w2 = (w - 16) * 0.58
+				place(playBtn, x, yy, w2, actionH)
+				place(tutBtn, x + w2 + 16, yy, w - w2 - 16, actionH)
 			else
-				place(playBtn, x, yy, w, 56)
+				place(playBtn, x, yy, w, actionH)
 			end
-			yy += 56 + 16
+			yy += actionH + 16
 			local w3 = (w - 32) / 3
 			for i, b in soonButtons do
-				place(b, x + (i - 1) * (w3 + 16), yy, w3, 56)
+				place(b, x + (i - 1) * (w3 + 16), yy, w3, actionH)
 				b.TextSize = if w3 < 110 then 12 else btnText
 			end
 			playBtn.TextSize = btnText
 			tutBtn.TextSize = btnText
-			return yy + 56
+			return yy + actionH
 		end
 		for _, c in small do
 			c.layoutVisible = true
 		end
 		if sm then
 			y += 16 -- empty first grid row + row gap
-			local heroH = math.min(384, 0.4 * LY)
+			local heroH = math.min(408, 0.42 * LY, math.max(256, viewH - y - 168))
 			local c1 = math.floor((CW - 16) * 2 / 3)
 			local c2 = CW - 16 - c1
 			layoutCard(featured, playX, y, c1, heroH)
@@ -1462,6 +1569,8 @@ relayout = function()
 	local footerY = math.max(y, viewH - footerH)
 	place(footer, 0, footerY, LX, footerH)
 	scroll.CanvasSize = UDim2.fromOffset(0, footerY + footerH)
+	MapMenu.show(currentPage == nil, LX, LY, navH, LobbyPages.queueHeight(), currentPage ~= nil)
+	scroll.Visible = currentPage ~= nil
 	queueRefresh()
 end
 
@@ -1522,6 +1631,10 @@ end
 updateFloating = function()
 	-- (also hidden while a replay plays: its controls own the screen, Replay.lua)
 	local show = not menuVisible and not inMatch() and playerGui:GetAttribute("WFReplay") ~= true
+	-- Night: the old floating MENU button and profile chip are replaced (battle screen menu button).
+	if NIGHT then
+		show = false
+	end
 	menuBtnGui.Enabled = show
 	setChipVisible(show)
 end
@@ -1565,7 +1678,9 @@ local function openAccountMenu(from: GuiObject)
 	local s = screenScale.Scale
 	local a, sz = from.AbsolutePosition, from.AbsoluteSize
 	local sp = screen.AbsolutePosition
-	local right = (a.X + sz.X - sp.X) / s
+	local width=math.min(264,screen.AbsoluteSize.X/s-24)
+	accountMenu.Size=UDim2.fromOffset(width,0)
+	local right = math.clamp((a.X + sz.X - sp.X) / s,width+12,screen.AbsoluteSize.X/s-12)
 	local bottom = (a.Y + sz.Y - sp.Y) / s
 	accountMenu.AnchorPoint = Vector2.new(1, 0)
 	accountMenu.Position = UDim2.fromOffset(right, bottom + 8)
@@ -1577,6 +1692,8 @@ end
 local openPage: (string, GuiObject?) -> ()
 
 local function renderUpcoming()
+ local ds=DeviceLayout.state
+ local mobile=(ds.touch==true or ds.input=="Touch") and (ds.profile=="phone" or ds.profile=="tablet")
 	page:setTabs({})
 	page:clear()
 	local lobby = state.phase == "Lobby" and #state.options > 0
@@ -1612,7 +1729,18 @@ local function renderUpcoming()
 		info.Text = if e.mine and lobby then "YOUR VOTE · " .. e.info else e.info
 		info.BackgroundColor3 = if e.mine then C.MALIBU else BLACK
 		info.BackgroundTransparency = if e.mine then 0 else 0.3
+  if mobile then
+   b.BackgroundColor3=Color3.fromRGB(5,32,54);b.BackgroundTransparency=0
+   st.Color=Color3.fromRGB(89,123,160);st.Transparency=.12
+   local angular=info:FindFirstChild("AngularShape");if angular then angular.Visible=false end
+   info.BackgroundColor3=Color3.fromRGB(14,43,64);info.BackgroundTransparency=0
+   corner(info,6)
+  end
 		MenuKit.hover(b, function(s)
+   if mobile then
+    b.BackgroundColor3=if s=="idle" then Color3.fromRGB(5,32,54) else Color3.fromRGB(14,43,64)
+    b.BackgroundTransparency=0;return
+   end
 			b.BackgroundTransparency = if s == "idle" then 0.95 else 0.9
 			if not e.mine then
 				st.Color = if s == "idle" then WHITE else C.MALIBU
@@ -1622,8 +1750,8 @@ local function renderUpcoming()
 		local id = e.id
 		b.Activated:Connect(function()
 			if e.lobbyType then
+				closePage()
 				LobbyPages.joinPublic(e.lobbyType, e.lobby)
-				openPage("public", b)
 			elseif state.phase == "Lobby" and #state.options > 0 then
 				state.myVote = id
 				net:FireServer("vote", id)
@@ -1667,6 +1795,9 @@ closePage = function()
 	if LobbyPages.handles(currentPage) then
 		LobbyPages.closed(currentPage) -- leave the lobby / ranked queue
 	end
+	if night then
+		night.hidePage()
+	end
 	currentPage = nil
 	upcomingRefresh = nil
 	page:clear()
@@ -1674,14 +1805,29 @@ closePage = function()
 	paintNav()
 	relayout()
 	scroll.CanvasPosition = Vector2.zero
+	if night and menuVisible then
+		gui.Enabled = false
+		night.setVisible(true)
+	elseif night then
+		night.setVisible(false) -- a page opened from the battle: back to the battle
+	end
 	local sel = GuiService.SelectedObject
 	if sel == nil or not sel:IsDescendantOf(playerGui) or sel:IsDescendantOf(page.frame) then
 		GuiService.SelectedObject = nil
-		selectIfGamepad(if pageOpener and pageOpener.Visible then pageOpener else playBtn)
+		selectIfGamepad(if night then night.focus() elseif pageOpener and pageOpener.Visible then pageOpener else playBtn)
 	end
 end
 
-local function startTutorial()
+local function startTutorial(lesson: string?)
+	-- lesson: a short lesson key from the How to play page (Tutorial.LESSONS), nil = full tutorial.
+	playerGui:SetAttribute("FrontlinesTutorialLesson", if type(lesson) == "string" then lesson else nil)
+	if Place.role() == "lobby" then
+		-- Lobby place: the tutorial is its own solo match server (as the Tutorial button does).
+		LobbyPages.leavePublic()
+		net:FireServer("play", "tutorial", if type(lesson) == "string" then lesson else nil)
+		closePage()
+		return
+	end
 	playerGui:SetAttribute("FrontlinesTutorial", true)
 	state.hasPlayed = true
 	net:FireServer("play")
@@ -1703,6 +1849,7 @@ local pageCtx = {
 	getProfile = function()
 		return profile
 	end,
+	nameController=function() return nameController end,
 	close = function()
 		closePage()
 	end,
@@ -1715,10 +1862,24 @@ openPage = function(kind: string, from: GuiObject?)
 		closePage()
 		return
 	end
+	local nightPage = night ~= nil and night.hasPage(kind)
+	if night and not nightPage then
+		-- The old menu is retired: pages without a Night version (upcoming, ranked) stay closed.
+		return
+	end
+	if LobbyPages.handles(kind) and not night then
+		LobbyPages.leavePublic() -- old menu only: Night pages leave the queue when you make / join / start
+	end
 	-- The store / stats window (MetaClient) never stays open over a menu page.
 	openMeta("close")
 	pageOpener = from or pageOpener
 	currentPage = kind
+	if nightPage then
+		upcomingRefresh = nil
+		gui.Enabled = false
+		night.showPage(kind)
+		return
+	end
 	paintNav()
 	page.title.Text = ""
 	if kind == "upcoming" then
@@ -1743,17 +1904,24 @@ local function showMenu()
 	end
 	PauseMenu.close()
 	menuVisible = true
-	gui.Enabled = true
+	gui.Enabled = not night
+	if night then
+		night.setVisible(currentPage == nil)
+	end
 	playerGui:SetAttribute("FrontlinesMenuOpen", true)
 	updateFloating()
 	ContextActionService:BindActionAtPriority(B_ACTION, function(_name, inputState)
 		if inputState == Enum.UserInputState.Begin then
-			if accountMenu.Visible then
+			if night and night.back() then
+				-- closed a Night menu popup
+			elseif accountMenu.Visible then
 				closeAccountMenu()
 			elseif drawer.Visible then
 				closeDrawer()
 			elseif currentPage then
-				closePage()
+				if currentPage ~= "ranked" then closePage() end
+			elseif LobbyPages.queued() then
+				-- Back navigation keeps the active queue; use Leave Queue explicitly.
 			end
 		end
 		return Enum.ContextActionResult.Sink
@@ -1771,6 +1939,9 @@ local function hideMenu()
 	closeDrawer()
 	closeAccountMenu()
 	gui.Enabled = false
+	if night then
+		night.setVisible(false)
+	end
 	playerGui:SetAttribute("FrontlinesMenuOpen", false)
 	updateFloating()
 	ContextActionService:UnbindAction(B_ACTION)
@@ -1788,6 +1959,10 @@ do
 end
 
 local function play(tutorial: boolean)
+	LobbyPages.leavePublic()
+	if tutorial then
+		playerGui:SetAttribute("FrontlinesTutorialLesson", nil) -- the full tutorial
+	end
 	if tutorial and Place.role() == "lobby" then
 		-- Lobby place: the tutorial is a solo match server (the overlay shows while it starts).
 		net:FireServer("play", "tutorial")
@@ -1826,13 +2001,13 @@ local function vote(id: string)
 	queueRefresh()
 end
 
--- Lobby place: a lobby card joins that public lobby and opens its waiting page.
+-- Lobby place: premade games queue on the main screen, with a compact bottom bar.
 local function joinPublic(c)
 	if not (state.lobbies and c.lobbyType) then
 		return false
 	end
+	closePage()
 	LobbyPages.joinPublic(c.lobbyType, c.lobby)
-	openPage("public", c.button)
 	return true
 end
 
@@ -1950,8 +2125,17 @@ end)
 accountItem(2, "Gear", "Settings", function()
 	openPage("settings", accountOpener)
 end)
-accountItem(3, "Layout", "Store", function()
+accountItem(3, "Layout", "Shop", function()
 	openPage("store", accountOpener)
+end)
+accountItem(4, "Bars", "Leaderboard", function()
+	openPage("leaderboard", accountOpener)
+end)
+accountItem(5, "Bell", "News", function()
+	openPage("news", accountOpener)
+end)
+accountItem(6, "Help", "Help", function()
+	openPage("help", accountOpener)
 end)
 accountCatcher.Activated:Connect(closeAccountMenu)
 hamburger.Activated:Connect(openDrawer)
@@ -1961,6 +2145,14 @@ PauseMenu.init({
 	showMainMenu = showMenu,
 	isMainMenuOpen = function()
 		return menuVisible
+	end,
+	-- Night: the in-match Shop opens the Night shop page over the battle.
+	openStore = function(): boolean
+		if not night then
+			return false
+		end
+		openPage("store")
+		return true
 	end,
 	onLeave = function()
 		state.inRound = false
@@ -2008,12 +2200,16 @@ UserInputService.InputBegan:Connect(function(input)
 	if input.KeyCode ~= Enum.KeyCode.Escape or not menuVisible or UserInputService:GetFocusedTextBox() then
 		return
 	end
-	if accountMenu.Visible then
+	if night and night.back() then
+		return
+	elseif accountMenu.Visible then
 		closeAccountMenu()
 	elseif drawer.Visible then
 		closeDrawer()
 	elseif currentPage then
-		closePage()
+		if currentPage ~= "ranked" then closePage() end
+	elseif LobbyPages.queued() or (LobbyPages.night and LobbyPages.night.lobby() ~= nil) then
+		return -- Escape keeps queue and party membership.
 	elseif state.inRound or state.hasPlayed then
 		hideMenu()
 	end
@@ -2057,6 +2253,13 @@ local function applyProfile(p: any)
 	if type(p) == "table" then
 		profile = p
 		queueRefresh()
+		if p.saving==true and p.tutorialSeen~=true and (tonumber(p.games) or 0)==0 and not state.autoTutorialAttempted and Place.role()=="lobby" then
+			state.autoTutorialAttempted=true
+			playerGui:SetAttribute("FrontlinesTutorialAutoStarted",true)
+			task.defer(function()
+				if playerGui.Parent and not state.inRound and Place.role()=="lobby" and profile and profile.saving==true and profile.tutorialSeen~=true and (tonumber(profile.games) or 0)==0 then play(true) end
+			end)
+		end
 	end
 end
 task.spawn(function()
@@ -2092,6 +2295,7 @@ end)
 gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(queueLayout)
 menuBtnGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(queueLayout)
 newsTag:GetPropertyChangedSignal("AbsoluteSize"):Connect(queueLayout)
+navRow:GetPropertyChangedSignal("AbsoluteSize"):Connect(queueLayout)
 
 -- News rotation (NewsBox CYCLE_INTERVAL_MS = 5000), timers, live upcoming page.
 task.spawn(function()
@@ -2109,6 +2313,9 @@ task.spawn(function()
 		task.wait(0.25)
 		if menuVisible then
 			updateTimers()
+			if night and night.isVisible() then
+				night.update(nightSnapshot())
+			end
 			if currentPage == "upcoming" then
 				local sig = upcomingSig()
 				if sig ~= upcomingSignature then
@@ -2172,15 +2379,41 @@ do
 	end)
 end
 
+MapMenu.setup({
+	parent = screen,
+	cards = { featured, small[1], small[2] },
+	play = playBtn, create = soonButtons[1], joinLobby = soonButtons[3], ranked = soonButtons[2], tutorial = tutBtn,
+	identityInner = idInner, tag = tagBtn, name = myName,
+	news = news, newsTitle = newsTitle, newsDesc = newsDesc, newsTag = newsTag, newsClose = newsClose,
+	tutorialShown = tutorialShown,
+	preview = function(id, width, cutout)
+		local img = previews[id .. "@" .. width .. (if cutout then "@cutout" else "")]
+		if img == nil then requestPreview(id, width, cutout) end
+		return if img then img else nil
+	end,
+	isQueued = function(c)
+		return c.lobbyType ~= nil and LobbyPages.queued(c.lobbyType)
+	end,
+	join = function(c)
+		if joinPublic(c) then return end
+		if c.mode == "vote" and c.mapId then vote(c.mapId)
+		elseif c.mode == "pool" then showToast("Voting opens after this round")
+		else play(false) end
+	end,
+	browse = function() openPage("upcoming") end,
+})
+
 LobbyPages.init({
 	net = net,
+	queueParent = screen,
+	queueChanged = queueLayout,
 	toast = function(msg: string)
 		showToast(msg, 4)
 	end,
-	preview = function(id: string, width: number)
-		local img = previews[id .. "@" .. width]
+	preview = function(id: string, width: number, cutout: boolean?)
+		local img = previews[id .. "@" .. width .. (if cutout then "@cutout" else "")]
 		if img == nil then
-			requestPreview(id, width)
+			requestPreview(id, width, cutout)
 		end
 		return if img then img else nil
 	end,
@@ -2204,10 +2437,80 @@ LobbyPages.init({
 		hideMenu()
 	end,
 	studioLobby = function()
+		playerGui:SetAttribute("FrontlinesTutorial", false)
+		state.autoTutorialAttempted = true
 		state.inRound = false
 		showMenu()
 	end,
 })
+
+if NIGHT then
+	LobbyPages.nightMode = true
+	LobbyPages.onNightChange(queueRefresh)
+	local Home = require(script.Parent:WaitForChild("NightMenu"):WaitForChild("Home"))
+	night = Home.create({
+		open = function(kind: string)
+			openPage(kind)
+		end,
+		play = function()
+			if state.lobbies and state.lobbies.ffa then
+				joinPublic({ lobbyType = "ffa", lobby = state.lobbies.ffa })
+				queueRefresh()
+			elseif Place.role() == "lobby" then
+				showToast("Finding battles. Try again in a moment")
+			else
+				play(false)
+			end
+		end,
+		joinLobby = function(kind: string)
+			local l = state.lobbies and state.lobbies[kind]
+			if l then
+				joinPublic({ lobbyType = kind, lobby = l })
+				queueRefresh()
+			end
+		end,
+		leaveQueue = function()
+			LobbyPages.leavePublic()
+			queueRefresh()
+		end,
+		leaveRoom = function()
+			LobbyPages.leaveCustom()
+			queueRefresh()
+		end,
+		tutorial = function()
+			play(true)
+		end,
+		preview = function(id: string, width: number, cutout: boolean?)
+			local img = previews[id .. "@" .. width .. (if cutout then "@cutout" else "")]
+			if img == nil then
+				requestPreview(id, width, cutout)
+			end
+			return if img then img else nil
+		end,
+		snapshot = nightSnapshot,
+		closePage = function()
+			closePage()
+		end,
+		meta = function(op: string, arg: any)
+			local fn = Shared:FindFirstChild("MetaFn")
+			if not fn then
+				return false, "Still connecting. Try again in a moment"
+			end
+			local ok, success, result = pcall(function()
+				return fn:InvokeServer(op, arg)
+			end)
+			if not ok then
+				return false, "Couldn't reach the server. Try again"
+			end
+			return success, result
+		end,
+		startTutorial = startTutorial,
+		mapPool = mapPool,
+		nameController = function()
+			return nameController
+		end,
+	})
+end
 
 paintNav()
 renderNews()
@@ -2221,6 +2524,7 @@ if Place.waitRole(5) == "match" then
 			task.wait(0.25)
 		end
 		if workspace:GetAttribute("WFMatchKind") == "tutorial" then
+			playerGui:SetAttribute("FrontlinesTutorialLesson", workspace:GetAttribute("WFTutorialLesson"))
 			playerGui:SetAttribute("FrontlinesTutorial", true)
 		end
 	end)
@@ -2231,6 +2535,6 @@ else
 	showMenu()
 end
 
-require(script.Parent:WaitForChild("NameInput")).attach(myName, function(msg: string)
+nameController=require(script.Parent:WaitForChild("NameInput")).attach(myName, function(msg: string)
 	showToast(msg)
 end)

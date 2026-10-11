@@ -20,6 +20,7 @@ export type Rules = {
 	doomsday: string?, -- Doomsday Clock speed ("slow" | "normal" | "fast" | "veryfast"), nil = off
 	overtime: boolean, -- the win share sinks after 30 minutes (public FFA)
 	goldMult: number, -- goldMultiplier
+	casual: boolean, -- faster pacing for non-ranked rounds
 	compact: boolean, -- compact map (half size)
 	allianceTicks: number, -- alliance duration in ticks (custom alliances; 0 = default)
 }
@@ -32,6 +33,7 @@ local EMPTY: Rules = {
 	doomsday = nil,
 	overtime = false,
 	goldMult = 1,
+	casual = false,
 	compact = false,
 	allianceTicks = 0,
 }
@@ -70,6 +72,7 @@ local function normalize(t: any): Rules
 		doomsday = if type(t.doomsday) == "string" then t.doomsday else nil,
 		overtime = t.overtime == true,
 		goldMult = if type(t.goldMult) == "number" and t.goldMult > 0 then t.goldMult else 1,
+		casual = t.casual == true,
 		compact = t.compact == true,
 		allianceTicks = if type(t.allianceTicks) == "number" and t.allianceTicks > 0 then math.floor(t.allianceTicks) else 0,
 	}
@@ -106,6 +109,7 @@ function MatchRules.set(t: any)
 		doomsday = rules.doomsday,
 		overtime = rules.overtime,
 		goldMult = rules.goldMult,
+		casual = rules.casual,
 		compact = rules.compact,
 		allianceTicks = rules.allianceTicks,
 	}))
@@ -132,3 +136,4 @@ function MatchRules.changed(fn: () -> ())
 end
 
 return MatchRules
+

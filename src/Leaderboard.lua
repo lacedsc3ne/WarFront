@@ -34,15 +34,15 @@ local Theme = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"
 
 local Leaderboard = {}
 
-local FONT = Font.fromEnum(Enum.Font.GothamMedium)
+local FONT = Font.fromEnum(Enum.Font.GothamBold)
 local FONT_BOLD = Font.fromEnum(Enum.Font.GothamBold)
 local WHITE = Color3.new(1, 1, 1)
-local GRAY800 = Color3.fromRGB(31, 41, 55)
-local GRAY700 = Color3.fromRGB(55, 65, 81)
-local SLATE500 = Color3.fromRGB(100, 116, 139)
-local SLATE600 = Color3.fromRGB(71, 85, 105)
-local SKY300 = Color3.fromRGB(125, 211, 252)
-local YELLOW = Color3.fromRGB(250, 204, 21)
+local GRAY800 = Color3.fromRGB(5, 22, 40)
+local GRAY700 = Color3.fromRGB(14, 43, 64)
+local SLATE500 = Color3.fromRGB(0, 177, 235)
+local SLATE600 = Color3.fromRGB(14, 43, 64)
+local SKY300 = Color3.fromRGB(0, 177, 235)
+local YELLOW = Color3.fromRGB(255, 211, 35)
 
 local PAD = 8 -- aside p-2
 local TOGGLE = 26 -- p-0.5 + 20 px icon + border
@@ -165,7 +165,9 @@ function Leaderboard.create(ctx)
 	})
 	corner(toggle, 6)
 	make("UIStroke", { Color = SLATE500, Thickness = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = toggle })
-	local toggleIcon = IconKit.image("Leaderboard", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(20, 20), Parent = toggle })
+	local title = label({Name="Heading",Position=UDim2.fromOffset(PAD+4,PAD),Size=UDim2.fromOffset(140,TOGGLE),Text="LEADERBOARD",FontFace=FONT_BOLD,TextSize=12,TextXAlignment=Enum.TextXAlignment.Left,Parent=board})
+	local hint = label({Name="Shortcut",Position=UDim2.fromOffset(PAD+144,PAD),Size=UDim2.fromOffset(35,TOGGLE),Text="TAB",TextSize=9,TextColor3=SKY300,Parent=board})
+	local toggleIcon = IconKit.image("Back", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(20, 20), Parent = toggle })
 
 	-- Team games (GameLeftSidebar): a second toggle for the team table, "Your team: <team> ⦿",
 	-- and TeamStats rows (team name in its colour, summed owned % / gold / max troops).
@@ -210,30 +212,11 @@ function Leaderboard.create(ctx)
 	local header = make("Frame", { Size = UDim2.new(1, 0, 0, rowH), BackgroundColor3 = GRAY700, BackgroundTransparency = 0.05, BorderSizePixel = 0, Parent = tableBox })
 	make("Frame", { AnchorPoint = Vector2.new(0, 1), Position = UDim2.fromScale(0, 1), Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = SLATE500, BorderSizePixel = 0, ZIndex = 3, Parent = header })
 	local headCells = {}
-	local function headerIcon(c, cell, icons)
-		if c.id == "rank" then
-			label({ Size = UDim2.fromOffset(12, 16), FontFace = FONT_BOLD, Text = "#", LayoutOrder = 1, Parent = cell })
-		elseif c.id == "player" then
-			icons[1] = IconKit.image("Profile", { Size = UDim2.fromOffset(16, 16), LayoutOrder = 1, Parent = cell })
-		elseif c.id == "playerType" then
-			label({ Size = UDim2.fromOffset(0, 16), AutomaticSize = Enum.AutomaticSize.X, FontFace = FONT_BOLD, Text = "Type", LayoutOrder = 1, Parent = cell })
-		elseif c.id == "tiles" then
-			icons[1] = IconKit.image("Land", { Size = UDim2.fromOffset(16, 16), LayoutOrder = 1, Parent = cell })
-		elseif c.id == "gold" then
-			icons[1] = IconKit.image("Gold", { Size = UDim2.fromOffset(16, 16), ImageColor3 = YELLOW, LayoutOrder = 1, Parent = cell })
-		elseif c.id == "goldIncomePerMin" then
-			icons[1] = IconKit.image("Gold", { Size = UDim2.fromOffset(16, 16), ImageColor3 = YELLOW, LayoutOrder = 1, Parent = cell })
-			label({ Size = UDim2.fromOffset(0, 12), AutomaticSize = Enum.AutomaticSize.X, FontFace = FONT_BOLD, TextSize = 9, Text = "/min", LayoutOrder = 2, Parent = cell })
-		elseif c.id == "troops" then
-			icons[1] = IconKit.image("Soldier", { Size = UDim2.fromOffset(16, 16), LayoutOrder = 1, Parent = cell })
-		elseif c.id == "maxtroops" then
-			-- soldier icon with the upper-limit icon as a superscript
-			icons[1] = IconKit.image("Soldier", { Size = UDim2.fromOffset(16, 16), LayoutOrder = 1, Parent = cell })
-			icons[2] = IconKit.image("UpperLimit", { Size = UDim2.fromOffset(11, 11), LayoutOrder = 2, Parent = cell })
-		elseif c.unit then
-			icons[1] = IconKit.image(IconKit.KIND[c.unit] or c.unit, { Size = UDim2.fromOffset(16, 16), LayoutOrder = 1, Parent = cell })
-		end
-	end
+	local function headerIcon(c,cell,icons)
+  local names={rank="#",player="NATION",playerType="TYPE",tiles="LAND",gold="GOLD",goldIncomePerMin="G/MIN",troops="TROOPS",maxtroops="CAP"}
+  label({Size=UDim2.fromOffset(math.max(20,c.w-15),16),FontFace=FONT_BOLD,TextSize=9,TextColor3=SKY300,Text=names[c.id] or string.upper(c.label),LayoutOrder=1,Parent=cell})
+ end
+
 	local function buildHeader()
 		for _, h in headCells do
 			h.cell:Destroy()
@@ -293,7 +276,7 @@ function Leaderboard.create(ctx)
 	make("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Parent = list })
 
 	local function newRow(parent)
-		local f = make("TextButton", { Size = UDim2.new(1, 0, 0, rowH), BackgroundColor3 = Color3.fromRGB(71, 85, 105), BackgroundTransparency = 1, BorderSizePixel = 0, AutoButtonColor = false, Text = "", Parent = parent })
+		local f = make("TextButton", { Size = UDim2.new(1, 0, 0, rowH), BackgroundColor3 = Color3.fromRGB(14, 43, 64), BackgroundTransparency = 1, BorderSizePixel = 0, AutoButtonColor = false, Text = "", Parent = parent })
 		local cells = {}
 		local x = 0
 		for i, c in COLS do
@@ -306,7 +289,7 @@ function Leaderboard.create(ctx)
 				Parent = f,
 			})
 			if i > 1 then
-				vline(f, x, SLATE600, 0.6)
+				vline(f, x, SLATE600, 1)
 			end
 			x += c.w
 		end
@@ -446,7 +429,11 @@ function Leaderboard.create(ctx)
 		local c = row.cells
 		local own = p.id == myId
 		row.id = p.id
+		row.baseT=if own then 0.12 else 1
+		row.frame.BackgroundColor3=if own then Color3.fromRGB(0,80,110) else GRAY700
+		row.frame.BackgroundTransparency=row.baseT
 		for j, col in COLS do
+			row.cells[j].TextColor3=if col.id=="gold" then YELLOW elseif own then SKY300 else WHITE
 			local id = col.id
 			if id == "rank" then
 				setCell(row, j, tostring(rank))
@@ -680,12 +667,15 @@ function Leaderboard.create(ctx)
 
 	function api.refresh()
 		collectData()
-		IconKit.set(toggleIcon, if expanded then "Leaderboard" else "LeaderboardRegular")
+		IconKit.set(toggleIcon, "Back")
+		title.Visible=expanded;hint.Visible=expanded
+		toggle.Position=UDim2.fromOffset(W-PAD-TOGGLE,PAD)
+		teamToggle.Position=UDim2.fromOffset(W-PAD-3*TOGGLE-12,PAD)
 		local mineP = ctx.roster[ctx.getMyId()]
 		local myTeam = mineP and mineP.team or ""
 		local teamGame = myTeam ~= ""
 		teamToggle.Visible = teamGame
-		gear.Position = UDim2.fromOffset(PAD + (if teamGame then 2 else 1) * (TOGGLE + 4), PAD)
+		gear.Position = UDim2.fromOffset(W-PAD-2*TOGGLE-6,PAD)
 		gear.Visible = expanded
 		if not expanded and popover.Visible then
 			closePicker()
@@ -740,11 +730,12 @@ function Leaderboard.create(ctx)
 				break
 			end
 		end
-		local pin = myIndex ~= nil and myIndex - 1 > PINNED_VISIBLE_THRESHOLD
+		local rowBudget = math.clamp(tonumber(board:GetAttribute("WFMaxRows")) or 5, 1, 5)
+		local pin = rowBudget >= 3 and myIndex ~= nil and myIndex - 1 > PINNED_VISIBLE_THRESHOLD
 		-- Only the rows inside the scroll window get their text filled (the list shows ~5 of
 		-- 100+ players; filling every row cost ~20-30 ms per update). Scrolling refreshes.
 		local firstVisible = math.floor(list.CanvasPosition.Y / math.max(1, rowH)) + 1
-		local lastVisible = firstVisible + (if pin then 4 else 5) + 1
+		local lastVisible = firstVisible + (if pin then rowBudget-1 else rowBudget) + 1
 		local n = 0
 		for i, p in sorted do
 			if not (pin and i == myIndex) then
@@ -775,7 +766,7 @@ function Leaderboard.create(ctx)
 			hc.arrow.TextSize = textSize
 		end
 		-- max-h-[7.5rem] md:[10rem] lg:[11.25rem] (6 / 8 / 9 rem with a pinned row): ~5 rows
-		local maxRows = if pin then 4 else 5
+		local maxRows = if pin then rowBudget-1 else rowBudget
 		local listH = math.max(1, math.min(n, maxRows)) * rowH
 		list.Position = UDim2.fromOffset(0, rowH)
 		list.Size = UDim2.new(1, 0, 0, listH)

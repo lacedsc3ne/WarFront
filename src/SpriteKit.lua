@@ -169,8 +169,11 @@ function SpriteKit.set(label: ImageLabel, name: string): boolean
 end
 
 -- Units
+-- Never smaller than MIN_CELL_PX on screen: at the usual zoom our coarser maps made ships and
+-- missiles a few pixels wide (just blobs). Owner request, 11 Oct 2026.
+local MIN_CELL_PX = 22
 function SpriteKit.cellPx(zoom: number): number
-	return CELL / MAP_SCALE * zoom
+	return math.max(MIN_CELL_PX, CELL / MAP_SCALE * zoom)
 end
 
 function SpriteKit.owner(p: any): (Color3, Color3)

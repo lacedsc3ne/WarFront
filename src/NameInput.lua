@@ -41,6 +41,7 @@ function NameInput.attach(box: TextBox, toast: (string) -> ())
 	local player = Players.LocalPlayer
 	local current = player.DisplayName -- last accepted name
 	local pending: string? = nil
+	local changed=Instance.new("BindableEvent");changed.Name="NameResult";changed.Parent=box
 	box.PlaceholderText = "Enter your username" -- username.enter_username
 	box.ClearTextOnFocus = false
 	box.Text = current
@@ -58,25 +59,28 @@ function NameInput.attach(box: TextBox, toast: (string) -> ())
 		end
 	end)
 
-	box.FocusLost:Connect(function()
-		local name = string.gsub(string.gsub(box.Text, "^%s+", ""), "%s+$", "")
+	local function submit(value: string)
+		local name = string.gsub(string.gsub(value, "^%s+", ""), "%s+$", "")
 		name = string.gsub(name, "%s+", " ")
 		if name == current then
 			box.Text = current
-			return
+			return true,"unchanged"
 		end
+		if pending==name then return true,"pending" end
 		if name == "" then
 			send("") -- back to the Roblox display name
-			return
+			return true,"pending"
 		end
 		local err = validate(name)
 		if err then
 			toast(err)
 			box.Text = current
-			return
+			return false,err
 		end
 		send(name)
-	end)
+		return true,"pending"
+	end
+	box.FocusLost:Connect(function() submit(box.Text) end)
 
 	net.OnClientEvent:Connect(function(kind: string, data: any)
 		if kind ~= "nameResult" or type(data) ~= "table" then
@@ -97,6 +101,7 @@ function NameInput.attach(box: TextBox, toast: (string) -> ())
 			end
 		end
 		pending = nil
+		changed:Fire({ok=data.ok==true,name=current,error=data.error})
 	end)
 
 	-- The saved name arrives with the profile: send it once so the server uses it.
@@ -114,6 +119,7 @@ function NameInput.attach(box: TextBox, toast: (string) -> ())
 		end
 	end)
 	sendSaved()
+	return {submit=submit,get=function() return current end,Changed=changed.Event}
 end
 
 return NameInput

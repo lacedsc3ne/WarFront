@@ -20,6 +20,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local MenuKit = require(script.Parent:WaitForChild("MenuKit"))
+local ClanView = require(script.Parent:WaitForChild("ClanView"))
 local C, F, make = MenuKit.C, MenuKit.F, MenuKit.make
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -111,7 +112,7 @@ end
 -- A button that asks "Sure?" before running (kick, leave, transfer).
 local function confirmButton(kind: string, props: { [string]: any }, run: () -> ()): TextButton
 	local label = props.Text
-	local b = MenuKit.button(kind, props)
+	local b = ClanView.action(MenuKit.button(kind, props), if props.Text == "KICK" or props.Text == "LEAVE CLAN" or props.Text == "DISBAND" then "danger" else "secondary")
 	local armed = false
 	b.Activated:Connect(function()
 		if armed then
@@ -173,35 +174,35 @@ local function renderClan(page: any, clan: any, me: any, back: (() -> ())?, keep
 		render(page)
 	end
 	if back then
-		local b = MenuKit.button("secondary", { LayoutOrder = n(), Size = UDim2.fromOffset(120, 34), FontFace = F.BOLD, TextSize = 13, Text = "< BACK", Parent = body })
+		local b = ClanView.action(MenuKit.button("secondary", { LayoutOrder = n(), Size = UDim2.fromOffset(180, 34), FontFace = F.BOLD, TextSize = 13, Text = "< BROWSE CLANS", Parent = body }),"secondary")
 		b.Activated:Connect(back)
 	end
 
-	-- Header
-	local head = MenuKit.card(body, n(), 16, 14, 8)
-	setLive(page, if back then "clan" else "mine", head, { tag = clan.tag, me = me, back = back })
-	local row = make("Frame", { LayoutOrder = 1, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 36), Parent = head })
-	MenuKit.list(row, true, 10, { VerticalAlignment = Enum.VerticalAlignment.Center })
-	tagBadge(row, clan.tag, 34)
-	MenuKit.text({ Size = UDim2.fromOffset(0, 36), AutomaticSize = Enum.AutomaticSize.X, FontFace = F.BOLD, TextSize = 24, Text = clan.name, Parent = row })
-	if clan.desc ~= "" then
-		MenuKit.paragraph(head, 2, clan.desc, { TextSize = 14, TextTransparency = 0.3 })
-	end
+	-- Summary and permission-aware management tabs.
 	local count = #clan.members
-	MenuKit.paragraph(head, 3, table.concat({
-		"Rank #" .. tostring(clan.rank or "-"),
-		numberText(clan.wins) .. " wins",
-		numberText(clan.games) .. " games",
-		"Win rate " .. winRate(clan.wins, clan.games),
-		count .. "/" .. clan.max .. " members",
-		if clan.open then "Open to join" else "Join by request",
-	}, "  ·  "), { TextSize = 13, TextTransparency = 0.45 })
-
-	-- Join / leave
-	local actions = make("Frame", { LayoutOrder = 4, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 40), Parent = head })
-	MenuKit.list(actions, true, 8)
+	local head,actions = ClanView.summary(page,clan,n())
+	setLive(page, if back then "clan" else "mine", head, { tag = clan.tag, me = me, back = back })
+	local sectionTabs={{key="members",label="MEMBERS"}}
+	if clan.requests then table.insert(sectionTabs,{key="requests",label="REQUESTS"}) end
+	if clan.role=="leader" then table.insert(sectionTabs,{key="settings",label="SETTINGS"}) end
+	if page.clanSectionTag~=clan.tag then page.clanSection="members" end
+	page.clanSectionTag=clan.tag
+	local valid=false for _,t in sectionTabs do if t.key==page.clanSection then valid=true end end
+	if not valid then page.clanSection="members" end
+	local nav=ClanView.sections(page,sectionTabs,page.clanSection,function(key)
+		page.clanSection=key
+		renderClan(page,clan,me,back,true)
+	end)
+	nav.LayoutOrder=n()
+	local membersPanel=ClanView.panel(body,n(),"ClanMembers",8);membersPanel.Visible=page.clanSection=="members"
+	local requestsPanel=if clan.requests then ClanView.panel(body,n(),"ClanRequests",8) else nil
+	if requestsPanel then requestsPanel.Visible=page.clanSection=="requests" end
+	local settingsPanel=if clan.role=="leader" then ClanView.panel(body,n(),"ClanSettings",10) else nil
+	if settingsPanel then settingsPanel.Visible=page.clanSection=="settings" end
 	local inClan = me and me.clan ~= nil
 	if clan.role then
+		local leave=ClanView.panel(body,999,"ClanLeave",0)
+		actions=make("Frame",{BackgroundTransparency=1,Size=UDim2.new(1,0,0,40),Parent=leave})
 		local lone = clan.role == "leader" and count == 1
 		confirmButton("gray", { Size = UDim2.fromOffset(150, 40), FontFace = F.BOLD, TextSize = 14, Text = if lone then "DISBAND" else "LEAVE CLAN", Parent = actions }, function()
 			local ok, result = call("leave")
@@ -238,11 +239,12 @@ local function renderClan(page: any, clan: any, me: any, back: (() -> ())?, keep
 
 	-- Leader settings
 	if clan.role == "leader" then
-		MenuKit.heading(body, n(), "Gear", "Clan settings")
-		local card = MenuKit.card(body, n(), 16, 14, 10)
+		MenuKit.heading(settingsPanel, n(), nil, "Clan settings")
+		local card = make("Frame",{LayoutOrder=n(),BackgroundTransparency=1,Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,Parent=settingsPanel})
+		MenuKit.list(card,false,10)
 		local desc = textBox(card, 1, "Description (up to 120 characters)", 70, { Text = clan.desc })
 		local open = clan.open
-		MenuKit.toggleRow(card, 2, "Open clan", "Anyone can join without a request", function()
+		ClanView.clanStatus(card, 2, function()
 			return open
 		end, function(v)
 			open = v
@@ -258,16 +260,13 @@ local function renderClan(page: any, clan: any, me: any, back: (() -> ())?, keep
 
 	-- Join requests (officers)
 	if clan.requests then
-		MenuKit.heading(body, n(), "People", "Join requests (" .. #clan.requests .. ")")
+		MenuKit.heading(requestsPanel, n(), nil, "Join requests (" .. #clan.requests .. ")")
 		if #clan.requests == 0 then
-			MenuKit.paragraph(body, n(), "No requests right now.", { TextSize = 14, TextTransparency = 0.5 })
+			MenuKit.paragraph(requestsPanel, n(), "No requests right now.", { TextSize = 14, TextTransparency = 0.5 })
 		end
 		for _, r in clan.requests do
-			local line = MenuKit.card(body, n(), 12, 8, 0)
-			local inner = make("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 36), Parent = line })
-			MenuKit.text({ Size = UDim2.new(1, -230, 1, 0), FontFace = F.BOLD, TextSize = 15, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Text = tostring(r.n), Parent = inner })
-			local acc = MenuKit.button("primary", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -112, 0.5, 0), Size = UDim2.fromOffset(104, 32), FontFace = F.BOLD, TextSize = 13, Text = "ACCEPT", Parent = inner })
-			local dec = MenuKit.button("gray", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0), Size = UDim2.fromOffset(104, 32), FontFace = F.BOLD, TextSize = 13, Text = "DECLINE", Parent = inner })
+			local line = ClanView.panel(requestsPanel,n(),"JoinRequest",0)
+			local acc,dec = ClanView.requestRow(line,r)
 			acc.Activated:Connect(function()
 				local ok, result = call("accept", r.u)
 				after(ok, result, true)
@@ -280,18 +279,10 @@ local function renderClan(page: any, clan: any, me: any, back: (() -> ())?, keep
 	end
 
 	-- Members
-	MenuKit.heading(body, n(), "People", "Members (" .. count .. "/" .. clan.max .. ")")
+	MenuKit.heading(membersPanel, n(), nil, "Members (" .. count .. "/" .. clan.max .. ")")
 	for _, m in clan.members do
-		local line = MenuKit.card(body, n(), 12, 8, 0)
-		local inner = make("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 36), Parent = line })
-		local av = make("ImageLabel", { Size = UDim2.fromOffset(36, 36), BackgroundColor3 = C.WHITE, BackgroundTransparency = 0.9, Image = "rbxthumb://type=AvatarHeadShot&id=" .. tostring(m.u) .. "&w=48&h=48", Parent = inner })
-		MenuKit.round(av)
-		MenuKit.text({ Position = UDim2.fromOffset(46, 0), Size = UDim2.new(1, -380, 1, 0), FontFace = F.BOLD, TextSize = 15, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Text = tostring(m.n) .. (if m.u == localPlayer.UserId then "  (you)" else ""), Parent = inner })
-		local role = MenuKit.text({ AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(1, -330, 0.5, 0), Size = UDim2.fromOffset(80, 22), FontFace = F.BOLD, TextSize = 12, TextColor3 = ROLE_COLORS[m.r] or C.WHITE, Text = string.upper(ROLE_NAMES[m.r] or "Member"), Parent = inner })
-		role.TextXAlignment = Enum.TextXAlignment.Left
-		-- Actions this viewer may take on this member.
-		local btns = make("Frame", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0), Size = UDim2.fromOffset(240, 32), BackgroundTransparency = 1, Parent = inner })
-		MenuKit.list(btns, true, 6, { HorizontalAlignment = Enum.HorizontalAlignment.Right })
+		local line = ClanView.panel(membersPanel,n(),"ClanMember",0)
+		local btns = ClanView.memberRow(line,m,m.u==localPlayer.UserId,string.upper(ROLE_NAMES[m.r] or "Member"),ROLE_COLORS[m.r] or C.WHITE)
 		local function action(text: string, op: string, kind: string, confirm: boolean)
 			local props = { Size = UDim2.fromOffset(if #text > 7 then 112 else 76, 32), FontFace = F.BOLD, TextSize = 12, Text = text, Parent = btns }
 			local function run()
@@ -321,87 +312,72 @@ local function renderClan(page: any, clan: any, me: any, back: (() -> ())?, keep
 			end
 		end
 	end
+	ClanView.decorate(body)
+	page:layout(page.mobile)
 	page.body.CanvasPosition = if keepScroll then scroll else Vector2.zero
 end
 
 -- Browse: search + list of clans (most wins first).
 local function renderBrowse(page: any, me: any)
 	page:clear()
-	local body = page.body
-	local box = textBox(body, 1, "Search clans by tag or name")
-	local list = make("Frame", { LayoutOrder = 2, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Parent = body })
-	MenuKit.list(list, false, 8)
-	local fillToken = 0
-	local function fill(query: string, silent: boolean?)
-		fillToken += 1
-		local token = fillToken
-		if not silent then
-			for _, c in list:GetChildren() do
-				if c:IsA("GuiObject") then
-					c:Destroy()
-				end
-			end
+	local controls=ClanView.browse(page)
+	local box,list=controls.search,controls.list
+	local fillToken=0
+	local cached={}
+	local filter=1
+	local pageIndex=1
+	local filterNames={"ALL CLANS ▾","OPEN CLANS ▾","BY REQUEST ▾"}
+	local function clearRows()
+		for _,c in list:GetChildren() do if c:IsA("GuiObject") then c:Destroy() end end
+	end
+	local function draw()
+		if not controls.root.Parent then return end
+		clearRows()
+		local rows={}
+		for _,c in cached do
+			if filter==1 or (filter==2 and c.o) or (filter==3 and not c.o) then table.insert(rows,c) end
 		end
-		local note = MenuKit.paragraph(list, 0, if silent then "" else "Loading clans...", { TextSize = 14, TextTransparency = 0.5, Visible = not silent })
+		local pages=math.max(1,math.ceil(#rows/4))
+		pageIndex=math.clamp(pageIndex,1,pages)
+		controls.count.Text=pageIndex.." / "..pages
+		controls.prev.Active=pageIndex>1;controls.next.Active=pageIndex<pages
+		controls.prev.TextTransparency=if pageIndex>1 then 0 else 0.55
+		controls.next.TextTransparency=if pageIndex<pages then 0 else 0.55
+		if #rows==0 then
+			MenuKit.paragraph(list,1,if box.Text~="" or filter~=1 then "No clans match that search." else "No clans yet. Be the first to create one!",{TextSize=15,TextColor3=C.GRAY300})
+		end
+		for j=(pageIndex-1)*4+1,math.min(pageIndex*4,#rows) do
+			local c=rows[j]
+			ClanView.browseRow(list,j,c,me.max or 50,function()
+				local okView,clan=call("view",c.t)
+				if not controls.root.Parent then return end
+				if okView then
+					renderClan(page,clan,me,function() render(page,"browse") end)
+				else MenuKit.paragraph(list,1000,tostring(clan),{TextColor3=C.AMBER300}) end
+			end)
+		end
+	end
+	local function fill(query: string,silent: boolean?)
+		fillToken+=1
+		local token=fillToken
+		local note
+		if not silent then clearRows();note=MenuKit.paragraph(list,0,"Loading clans...",{TextSize=14,TextColor3=C.GRAY300}) end
 		task.spawn(function()
-			local ok, clans = call("list", query)
-			if not note.Parent or token ~= fillToken then
-				note:Destroy()
-				return
+			local ok,clans=call("list",query)
+			if not controls.root.Parent or token~=fillToken then if note then note:Destroy() end;return end
+			if note then note:Destroy() end
+			if not ok or type(clans)~="table" then
+				clearRows();MenuKit.paragraph(list,1,tostring(clans),{TextColor3=C.AMBER300});return
 			end
-			if silent then
-				-- Live refresh: swap the rows in one go (no "Loading" flash).
-				for _, c in list:GetChildren() do
-					if c:IsA("GuiObject") and c ~= note then
-						c:Destroy()
-					end
-				end
-				note.Visible = true
-			end
-			if not ok or type(clans) ~= "table" then
-				note.Text = tostring(clans)
-				return
-			end
-			if #clans == 0 then
-				note.Text = if query ~= "" then "No clans match that search." else "No clans yet. Be the first to create one!"
-				return
-			end
-			note:Destroy()
-			for i, c in clans do
-				local row = make("TextButton", { LayoutOrder = i, Text = "", AutoButtonColor = false, BackgroundColor3 = C.WHITE, BackgroundTransparency = 0.95, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 56), Parent = list })
-				MenuKit.corner(row, 12)
-				local st = MenuKit.stroke(row, 0.9)
-				MenuKit.hover(row, function(s)
-					row.BackgroundTransparency = if s == "idle" then 0.95 else 0.9
-					st.Transparency = if s == "idle" then 0.9 else 0.7
-				end)
-				MenuKit.text({ Position = UDim2.fromOffset(12, 0), Size = UDim2.fromOffset(36, 56), FontFace = F.BOLD, TextSize = 14, TextTransparency = 0.4, Text = "#" .. i, Parent = row })
-				local badge = tagBadge(row, c.t)
-				badge.AnchorPoint = Vector2.new(0, 0.5)
-				badge.Position = UDim2.new(0, 54, 0.5, 0)
-				MenuKit.text({ Position = UDim2.fromOffset(150, 8), Size = UDim2.new(1, -330, 0, 22), FontFace = F.BOLD, TextSize = 16, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Text = tostring(c.n), Parent = row })
-				MenuKit.text({ Position = UDim2.fromOffset(150, 30), Size = UDim2.new(1, -330, 0, 18), TextSize = 12, TextTransparency = 0.5, TextXAlignment = Enum.TextXAlignment.Left, Text = c.m .. " members  ·  " .. (if c.o then "Open" else "By request"), Parent = row })
-				MenuKit.text({ AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -16, 0.5, 0), Size = UDim2.fromOffset(160, 20), FontFace = F.BOLD, TextSize = 14, TextColor3 = C.CYBER, TextXAlignment = Enum.TextXAlignment.Right, Text = numberText(c.w) .. " wins", Parent = row })
-				row.Activated:Connect(function()
-					local okView, clan = call("view", c.t)
-					if okView then
-						renderClan(page, clan, me, function()
-							render(page, "browse")
-						end)
-					end
-				end)
-			end
+			cached=clans;draw()
 		end)
 	end
-	box.FocusLost:Connect(function()
-		fill(box.Text)
-	end)
-	setLive(page, "browse", list, {
-		me = me,
-		refresh = function()
-			fill(box.Text, true)
-		end,
-	})
+	box.FocusLost:Connect(function() pageIndex=1;fill(box.Text) end)
+	controls.filter.Activated:Connect(function() filter=filter%3+1;controls.filter.Text=filterNames[filter];pageIndex=1;draw() end)
+	controls.prev.Activated:Connect(function() pageIndex=math.max(1,pageIndex-1);draw() end)
+	controls.next.Activated:Connect(function() pageIndex+=1;draw() end)
+	setLive(page,"browse",controls.root,{me=me,refresh=function() fill(box.Text,true) end})
+	page:layout(page.mobile)
 	fill("")
 end
 
@@ -409,32 +385,28 @@ end
 local function renderCreate(page: any, me: any)
 	live = {} -- a form being filled in: never refreshed under the player
 	page:clear()
-	local body = page.body
-	local card = MenuKit.card(body, 1, 16, 16, 10)
-	MenuKit.paragraph(card, 1, "Create a clan", { FontFace = F.BOLD, TextSize = 20 })
-	MenuKit.paragraph(card, 2, "Your tag shows in front of your name in every match, and clanmates are put on the same team.", { TextSize = 14, TextTransparency = 0.4 })
-	local name = textBox(card, 3, "Clan name (3-24 characters)")
-	local tag = textBox(card, 4, "Tag (2-5 letters or numbers)")
-	local desc = textBox(card, 5, "Description (optional, up to 120 characters)", 70)
+	local form=ClanView.create(page,me,localPlayer)
+	local card=form.root
+	local name,tag,desc=form.name,form.tag,form.desc
 	local open = true
-	MenuKit.toggleRow(card, 6, "Open clan", "Anyone can join without a request", function()
+	ClanView.clanStatus(form.toggle, 6, function()
 		return open
 	end, function(v)
 		open = v
 	end)
-	local preview = MenuKit.paragraph(card, 7, "", { FontFace = F.BOLD, TextSize = 16, TextColor3 = C.AQUARIUS })
+	local preview = form.matchName
 	local function updatePreview()
 		local t = string.upper((string.gsub(tag.Text, "[^%w]", "")))
 		if tag.Text ~= t then
 			tag.Text = string.sub(t, 1, 5)
 		end
-		preview.Text = if t ~= "" then "In matches: [" .. string.sub(t, 1, 5) .. "] " .. localPlayer.DisplayName else ""
+		form.update(name.Text,string.sub(t,1,5))
 	end
 	tag:GetPropertyChangedSignal("Text"):Connect(updatePreview)
+	name:GetPropertyChangedSignal("Text"):Connect(updatePreview)
 	updatePreview()
-	local row = make("Frame", { LayoutOrder = 8, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 44), Parent = card })
-	MenuKit.list(row, true, 8)
-	local status = MenuKit.paragraph(card, 9, "", { TextSize = 14, TextColor3 = C.AMBER300 })
+	local row = form.actions
+	local status = form.status
 	local function create(pay: string)
 		status.Text = "Creating..."
 		local ok, result = call("create", { name = name.Text, tag = tag.Text, desc = desc.Text, open = open, pay = pay })
@@ -459,7 +431,7 @@ local function renderCreate(page: any, me: any)
 		local robux = MenuKit.button("primary", { Size = UDim2.fromOffset(200, 44), FontFace = F.BOLD, TextSize = 15, Text = "CREATE · R$", Parent = row })
 		task.spawn(function()
 			local ok, info = pcall(function()
-				return MarketplaceService:GetProductInfo(me.charterId, Enum.InfoType.Product)
+				return MarketplaceService:GetProductInfoAsync(me.charterId, Enum.InfoType.Product)
 			end)
 			if ok and type(info) == "table" and info.PriceInRobux then
 				robux.Text = "CREATE · R$ " .. info.PriceInRobux
@@ -500,6 +472,7 @@ local function renderCreate(page: any, me: any)
 end
 
 render = function(page: any, tab: string?)
+	ClanView.prepare(page)
 	page.title.Text = "CLANS"
 	page:setTabs({})
 	page:clear()
@@ -516,7 +489,7 @@ render = function(page: any, tab: string?)
 		setTag(if me.clan then me.clan.tag else nil)
 		local tabs = if me.clan
 			then { { key = "mine", label = "My Clan" }, { key = "browse", label = "Browse" } }
-			else { { key = "browse", label = "Browse" }, { key = "create", label = "Create" } }
+			else { { key = "browse", label = "Browse" }, { key = "create", label = "Create Clan" } }
 		local first = tab or tabs[1].key
 		page:setTabs(tabs, first, function(key)
 			if key == "mine" and me.clan then

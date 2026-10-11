@@ -56,26 +56,26 @@ local function hex(s: string): Color3
 end
 
 local COLORS = {
-	build = hex("#e6c74a"),
-	building = hex("#1e3a5f"),
+	build = hex("#00b1eb"),
+	building = hex("#0e2b40"),
 	boat = hex("#2a82c9"),
 	disabled = hex("#94a3b8"),
 	ally = hex("#4ade80"),
 	breakAlly = hex("#dc2626"),
 	breakAllyNoDebuff = hex("#d97706"),
 	delete = hex("#ef4444"),
-	info = hex("#475569"),
+	info = hex("#0e2b40"),
 	attack = hex("#ef4444"),
 	donateGold = hex("#f59e0b"),
 	tooltipCost = hex("#f59e0b"),
 	tooltipCount = hex("#94a3b8"),
 }
 local DISABLED_FILL = Color3.fromRGB(128, 128, 128)
-local CENTER_DEFAULT = hex("#0f2744")
+local CENTER_DEFAULT = hex("#051628")
 local CENTER_FRIENDLY = hex("#22d3ee")
 local CENTER_DISABLED = hex("#999999")
 local TOOLTIP_BG = Color3.fromRGB(12, 35, 64)
-local FONT = Font.fromEnum(Enum.Font.GothamMedium)
+local FONT = Font.fromEnum(Enum.Font.GothamBold)
 local FONT_BOLD = Font.fromEnum(Enum.Font.GothamBold)
 
 -- OpenFront names / descriptions (resources/lang/en.json: unit_type.*, build_menu.desc.*).
@@ -92,6 +92,29 @@ local UNIT_TEXT = {
 	MIRV = { "MIRV", "Huge explosion, only targets selected player" },
 }
 RadialMenu.UNIT_TEXT = UNIT_TEXT
+
+-- Night look (MatchSkin.night): menu palette, title font and plain names.
+do
+	local Skin = require(script.Parent:WaitForChild("MatchSkin"))
+	if Skin.night then
+		local K = Skin.Kit.C
+		COLORS.build, COLORS.building, COLORS.boat, COLORS.disabled = K.YELLOW, K.CARD, K.CYAN, K.MUTED
+		COLORS.ally, COLORS.attack, COLORS.delete, COLORS.info = K.GREEN, K.PINK, K.PINK, K.RAISED
+		COLORS.donateGold, COLORS.tooltipCost, COLORS.tooltipCount = K.YELLOW, K.YELLOW, K.MUTED
+		CENTER_DEFAULT, CENTER_FRIENDLY, TOOLTIP_BG = K.PAGE, K.CYAN, K.CARD
+		FONT, FONT_BOLD = Skin.Kit.F.TITLE, Skin.Kit.F.BOLD
+		UNIT_TEXT.DefensePost = { "Defense Post", "Makes nearby borders harder to attack" }
+		UNIT_TEXT.MissileSilo = { "Missile Silo", "Needed to launch nukes" }
+		UNIT_TEXT.SAM = { "SAM Launcher", "Shoots down incoming nukes" }
+		UNIT_TEXT.AtomBomb = { "Atom Bomb", "Small explosion" }
+		UNIT_TEXT.HydrogenBomb = { "Hydrogen Bomb", "Large explosion" }
+		UNIT_TEXT.MIRV = { "MIRV", "Huge explosion, only hits the player you pick" }
+		UNIT_TEXT.City[2] = "Lets you have more troops"
+		UNIT_TEXT.Port[2] = "Sends trade ships that earn gold"
+		UNIT_TEXT.Warship[2] = "Catches trade ships and sinks boats"
+		UNIT_TEXT.Factory[2] = "Builds railroads and sends trains"
+	end
+end
 -- OpenFront's build table order (kinds missing from Config, e.g. Factory / MIRV before the rules
 -- lanes add them, are skipped by unitItems).
 local BUILD_ORDER = { "Port", "MissileSilo", "SAM", "DefensePost", "City", "Factory" }
@@ -121,6 +144,7 @@ local tooltipList: Frame
 local noSelection: Frame
 local levels: { [number]: any } = {}
 
+local MatchSkin=require(script.Parent:WaitForChild("MatchSkin"))
 local function make(className: string, props: { [string]: any })
 	local inst = Instance.new(className)
 	for k, v in props do
@@ -131,6 +155,7 @@ local function make(className: string, props: { [string]: any })
 	if props.Parent then
 		inst.Parent = props.Parent
 	end
+	MatchSkin.decorate(inst)
 	return inst
 end
 
@@ -225,7 +250,8 @@ local function placeable(map, tile: number, kind: string): boolean
 		if Config.STRUCTURES[kind].coastal then
 			local n = MapUtil.neighbors(map, t, NB)
 			for i = 1, n do
-				if not MapUtil.isLand(map, NB[i]) then
+				-- Ports need the ocean (lakes don't count), like CoreRules.isOceanShore.
+				if not MapUtil.isLand(map, NB[i]) and bit32.band(buffer.readu8(map.terrain, NB[i]), 32) ~= 0 then
 					return true
 				end
 			end

@@ -25,18 +25,18 @@ local IconKit = require(script.Parent:WaitForChild("IconKit"))
 
 local HoverPanel = {}
 
-local FONT = Font.fromEnum(Enum.Font.GothamMedium)
+local FONT = Font.fromEnum(Enum.Font.GothamBold)
 local FONT_BOLD = Font.fromEnum(Enum.Font.GothamBold)
 local MONO_BOLD = Font.new("rbxasset://fonts/families/RobotoMono.json", Enum.FontWeight.Bold)
 local MONO = Font.new("rbxasset://fonts/families/RobotoMono.json", Enum.FontWeight.Regular)
-local GRAY800 = Color3.fromRGB(31, 41, 55)
-local GRAY600 = Color3.fromRGB(75, 85, 99)
+local GRAY800 = Color3.fromRGB(14, 43, 64)
+local GRAY600 = Color3.fromRGB(14, 43, 64)
 local GRAY500 = Color3.fromRGB(107, 114, 128)
 local GRAY400 = Color3.fromRGB(156, 163, 175)
-local GRAY900 = Color3.fromRGB(17, 24, 39)
+local GRAY900 = Color3.fromRGB(5, 22, 40)
 local SKY700 = Color3.fromRGB(3, 105, 161)
-local MALIBU = Color3.fromRGB(0, 132, 209)
-local AQUARIUS = Color3.fromRGB(63, 169, 245)
+local MALIBU = Color3.fromRGB(0, 177, 235)
+local AQUARIUS = Color3.fromRGB(0, 177, 235)
 local YELLOW = Color3.fromRGB(250, 204, 21)
 local GREEN500 = Color3.fromRGB(34, 197, 94)
 local WIDTH = 500 -- sm:w-[500px]
@@ -61,6 +61,7 @@ local COUNTERS = {
 	{ "Warship", "Warship" },
 }
 
+local MatchSkin=require(script.Parent:WaitForChild("MatchSkin"))
 local function make(className: string, props: { [string]: any })
 	local inst = Instance.new(className)
 	for k, v in props do
@@ -71,6 +72,7 @@ local function make(className: string, props: { [string]: any })
 	if props.Parent then
 		inst.Parent = props.Parent
 	end
+	MatchSkin.decorate(inst)
 	return inst
 end
 
@@ -208,6 +210,7 @@ local function build()
 
 	ui = {
 		frame = frame,
+        content = content, left = left, right = right, idRow = idRow, chips = chips, bar = bar,
 		scale = scale,
 		goldText = goldText,
 		gold = gold,
@@ -232,11 +235,11 @@ end
 
 local function kindName(p): string
 	if p.kind == "Bot" then
-		return "Tribe" -- en.json player_type.bot
+		return "AI tribe" -- en.json player_type.bot
 	elseif p.kind == "Human" then
-		return "Player"
+		return "Human player"
 	end
-	return "Nation"
+	return "AI country"
 end
 
 local function fill(id: number)
@@ -252,6 +255,7 @@ local function fill(id: number)
 	local gw = ui.gold.AbsoluteSize.X / math.max(0.01, ui.scale.Scale)
 	ui.atk.Position = UDim2.fromOffset(gw + 4, 0)
 	ui.atk.Size = UDim2.new(1, -(gw + 4), 0, 24)
+ if ui.devEnabled then ui.atk.Position=UDim2.fromOffset(0,44);ui.atk.Size=UDim2.fromOffset(228,24) end
 	local attacking = s.attacking or 0
 	local hot = attacking > 0
 	ui.atkText.Text = fmtT(attacking)
@@ -335,6 +339,99 @@ function HoverPanel.init(c)
 	end)
 end
 
+
+-- Development uses a square card; saved properties restore the Default overlay.
+local function developmentLayout(enabled)
+ if ui.devEnabled == enabled then return end
+ ui.devEnabled = enabled
+ if not enabled then
+  for object,props in ui.devSaved or {} do for key,value in props do object[key]=value end end
+  if ui.devGrid then ui.devGrid.Parent=nil end
+  if ui.devBorder then ui.devBorder.Parent=nil end
+  if ui.devHeaderCorner then ui.devHeaderCorner.Parent=nil end
+  for _,gradient in ui.devStatGradients or {} do gradient.Parent=nil end
+  ui.devSaved={}
+  return
+ end
+ ui.devSaved={}
+ local function change(object,props)
+  local saved=ui.devSaved[object] or {};ui.devSaved[object]=saved
+  for key,value in props do saved[key]=object[key];object[key]=value end
+ end
+ for _,container in {ui.idRow,ui.chips} do
+  local list=container:FindFirstChildWhichIsA("UIListLayout")
+  if list then change(list,{Parent=script}) end
+ end
+ change(ui.frame,{AutomaticSize=Enum.AutomaticSize.None,Size=UDim2.fromOffset(240,202),AnchorPoint=Vector2.new(0,1),BackgroundTransparency=0,BackgroundColor3=Color3.fromRGB(17,60,99)})
+ change(ui.content,{Size=UDim2.fromOffset(228,190)})
+ change(ui.left,{Position=UDim2.fromOffset(0,68),Size=UDim2.fromOffset(228,34)})
+ change(ui.atk,{Name="OverviewAttackingTroops",Visible=false})
+
+ change(ui.gold,{Name="GoldContainer",Position=UDim2.fromOffset(6,0),Size=UDim2.fromOffset(104,34),AutomaticSize=Enum.AutomaticSize.None,BackgroundTransparency=0,BackgroundColor3=Color3.new(1,1,1)})
+ change(ui.bar,{Name="TroopsContainer",Position=UDim2.fromOffset(118,0),Size=UDim2.fromOffset(104,34),BackgroundTransparency=0,BackgroundColor3=Color3.new(1,1,1)})
+
+ ui.devStatGradients=ui.devStatGradients or {}
+ for index,container in {ui.gold,ui.bar} do
+  local round=container:FindFirstChildWhichIsA("UICorner");if round then change(round,{CornerRadius=UDim.new(0,9)})end
+  local stroke=container:FindFirstChildWhichIsA("UIStroke")
+  if stroke then change(stroke,{Color=Color3.new(0,0,0),Thickness=1.5})end
+  local colours=if index==1 then ColorSequence.new(Color3.fromRGB(255,226,106),Color3.fromRGB(229,151,30)) else ColorSequence.new(Color3.fromRGB(47,145,218),Color3.fromRGB(20,81,145))
+  local gradient=container:FindFirstChildWhichIsA("UIGradient")
+  if gradient then change(gradient,{Color=colours,Rotation=90})else
+   gradient=ui.devStatGradients[container] or make("UIGradient",{Name="DevelopmentStatFade",Color=colours,Rotation=90})
+   ui.devStatGradients[container]=gradient;gradient.Parent=container
+  end
+ end
+ change(ui.goldText,{TextColor3=Color3.fromRGB(8,29,49)})
+  if MatchSkin.night then
+   -- Night: flat pills (the skin turns gradients off, which left these white): yellow gold, raised troops.
+   local NK=MatchSkin.Kit.C
+   change(ui.gold,{BackgroundColor3=NK.YELLOW});change(ui.bar,{BackgroundColor3=NK.RAISED})
+   for _,container in {ui.gold,ui.bar} do
+    local g=container:FindFirstChildWhichIsA("UIGradient");if g then change(g,{Enabled=false}) end
+    local st=container:FindFirstChildWhichIsA("UIStroke");if st then change(st,{Color=NK.LINE}) end
+    local r=container:FindFirstChildWhichIsA("UICorner");if r then change(r,{CornerRadius=UDim.new(0.5,0)}) end
+   end
+   change(ui.goldText,{TextColor3=NK.YELLOW_TEXT})
+   -- The game's gold coin instead of the line icon.
+   local oldIcon
+   for _,icon in ui.gold:GetChildren() do if icon:IsA("ImageLabel") and icon.Name~="NightGoldIcon" then oldIcon=icon;change(icon,{Visible=false}) end end
+   if not ui.nightGoldIcon then
+    ui.nightGoldIcon=Instance.new("ImageLabel");ui.nightGoldIcon.Name="NightGoldIcon";ui.nightGoldIcon.BackgroundTransparency=1
+    ui.nightGoldIcon.Image="rbxassetid://122263341747372";ui.nightGoldIcon.ScaleType=Enum.ScaleType.Fit;ui.nightGoldIcon.Size=UDim2.fromOffset(22,22);ui.nightGoldIcon.LayoutOrder=-1
+   end
+   ui.nightGoldIcon.ZIndex=ui.goldText.ZIndex;ui.nightGoldIcon.Parent=ui.gold
+
+
+  end
+ change(ui.troopFill,{Visible=false});change(ui.atkFill,{Visible=false})
+ change(ui.troopsText,{Position=UDim2.fromOffset(24,0),Size=UDim2.fromOffset(74,17),TextXAlignment=Enum.TextXAlignment.Center})
+ change(ui.maxText,{Position=UDim2.fromOffset(24,17),Size=UDim2.fromOffset(74,17),TextSize=12,TextColor3=Color3.fromRGB(113,242,144),TextXAlignment=Enum.TextXAlignment.Center})
+ for _,icon in ui.bar:GetChildren() do if icon:IsA("ImageLabel") then change(icon,{AnchorPoint=Vector2.zero,Position=UDim2.fromOffset(6,10)})end end
+  if MatchSkin.night then
+   -- Troops: count and maximum close together, centred in the pill; coin on the left of the gold pill.
+   change(ui.troopsText,{Position=UDim2.fromOffset(24,3),Size=UDim2.fromOffset(74,15),TextYAlignment=Enum.TextYAlignment.Bottom})
+   change(ui.maxText,{Position=UDim2.fromOffset(24,18),Size=UDim2.fromOffset(74,13),TextYAlignment=Enum.TextYAlignment.Top,TextColor3=MatchSkin.Kit.C.GREEN})
+   if ui.nightGoldIcon then
+    ui.nightGoldIcon.AnchorPoint=Vector2.new(0,0.5);ui.nightGoldIcon.Position=UDim2.new(0,8,0.5,0);ui.nightGoldIcon.Size=UDim2.fromOffset(20,20)
+   end
+  end
+ change(ui.right,{Position=UDim2.fromOffset(0,0),Size=UDim2.fromOffset(228,190)})
+ change(ui.idRow,{Name="OverviewHeader",Size=UDim2.fromOffset(228,58),BackgroundTransparency=0,BackgroundColor3=Color3.fromRGB(11,39,68)})
+ ui.devHeaderCorner=ui.devHeaderCorner or make("UICorner",{CornerRadius=UDim.new(0,6)})
+ ui.devHeaderCorner.Parent=ui.idRow
+ change(ui.flag,{Position=UDim2.fromOffset(6,4),Size=UDim2.fromOffset(30,24)})
+ change(ui.nameText,{Position=UDim2.fromOffset(42,4),Size=UDim2.fromOffset(180,24),AutomaticSize=Enum.AutomaticSize.None,FontFace=Font.fromEnum(Enum.Font.GothamBlack),TextStrokeColor3=Color3.new(0,0,0),TextStrokeTransparency=0,TextSize=15,TextXAlignment=Enum.TextXAlignment.Left})
+ change(ui.typeText,{Position=UDim2.fromOffset(6,30),Size=UDim2.fromOffset(104,20),AutomaticSize=Enum.AutomaticSize.None,FontFace=FONT,TextXAlignment=Enum.TextXAlignment.Left})
+ change(ui.allyBox,{Position=UDim2.fromOffset(114,30)})
+ change(ui.traitorBox,{Position=UDim2.fromOffset(114,30)})
+ change(ui.chips,{Position=UDim2.fromOffset(0,112),Size=UDim2.fromOffset(228,76)})
+ ui.devGrid=ui.devGrid or make("UIGridLayout",{CellSize=UDim2.fromOffset(72,34),CellPadding=UDim2.fromOffset(6,6),FillDirectionMaxCells=3,SortOrder=Enum.SortOrder.LayoutOrder})
+ ui.devGrid.Parent=ui.chips
+ ui.devBorder=ui.devBorder or make("UIStroke",{Color=Color3.fromRGB(71,145,197),Thickness=1,ApplyStrokeMode=Enum.ApplyStrokeMode.Border})
+ ui.devBorder.Parent=ui.frame
+end
+
 function HoverPanel.update(ownerId: number, viaGamepad: boolean): boolean
 	if not ui then
 		return false
@@ -349,36 +446,47 @@ function HoverPanel.update(ownerId: number, viaGamepad: boolean): boolean
 			pointerOk = not UserInputService.TouchEnabled or UserInputService.MouseEnabled
 		end
 	end
-	if not p or not p.stats.alive or not pointerOk then
+	if not p or not p.stats.alive or not pointerOk or (ctx.gui:FindFirstChild("Toast") and ctx.gui.Toast.Visible) or (ctx.gui:FindFirstChild("CornerHud") and ctx.gui.CornerHud:GetAttribute("WFFocusLayout")) or game.Players.LocalPlayer.PlayerGui:GetAttribute("WFMatchModal") then
 		hide()
 		return false
 	end
 
 	local gui = ctx.gui
+	local hud=gui:FindFirstChild("CornerHud")
+	local development=hud and hud:GetAttribute("InGameUILayout")=="Default"
+	developmentLayout(development == true)
 
-	-- Same scale as the banner (console UI scale), smaller when 500 px doesn't fit (phones).
-	local banner = ctx.banner
-	local bs = banner:FindFirstChild("DeviceScale")
-	local s = if bs and bs:IsA("UIScale") then bs.Scale else 1
-	s = math.min(s, (gui.AbsoluteSize.X - 8) / WIDTH)
-	ui.scale.Scale = s
-	local gp = gui.AbsolutePosition
-	local bp, bz = banner.AbsolutePosition, banner.AbsoluteSize
-	local half = ui.frame.AbsoluteSize.X / 2
-	if half < 1 then
-		half = WIDTH * s / 2
-	end
-	local x = math.clamp(bp.X + bz.X / 2 - gp.X, half + 4, math.max(half + 4, gui.AbsoluteSize.X - half - 4))
-	ui.frame.Position = UDim2.fromOffset(x, bp.Y - gp.Y)
 
+ local banner=ctx.banner
+ local bs=banner:FindFirstChild("DeviceScale")
+ local s=if bs and bs:IsA("UIScale") then bs.Scale else 1
+ if development then
+  -- Position before refreshing content; never briefly move a visible card to the banner.
+  s=math.min(s,math.max(.5,(gui.AbsoluteSize.Y-100)/202))
+  ui.scale.Scale=s
+  local bottom=20
+  if (gui.AbsoluteSize.X-870*.94)/2-24 < 240*s then bottom+=144*.94+12 end
+  ui.frame.AnchorPoint=Vector2.new(0,1)
+  ui.frame.Position=UDim2.fromOffset(12,math.max(202*s+12,gui.AbsoluteSize.Y-bottom))
+  if hidBanner then hidBanner=false;banner.Visible=true end
+ else
+  s=math.min(s,(gui.AbsoluteSize.X-8)/WIDTH)
+  ui.scale.Scale=s
+  local gp=gui.AbsolutePosition
+  local bp,bz=banner.AbsolutePosition,banner.AbsoluteSize
+  local half=math.max(1,WIDTH*s/2)
+  local x=math.clamp(bp.X+bz.X/2-gp.X,half+4,math.max(half+4,gui.AbsoluteSize.X-half-4))
+  ui.frame.Position=UDim2.fromOffset(x,bp.Y-gp.Y)
+ end
 	local now = os.clock()
 	if ownerId ~= shownId or now - lastRefresh >= REFRESH then
 		shownId = ownerId
 		lastRefresh = now
 		fill(ownerId)
 	end
-	ui.frame.Visible = true
-	if banner.Visible then
+
+ ui.frame.Visible = true
+ if not development and banner.Visible then
 		hidBanner = true
 		banner.Visible = false
 	end

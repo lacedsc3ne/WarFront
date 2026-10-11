@@ -52,6 +52,13 @@ function Teams.forget(uid: number)
 	friendsOf[uid] = nil
 end
 
+-- Roblox friends (from the loadFriends cache; false while it is still loading). Used by Progression
+-- for the play-with-a-friend bonus and mission.
+function Teams.isFriend(a: number, b: number): boolean
+	local fa, fb = friendsOf[a], friendsOf[b]
+	return (fa ~= nil and fa[b] == true) or (fb ~= nil and fb[a] == true)
+end
+
 local function areFriends(a, b): boolean
 	if not a.userId or not b.userId then
 		return false

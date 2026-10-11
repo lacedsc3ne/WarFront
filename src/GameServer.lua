@@ -57,8 +57,10 @@ local match = {
 	rules = {} :: any, -- cfg.settings: bots, nations, difficulty, instantBuild, infiniteGold, ...
 	ready = false, -- settings loaded (match servers)
 	waitUntil = nil :: number?, -- tick to start even if not everyone arrived
+	firstTick = nil :: number?, -- tick the first player was here (start early once most arrived)
 	done = false, -- the round finished and players were sent back to the lobby
 	studioLobby = false, -- Studio: this lobby server is playing a match in place (studioMatch)
+	reward = { participants = {} :: any, eligible = false, id = "" },
 	roundHumans = {} :: { number }, -- ranked: userIds that played the round
 }
 -- Round rules shared with the clients (modifiers: disabled units, alliances, water nukes, Doomsday
@@ -143,6 +145,8 @@ do
 		if c.n > 40 then
 			return nil
 		end
+		-- Only finite catalog IDs may enter the server-wide cache.
+		if not findMap(id) then return nil end
 		if thumbs[id] == nil then
 			local mod = findMap(id)
 			local ok, m = false, nil
@@ -451,6 +455,8 @@ local function killPlayer(p, killer)
 	p.alive = false
 	p.troops = 0
 	p.deathTick = tick
+ local rewardEntry = match.reward.participants[p.userId]
+ if rewardEntry then rewardEntry.stopped = os.clock() end
 	table.insert(eliminationOrder, p)
 	for a in pairs(p.outgoing) do
 		endAttack(a, false)
@@ -568,9 +574,10 @@ end
 
 local function claimSpawn(p, t: number)
 	local r = Config.SPAWN_RADIUS
+	local ri = math.floor(r) -- tile offsets must remain integers at fractional grid scales
 	local cx, cy = t % W, t // W
-	for dy = -r, r do
-		for dx = -r, r do
+	for dy = -ri, ri do
+		for dx = -ri, ri do
 			if dx * dx + dy * dy <= r * r then
 				local x, y = cx + dx, cy + dy
 				if x >= 0 and x < W and y >= 0 and y < HGT then
@@ -599,9 +606,10 @@ local function unclaimSpawn(p)
 		end
 	end
 	local r = Config.SPAWN_RADIUS
+	local ri = math.floor(r) -- tile offsets must remain integers at fractional grid scales
 	local cx, cy = p.spawnTile % W, p.spawnTile // W
-	for dy = -r, r do
-		for dx = -r, r do
+	for dy = -ri, ri do
+		for dx = -ri, ri do
 			local x, y = cx + dx, cy + dy
 			if x >= 0 and x < W and y >= 0 and y < HGT then
 				local tt = y * W + x
@@ -786,19 +794,38 @@ local function isAllied(aId: number, bId: number): boolean
 	return Diplomacy.allied(aId, bId)
 end
 
+-- Attack frontier queue: a binary min-heap with one entry per tile (a.hi: tile -> heap index).
+-- Queuing a tile that is already waiting keeps its lowest priority (decrease-key), which is the
+-- order the old duplicate entries produced, without the duplicates' extra heap work.
 local function heapPush(a, tile: number, pri: number)
 	local keys, vals = a.hk, a.hv
-	local i = #keys + 1
-	keys[i], vals[i] = pri, tile
+	local index = a.hi
+	if not index then
+		index = {}
+		a.hi = index
+	end
+	local i = index[tile]
+	if i then
+		if pri >= keys[i] then
+			return
+		end
+		keys[i] = pri
+	else
+		i = #keys + 1
+		keys[i], vals[i] = pri, tile
+	end
 	while i > 1 do
 		local parent = i // 2
-		if keys[parent] <= keys[i] then
+		if keys[parent] <= pri then
 			break
 		end
-		keys[parent], keys[i] = keys[i], keys[parent]
-		vals[parent], vals[i] = vals[i], vals[parent]
+		local pt = vals[parent]
+		keys[i], vals[i] = keys[parent], pt
+		index[pt] = i
 		i = parent
 	end
+	keys[i], vals[i] = pri, tile
+	index[tile] = i
 end
 
 local function heapPop(a): number?
@@ -807,20 +834,31 @@ local function heapPop(a): number?
 	if n == 0 then
 		return nil
 	end
+	local index = a.hi
 	local top = vals[1]
-	keys[1], vals[1] = keys[n], vals[n]
+	if index then
+		index[top] = nil
+	end
+	local lastKey, lastVal = keys[n], vals[n]
 	keys[n], vals[n] = nil, nil
 	n -= 1
+	if n == 0 then
+		return top
+	end
 	local i = 1
 	while true do
-		local l, r, s = i * 2, i * 2 + 1, i
-		if l <= n and keys[l] < keys[s] then s = l end
-		if r <= n and keys[r] < keys[s] then s = r end
-		if s == i then break end
-		keys[s], keys[i] = keys[i], keys[s]
-		vals[s], vals[i] = vals[i], vals[s]
+		local l, r = i * 2, i * 2 + 1
+		local s, sk = 0, lastKey
+		if l <= n and keys[l] < sk then s, sk = l, keys[l] end
+		if r <= n and keys[r] < sk then s, sk = r, keys[r] end
+		if s == 0 then break end
+		local st = vals[s]
+		keys[i], vals[i] = sk, st
+		if index then index[st] = i end
 		i = s
 	end
+	keys[i], vals[i] = lastKey, lastVal
+	if index then index[lastVal] = i end
 	return top
 end
 
@@ -839,8 +877,21 @@ local function enqueueFront(a, t: number)
 	end
 	local cls = Config.terrainClass(MapUtil.magnitude(map, t))
 	local roughness = if cls == Config.PLAINS then 1 elseif cls == Config.HIGHLAND then 1.5 else 2
-	-- Tiles touching more of our land and flatter tiles are taken first, with jitter.
-	local pri = (rng:NextInteger(0, 7) + 10) * (1 - mine * 0.5 + roughness / 2) + tick
+	-- A modest adjacency bonus keeps the front connected without forcing square corners.
+	-- Smooth, tile-stable variation gives flat areas an uneven advance on our coarse grid.
+	local x, y = t % map.width, t // map.width
+	local pri
+	if a.wildernessX ~= nil then
+		-- Prefer the nearer free land first, with a small uneven edge rather than a
+		-- regional bias that can keep one direction ahead of the whole frontier.
+		local dx, dy = x - a.wildernessX, y - a.wildernessY
+		local variation = math.clamp(1 + math.noise(x / (10 * Config.GRID_DETAIL), y / (10 * Config.GRID_DETAIL), me * 0.37) * 0.12, 0.94, 1.06)
+		pri = math.sqrt(dx * dx + dy * dy) * variation
+			+ ((roughness - 1) * 2 + rng:NextInteger(0, 7) / 32 - mine * 0.08) * Config.GRID_DETAIL
+	else
+		local variation = math.clamp(1 + math.noise(x / 10, y / 10, me * 0.37 + a.target * 0.11) * 1.2, 0.7, 1.3)
+		pri = (rng:NextInteger(0, 7) + 10) * (1 - mine * 0.15) * roughness * variation + tick
+	end
 	heapPush(a, t, pri)
 end
 
@@ -855,7 +906,7 @@ local function addNeighborsOf(a, t: number)
 end
 
 local function rebuildFront(a)
-	a.hk, a.hv = {}, {}
+	a.hk, a.hv, a.hi = {}, {}, {}
 	a.front, a.frontCount = {}, 0
 	for bt in pairs(a.attacker.border) do
 		local n = MapUtil.neighbors(map, bt, NB)
@@ -943,6 +994,10 @@ local function startLandAttack(p, targetId: number, troops: number): boolean
 		return true
 	end
 	local a = { attacker = p, target = targetId, troops = troops, hk = {}, hv = {}, front = {}, frontCount = 0 }
+	if targetId == 0 and p.tiles > 0 then
+		-- Hold this centre for the attack; recomputing it as land grows causes drift.
+		a.wildernessX, a.wildernessY = p.sumX / p.tiles, p.sumY / p.tiles
+	end
 	rebuildFront(a)
 	if a.frontCount == 0 then
 		return false
@@ -964,13 +1019,15 @@ local function conquerTile(a, t: number, borderSize: number): (boolean, number)
 	local defended = defender ~= nil and isDefended(defender, t)
 	local falloutRatio = if buffer.readu8(fallout, t) == 1 then CoreRules.falloutRatio() else nil
 	local traitor = defender ~= nil and Diplomacy.isTraitor(defender.id, tick)
+	-- Queue the next frontier before capture, as in OpenFront: the current tile must
+	-- still belong to the target when friendly-neighbour priority is calculated.
+	addNeighborsOf(a, t)
 	local loss, dLoss, frac = Config.attackTile(att, defender, a.troops, cls, borderSize, defended, falloutRatio, traitor)
 	a.troops -= loss
 	if defender then
 		defender.troops = math.max(0, defender.troops - dLoss)
 	end
 	setOwner(t, att.id)
-	addNeighborsOf(a, t)
 	if defender then
 		CoreRules.handleDeadDefender(att, defender) -- under 100 full-size tiles: conquered outright
 	end
@@ -1003,6 +1060,12 @@ local function tickAttack(a)
 		end
 		return
 	end
+	-- Keep per-tile combat unchanged; run nation capture on five of every six ticks.
+	if a.target ~= 0 then
+		a.captureCadence = (a.captureCadence or 1) + 5 / 6
+		if a.captureCadence < 1 then return end
+		a.captureCadence -= 1
+	end
 	-- AttackExecution: border size + random 0..4 full-size tiles (/ LINEAR_SCALE here).
 	local borderSize = a.frontCount + rng:NextInteger(0, Config.ATTACK_BORDER_JITTER) / Config.LINEAR_SCALE
 	local budget = 1
@@ -1013,8 +1076,14 @@ local function tickAttack(a)
 		end
 		local t = heapPop(a)
 		if t == nil then
-			endAttack(a, true)
-			return
+			-- Other captures can invalidate queued tiles while opening a new border.
+			-- Rebuild once before refunding; never end while a reachable target remains.
+			rebuildFront(a)
+			t = heapPop(a)
+			if t == nil then
+				endAttack(a, true)
+				return
+			end
 		end
 		if a.front[t] then
 			a.front[t] = nil
@@ -1380,26 +1449,27 @@ local function structureCost(p, kind: string): number
 	return CoreRules.cost(p, kind)
 end
 
-local function tryBuild(p, t: number, kind: string): boolean
+local function tryBuild(p, t: number, kind: string): (boolean, string?)
 	local def = Config.STRUCTURES[kind]
 	if not def or phase ~= "Play" or not p.alive or MatchRules.unitDisabled(kind) then
-		return false -- (disabledUnits: Nukes / SAMs Disabled)
+		return false, "Building unavailable: the round must be active and this building enabled."
 	end
 	-- Building next to one of ours of an upgradable kind levels it up instead
 	-- (PlayerImpl.buildableUnits: canUpgrade wins over canBuild).
 	local up = CoreRules.upgradeTarget(p, kind, t)
 	if up then
-		return CoreRules.upgrade(p, up) > 0
+		local ok = CoreRules.upgrade(p, up) > 0
+		return ok, if ok then nil else "Not enough gold to upgrade, or this building is still under construction."
 	end
 	-- Nearest valid own tile within the search radius; ports: nearest own shore tile.
 	local spot = CoreRules.spawnTile(p, t, kind)
 	if not spot then
-		return false
+		return false, "Invalid location: choose your land with enough space; Ports need a coast."
 	end
 	t = spot
 	local cost = structureCost(p, kind)
 	if p.gold < cost then
-		return false
+		return false, "Insufficient gold: need " .. math.ceil(cost)
 	end
 	p.gold -= cost
 	CoreRules.noteBuilt(p, kind)
@@ -1409,7 +1479,7 @@ local function tryBuild(p, t: number, kind: string): boolean
 		tile = t,
 		owner = 0,
 		done = false,
-		readyTick = tick + (if match.rules.instantBuild then 0 else def.build), -- host option instantBuild
+		readyTick = tick + (if match.rules.instantBuild then 0 else Config.buildTicks(def.build)), -- host option instantBuild
 		cooldownUntil = 0,
 		nextTrade = 0,
 		level = 1, -- raised by upgrades (UpgradeStructureExecution)
@@ -1457,6 +1527,13 @@ local function launchNuke(p, target: number, kind: string, down: boolean?): bool
 	if Flow.nukesBlocked() then
 		return false -- PlayerImpl.nukeSpawn: no nukes during spawn immunity
 	end
+	-- Tutorial: computer players never nuke the learner's land.
+	if p.kind ~= "Human" and match.cfg and match.cfg.kind == "tutorial" then
+		local victim = getOwner(target)
+		if victim ~= 0 and players[victim] and players[victim].kind == "Human" then
+			return false
+		end
+	end
 	if not Missiles.launch(p, target, kind, down) then
 		return false
 	end
@@ -1468,7 +1545,7 @@ local function launchNuke(p, target: number, kind: string, down: boolean?): bool
 	end
 	local plr = playerOf(p)
 	if plr and Progression then
-		Progression.noteNuke(plr)
+		if match.reward.eligible then Progression.noteNuke(plr) end
 	end
 	return true
 end
@@ -2298,7 +2375,7 @@ local function structuresPayload()
 		end
 		local def = Config.STRUCTURES[s.kind]
 		if not s.done and def then
-			row[6] = now + (s.readyTick - def.build - tick) * Config.TICK
+			row[6] = now + (s.readyTick - Config.buildTicks(def.build) - tick) * Config.TICK
 			row[7] = now + (s.readyTick - tick) * Config.TICK
 		end
 		if s.cooldownUntil > tick then
@@ -2757,6 +2834,7 @@ local function addHuman(plr: Player)
 			p.color = packRGB(rgb[1], rgb[2], rgb[3])
 		end
 		p.level, p.vip = Progression.tagFor(plr)
+		p.flag = Progression.flagFor(plr) or "" -- chosen in My items (roster slot 8, like nations' flags)
 	end
 	byUser[plr.UserId] = p
 	if phase == "Spawn" and type(match.rules.startingGold) == "number" then
@@ -2813,8 +2891,11 @@ function gameSpeed.request(kind: string, value: any)
 		return
 	end
 	if kind == "pause" then
+		match.reward.eligible = false
+		match.reward.eligible = false
 		gameSpeed.paused = if typeof(value) == "boolean" then value else not gameSpeed.paused
 	elseif typeof(value) == "number" and gameSpeed.CHOICES[value] then
+		match.reward.eligible = false
 		gameSpeed.mult = value
 		gameSpeed.actual = value
 		gameSpeed.ticks, gameSpeed.checkAt = 0, os.clock()
@@ -2871,6 +2952,7 @@ local function startNewGame()
 		end
 		local overtime = if match.cfg then r.overtime == true else not Teams.isTeam(teamState.mode)
 		MatchRules.set({
+		casual = not (match.cfg and match.cfg.kind == "ranked"),
 			mods = r.mods,
 			disabled = disabled,
 			noAlliances = r.noAlliances == true,
@@ -2947,7 +3029,7 @@ local function startNewGame()
 	end
 	-- NUM_BOTS is tuned for Europe (~135K land tiles); smaller maps get proportionally fewer bots.
 	-- (Compact maps: OpenFront's 100 bots already are the quarter, so scale by the full map's land.)
-	local botLand = map.landTiles * (if mapState.compact then 4 else 1)
+	local botLand = map.landTiles * (if mapState.compact then 4 else 1) / Config.GRID_DETAIL ^ 2
 	local botCount = math.clamp(math.floor(Config.NUM_BOTS * botLand / 134751 + 0.5), 12, Config.NUM_BOTS)
 	if type(match.rules.bots) == "number" then
 		-- Host option "bots" in OpenFront units (0-400 = our 0-100), scaled by land like above.
@@ -3006,7 +3088,42 @@ local function startNewGame()
 	setPhase("Spawn", Config.SPAWN_PHASE_TICKS)
 end
 
+function match.persistResults(results, info)
+ if not info.eligible then return true end
+ if Progression.roundEnded(results,info) then return true end
+ match.reward.pending = (match.reward.pending or 0) + 1
+ task.spawn(function()
+  for attempt=1,8 do
+   task.wait(math.min(attempt*2,10))
+   if Progression.roundEnded(results,info) then break end
+  end
+  match.reward.pending -= 1
+ end)
+ return false
+end
+game:BindToClose(function()
+ if phase == "Play" and Progression then
+  for uid in match.reward.participants do match.finishParticipation(uid,true) end
+ end
+ local deadline = os.clock()+25
+ while (match.reward.pending or 0)>0 and os.clock()<deadline do task.wait(.1) end
+end)
+function match.rewardInfo()
+ return {eligible=match.reward.eligible, roundId=match.reward.id, map=currentMapId,
+  mode=Teams.label(teamState.mode),kind=match.cfg and match.cfg.kind or "standalone",players=#match.roundHumans}
+end
+function match.finishParticipation(uid, leaving)
+ local entry = match.reward.participants[uid]
+ local p = players and byUser[uid]
+ if not entry or entry.finished or not p then return true end
+ entry.finished = true
+ entry.result = {userId=uid,name=p.name,won=false,left=leaving,peakPercent=p.peakTiles/map.landTiles*100,
+  eliminations=p.kills,seconds=math.max(0,(entry.stopped or os.clock())-entry.started),vip=entry.vip,stats=Flow.statsFor(p,0)}
+ return match.persistResults({entry.result},match.rewardInfo())
+end
 local function endGame(winner, winnerTeam: string?)
+ if phase == "Ended" or match.reward.ending then return end
+ match.reward.ending = true
 	winnerName = if winnerTeam then winnerTeam .. " team" elseif winner then winner.name else nil
 	interactRules.winnerId = if winner and not winnerTeam then winner.id else 0
 	teamState.winner = winnerTeam
@@ -3030,17 +3147,19 @@ local function endGame(winner, winnerTeam: string?)
 	end
 	if Progression then
 		local results = {}
-		local roundSeconds = (tick - roundStartTick) * Config.TICK
+		local roundSeconds = 0
 		for place, p in ranking do
 			local plr = playerOf(p)
-			if plr then
-				results[#results + 1] = {
+   local entry = match.reward.participants[p.userId]
+   if p.kind == "Human" and entry and not entry.finished then
+    results[#results + 1] = {
+     userId = p.userId, name = p.name, vip = entry.vip,
 					player = plr,
 					placement = place,
 					won = if winnerTeam then p.team == winnerTeam else p == winner,
 					peakPercent = p.peakTiles / map.landTiles * 100,
 					eliminations = p.kills,
-					seconds = roundSeconds,
+					seconds = math.max(0, (entry.stopped or os.clock()) - entry.started),
 					stats = Flow.statsFor(p, place), -- OpenFront per-match stats
 				}
 			end
@@ -3051,8 +3170,9 @@ local function endGame(winner, winnerTeam: string?)
 				mapName = info.name
 			end
 		end
-		task.spawn(Clans.roundEnded, results)
-		task.spawn(Progression.roundEnded, results, {
+		if match.reward.eligible then task.spawn(Clans.roundEnded, results) end
+		match.persistResults(results, {
+   eligible = match.reward.eligible, roundId = match.reward.id,
 			map = currentMapId,
 			mapName = mapName .. (if mapState.compact then " (Compact)" else ""),
 			mode = Teams.label(teamState.mode),
@@ -3067,27 +3187,16 @@ local function endGame(winner, winnerTeam: string?)
 		end
 	end
 	if match.cfg and match.cfg.kind == "ranked" and Progression and #match.roundHumans == 2 then
-		-- Ranked 1v1: the better-placed of the two players wins the Elo.
-		local first, second
-		for _, p in ranking do
-			if p.kind == "Human" and p.userId then
-				if not first then
-					first = p.userId
-				elseif not second then
-					second = p.userId
-				end
-			end
-		end
-		if not second then
-			for _, uid in match.roundHumans do
-				if uid ~= first then
-					second = uid
-				end
-			end
-		end
-		if first and second then
-			task.spawn(Progression.rankedResult, first, second)
-		end
+		-- The declared outcome is authoritative, including forfeits while ahead on land.
+  local first = winner and winner.userId
+  local second
+  if first then
+   for _, uid in match.roundHumans do if uid ~= first then second = uid; break end end
+  end
+  if first and second then
+   local matchId = game.JobId .. ":" .. tostring(match.cfg.created) .. ":" .. tostring(roundStartTick)
+   task.spawn(Progression.rankedResult, first, second, matchId)
+  end
 	end
 	local endSeconds = if match.role == "match" then Config.MATCH_END_SECONDS else Config.END_SCREEN_SECONDS
 	setPhase("Ended", math.floor(endSeconds / Config.TICK))
@@ -3113,7 +3222,12 @@ local function step()
 			end
 			if #Players:GetPlayers() > 0 then
 				match.waitUntil = match.waitUntil or (tick + math.floor(Config.MATCH_WAIT_SECONDS / Config.TICK))
-				if (#expected > 0 and all) or tick >= match.waitUntil then
+				match.firstTick = match.firstTick or tick
+				-- Most of the battle is here and the rest had a few seconds: start (late players still
+				-- arrive during the spawn phase).
+				local most = #expected > 0 and here >= math.max(1, math.ceil(#expected * 0.8))
+					and tick >= match.firstTick + math.floor(5 / Config.TICK)
+				if (#expected > 0 and all) or most or tick >= match.waitUntil then
 					startNewGame()
 				end
 			end
@@ -3137,6 +3251,16 @@ local function step()
 		end
 	elseif phase == "Spawn" then
 		AiBehavior.step(tick) -- nations hop around their spawn cell
+		if match.cfg and match.cfg.kind=="tutorial" then
+			local waiting=false
+			for _,p in players do
+				if p.kind=="Human" and not p.spawned and Players:GetPlayerByUserId(p.userId) then
+					waiting=true
+					break
+				end
+			end
+			phaseEndTick=if waiting then math.max(phaseEndTick,tick+10) else tick
+		end
 		if tick >= phaseEndTick then
 			for _, p in players do
 				if p.kind == "Human" and not p.spawned then
@@ -3150,6 +3274,28 @@ local function step()
 				end
 			end
 			roundStartTick = tick
+   match.reward.id = game:GetService("HttpService"):GenerateGUID(false)
+   match.reward.participants = {}
+   match.reward.ending = false
+   match.reward.ending = false
+   match.reward.ending = false
+   local kind = match.cfg and match.cfg.kind
+   local opponents = 0
+   for _, participant in players do if participant.alive and (participant.kind ~= "Human" or participant.spawned) then opponents += 1 end end
+   match.reward.eligible = (kind == "public" or kind == "ranked") and opponents >= 2 and not match.rules.infiniteGold and not match.rules.infiniteTroops and not match.rules.instantBuild and gameSpeed.mult == 1 and not gameSpeed.paused
+   for _, participant in players do
+    if participant.kind == "Human" and participant.spawned then
+     local plr = playerOf(participant)
+     local vip = false
+     if plr and Progression then local level; level, vip = Progression.tagFor(plr) end
+     match.reward.participants[participant.userId] = {started=os.clock(),vip=vip}
+    end
+   end
+   if not match.reward.eligible then
+    for _, participant in Players:GetPlayers() do
+     net:FireClient(participant,"event",{text="Practice match: no XP, medals or competitive records.",kind="info",owner=0})
+    end
+   end
 			Perks.onPlay() -- perk passes (starting troops, gold, growth, Safe Landing shield)
 			setPhase("Play", 0)
 		end
@@ -3165,6 +3311,9 @@ local function step()
 					end
 				end
 				local growth = Config.troopGrowth(p.kind, p.troops, p.maxTroops)
+				if match.cfg and match.cfg.kind == "tutorial" and p.kind ~= "Human" then
+					growth *= Config.TUTORIAL_AI_GROWTH_MULTIPLIER
+				end
 				if growth > 0 and p.perkGrowth then
 					-- Rapid Growth: faster, but never past the cap that normal growth stops at.
 					p.troops = math.max(p.troops, math.min(p.troops + growth * p.perkGrowth, p.maxTroops))
@@ -3318,7 +3467,7 @@ local lastRequest: { [Player]: number } = {}
 -- ones have their own spacing ("ready" resends the whole map, "setName" runs the text filter).
 -- Exploiters spamming the remote just get ignored.
 local flood: { [Player]: any } = {}
-local HEAVY_GAP = { ready = 2, setName = 2, play = 0.5 }
+local HEAVY_GAP = { ready = 2, setName = 2, play = 0.5, requeue = 2 }
 local function allowMessage(plr: Player, kind: string): boolean
 	local now = os.clock()
 	local f = flood[plr]
@@ -3354,11 +3503,26 @@ net.OnServerEvent:Connect(function(plr: Player, kind: any, a1: any, a2: any, a3:
 		end
 		return
 	end
+	if kind == "requeue" then
+		if phase ~= "Ended" then return end
+		wantsPlay[plr.UserId] = nil
+		local cfg = match.cfg or {}
+		local queue = if cfg.kind == "ranked" then "ranked" elseif cfg.kind == "solo" then "solo" elseif cfg.lobbyType then cfg.lobbyType elseif Teams.isTeam(teamState.mode) then "team" else "ffa"
+		Matchmaker.toLobby({ plr }, queue)
+		return
+	end
 	if Matchmaker.handles(kind) then
 		-- Lobby place: public lobby, ranked queue and private lobbies (Matchmaker).
 		Matchmaker.handle(plr, kind, a1, a2)
 		return
 	end
+ if kind == "leave" and phase == "Play" and Progression then
+  if not match.finishParticipation(plr.UserId, true) then
+   net:FireClient(plr,"event",{text="Your participation could not be saved yet. Please try leaving again.",kind="info",owner=0})
+   match.reward.participants[plr.UserId].finished = false
+   return
+  end
+ end
 	if kind == "leave" and match.role == "match" then
 		-- Exit Game / Main Menu on a match server: back to the lobby place.
 		wantsPlay[plr.UserId] = nil
@@ -3384,6 +3548,61 @@ net.OnServerEvent:Connect(function(plr: Player, kind: any, a1: any, a2: any, a3:
 	end
 	if kind == "gameSpeed" or kind == "pause" then
 		gameSpeed.request(kind, a1)
+		return
+	end
+	if kind == "tutorialTarget" then
+		-- Tutorial bomb lesson: the nearest computer country builds a City the learner can aim the
+		-- Atom Bomb at (paid for them; tutorial matches only, once per match, no rewards there).
+		if match.cfg and match.cfg.kind == "tutorial" and players and not match.tutorialTargetBuilt then
+			local p = byUser[plr.UserId]
+			if p and p.alive and p.tiles > 0 then
+				local px, py = p.sumX / p.tiles, p.sumY / p.tiles
+				local best, bestD = nil, math.huge
+				for _, q in players do
+					if q ~= p and q.kind ~= "Human" and q.alive and q.tiles > 20 and not Diplomacy.allied(p.id, q.id) then
+						local d = (q.sumX / q.tiles - px) ^ 2 + (q.sumY / q.tiles - py) ^ 2
+						if d < bestD then
+							best, bestD = q, d
+						end
+					end
+				end
+				if best then
+					local t = math.floor(best.sumY / best.tiles) * W + math.floor(best.sumX / best.tiles)
+					if getOwner(t) ~= best.id then
+						t = next(best.border) or t -- centre outside their land: any tile of theirs
+					end
+					best.gold += structureCost(best, "City")
+					if tryBuild(best, t, "City") then
+						match.tutorialTargetBuilt = true
+					end
+				end
+			end
+		end
+		return
+	end
+	if kind == "tutorialGold" then
+		-- Tutorial: after a few seconds of saving up, top the learner's gold up to the price of the
+		-- building / unit / bomb the lesson asks for. Tutorial matches only (no rewards there).
+		if match.cfg and match.cfg.kind == "tutorial" and players and type(a1) == "string" then
+			local p = byUser[plr.UserId]
+			if p and p.alive and p.kind == "Human" then
+				local cost = if Config.STRUCTURES[a1] then structureCost(p, a1)
+					elseif a1 == "Warship" then Warships.cost(p)
+					elseif Config.NUKES[a1] then Missiles.cost(p, a1)
+					else nil
+				if cost and cost <= 5e6 and p.gold < cost then
+					p.gold = cost
+				end
+			end
+		end
+		return
+	end
+	if kind == "tutorialChapter" then
+		-- Tutorial chapter done: one-time medal reward (Progression checks it's a real tutorial match).
+		if match.cfg and match.cfg.kind == "tutorial" and Progression and Progression.tutorialChapter then
+			local ok, medals = Progression.tutorialChapter(plr, a1)
+			net:FireClient(plr, "tutorialReward", { chapter = a1, medals = if ok then medals else 0 })
+		end
 		return
 	end
 	local now = os.clock()
@@ -3554,7 +3773,8 @@ net.OnServerEvent:Connect(function(plr: Player, kind: any, a1: any, a2: any, a3:
 		launchBoat(p, t, math.floor(p.troops * math.clamp(a2, 0.01, 1)))
 	elseif kind == "build" then
 		if typeof(a2) == "string" and Config.STRUCTURES[a2] then
-			tryBuild(p, t, a2)
+			local ok, reason = tryBuild(p, t, a2)
+			net:FireClient(plr,"buildResult",{ok=ok,reason=reason,kind=a2,tile=t})
 		end
 	elseif kind == "nuke" then
 		if typeof(a2) == "string" and Config.NUKES[a2] then
@@ -3562,7 +3782,8 @@ net.OnServerEvent:Connect(function(plr: Player, kind: any, a1: any, a2: any, a3:
 		end
 	elseif kind == "buildUnit" then
 		if phase == "Play" and typeof(a2) == "string" and Config.UNITS[a2] then
-			Warships.tryBuy(p, t, a2)
+			local ok = Warships.tryBuy(p, t, a2)
+   net:FireClient(plr,"buildResult",{ok=ok,kind=a2,tile=t,reason=if ok then nil else "Warship unavailable: you need a finished coastal Port and enough gold."})
 		end
 	elseif kind == "deleteStructure" then
 		-- OpenFront "Delete Unit": mark our nearest finished structure near the tile (30 s cooldown);
@@ -3625,6 +3846,19 @@ for _, plr in Players:GetPlayers() do
 end
 
 Players.PlayerRemoving:Connect(function(plr)
+ if phase == "Play" and Progression then
+  local entry = match.reward.participants[plr.UserId]
+  local info = match.rewardInfo()
+  local ok = match.finishParticipation(plr.UserId,true)
+  task.spawn(function()
+   if not ok and entry and entry.result then
+    for attempt=1,5 do
+     task.wait(attempt * 2)
+     if Progression.roundEnded({entry.result},info) then break end
+    end
+   end
+  end)
+ end
 	Teams.forget(plr.UserId)
 	Clans.forget(plr)
 	-- MarkDisconnectedExecution: the nation stays on the map, marked disconnected.
@@ -3632,6 +3866,8 @@ Players.PlayerRemoving:Connect(function(plr)
 		Flow.setDisconnected(byUser[plr.UserId], true)
 	end
 	lastRequest[plr] = nil
+	customNames[plr.UserId] = nil
+	nameBusy[plr] = nil
 	flood[plr] = nil
 	wantsPlay[plr.UserId] = nil
 	votes[plr.UserId] = nil
@@ -3795,6 +4031,12 @@ Matchmaker.init({
 			cfg.map = "Europe"
 		end
 		workspace:SetAttribute("WFMatchKind", cfg.kind)
+		workspace:SetAttribute("WFTutorialLesson", if cfg.kind == "tutorial" and type(cfg.lesson) == "string" then cfg.lesson else nil) -- Tutorial lesson (How to play)
+		if cfg.kind=="tutorial" and Progression and Progression.markTutorialStarted then
+			for _,plr in Players:GetPlayers() do
+				if table.find(cfg.players or {},plr.UserId) then Progression.markTutorialStarted(plr) end
+			end
+		end
 		match.done, match.waitUntil, match.ready = false, nil, true
 		table.clear(match.roundHumans)
 		local everyone = table.clone(list)
@@ -3818,7 +4060,7 @@ Matchmaker.init({
 			wantsPlay[plr.UserId] = nil
 			net:FireClient(plr, "mm", { kind = "studioLobby" })
 		end
-		if not match.studioLobby or phase ~= "Ended" then
+		if phase ~= "Ended" then
 			return -- one player left; the round goes on (and ends) without them
 		end
 		match.role, match.studioLobby = "lobby", false
@@ -3827,7 +4069,7 @@ Matchmaker.init({
 		workspace:SetAttribute("WFPlaceRole", "lobby")
 		workspace:SetAttribute("WFMatchKind", nil)
 		match.cfg, match.rules = nil, {}
-		match.ready, match.done, match.waitUntil = false, false, nil
+		match.ready, match.done, match.waitUntil, match.firstTick = false, false, nil, nil
 		for _, plr in Players:GetPlayers() do
 			wantsPlay[plr.UserId] = nil
 			net:FireClient(plr, "mm", { kind = "studioLobby" })
@@ -3945,6 +4187,12 @@ if match.role == "match" then
 			cfg.map = "Europe"
 		end
 		workspace:SetAttribute("WFMatchKind", cfg.kind)
+		workspace:SetAttribute("WFTutorialLesson", if cfg.kind == "tutorial" and type(cfg.lesson) == "string" then cfg.lesson else nil) -- Tutorial lesson (How to play)
+		if cfg.kind=="tutorial" and Progression and Progression.markTutorialStarted then
+			for _,plr in Players:GetPlayers() do
+				if table.find(cfg.players or {},plr.UserId) then Progression.markTutorialStarted(plr) end
+			end
+		end
 		match.ready = true
 	end)
 end
@@ -3987,3 +4235,4 @@ RunService.Heartbeat:Connect(function(dt)
 		end
 	end
 end)
+

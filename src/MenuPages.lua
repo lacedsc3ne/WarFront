@@ -24,6 +24,8 @@ local UserInputService = game:GetService("UserInputService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local MenuKit = require(script.Parent:WaitForChild("MenuKit"))
+local StoreView = require(script.Parent:WaitForChild("StoreView"))
+local AccountView=require(script.Parent:WaitForChild("AccountView"))
 local Settings = require(script.Parent:WaitForChild("Settings"))
 local IconKit = require(script.Parent:WaitForChild("IconKit"))
 local FlagKit = require(script.Parent:WaitForChild("FlagKit"))
@@ -40,7 +42,7 @@ MenuPages.TITLES = {
 	help = "Help", -- main.help
 	news = "Release Notes", -- news.title
 	language = "Select Language", -- select_lang.title
-	profile = "Player Profile", -- player_profile.title
+	profile = "View Account", -- name customisation and existing account stats
 	inventory = "Inventory", -- inventory.title
 	leaderboard = "Leaderboard", -- main.leaderboard
 	clans = "Clans", -- main.clans
@@ -92,8 +94,8 @@ local function smallButton(parent: Instance, text: string, order: number?): Text
 		Text = text,
 		Parent = parent,
 	})
-	b.BackgroundTransparency = 0.95
-	b.BackgroundColor3 = C.WHITE
+	b.BackgroundTransparency = 0
+	b.BackgroundColor3 = C.PANEL_ROW
 	MenuKit.stroke(b, 0.9)
 	MenuKit.pad(b, 10, 10, 0, 0)
 	return b
@@ -140,7 +142,7 @@ local function renderKeybinds(body: Instance, nextOrder: () -> number, rerender:
 		MenuKit.paragraph(body, nextOrder(), section.title, { FontFace = F.BOLD, TextSize = 18, TextColor3 = C.WHITE })
 		for _, action in section.actions do
 			local info = KeybindData.INFO[action]
-			local card = make("Frame", { LayoutOrder = nextOrder(), BackgroundColor3 = C.WHITE, BackgroundTransparency = 0.95, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Parent = body })
+			local card = make("Frame", { LayoutOrder = nextOrder(), BackgroundColor3 = C.PANEL_ROW, BackgroundTransparency = 0, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Parent = body })
 			MenuKit.corner(card, 12)
 			MenuKit.stroke(card, 0.9)
 			MenuKit.pad(card, 16, 16, 14, 14)
@@ -232,6 +234,16 @@ local function renderSettingsTab(page: any, tab: string)
 		rebinding.err = nil
 	end
 	if tab == "gameplay" then
+		local catalog = require(Shared:WaitForChild("InGameLayoutCatalog"))
+		local options = {}
+		for _,entry in catalog.entries do table.insert(options, {entry.id, entry.label}) end
+		local refresh = MenuKit.dropdownRow(body, nextOrder(), "In-game UI layout", "Choose a layout for the match HUD.", options, function()
+			return Settings.values.inGameUILayout
+		end, function(value) Settings.set("inGameUILayout", value) end)
+		local connection = Settings.Changed:Connect(function(key)
+			if key == "inGameUILayout" then refresh() end
+		end)
+		body:FindFirstChild("InGameUILayout").Destroying:Connect(function() connection:Disconnect() end)
 		-- UserSettingModal.renderGameplaySettings order, then War Front's own HUD toggles.
 		local g, s = boolSetter("alertFrame")
 		MenuKit.toggleRow(body, nextOrder(), "Alert Frame", "Toggle the alert frame. When enabled, the frame will be displayed when you are betrayed or attacked over land.", g, s)
@@ -332,8 +344,8 @@ local function renderSettingsTab(page: any, tab: string)
 			Text = "Reset to defaults",
 			Parent = row,
 		})
-		reset.BackgroundTransparency = 0.95
-		reset.BackgroundColor3 = C.WHITE
+		reset.BackgroundTransparency = 0
+		reset.BackgroundColor3 = C.PANEL_ROW
 		MenuKit.stroke(reset, 0.9)
 		MenuKit.pad(reset, 12, 12, 0, 0)
 		reset.Activated:Connect(function()
@@ -398,7 +410,7 @@ local HOTKEYS = {
 	{ "U", "Swap rocket direction (up/down)" },
 	{ "P", "Pause or resume (single player)" },
 	{ ", / .", "Game speed down/up (single player)" },
-	{ "Shift + D", "Performance overlay" },
+	{ "F3", "Performance overlay" },
 }
 
 local PAD_KEYS = {
@@ -424,7 +436,7 @@ local TOUCH_KEYS = {
 }
 
 local function keyTable(parent: Instance, order: number, rows: { { string } })
-	local box = make("Frame", { LayoutOrder = order, BackgroundColor3 = C.WHITE, BackgroundTransparency = 0.95, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Parent = parent })
+	local box = make("Frame", { LayoutOrder = order, BackgroundColor3 = C.PANEL_ROW, BackgroundTransparency = 0, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Parent = parent })
 	MenuKit.corner(box, 12)
 	MenuKit.stroke(box, 0.9)
 	MenuKit.pad(box, 16, 16, 8, 16)
@@ -619,7 +631,7 @@ local function renderNews(page: any)
 		local kind, s = line[1], line[2]
 		if kind == "h1" then
 			MenuKit.paragraph(page.body, i, s, { FontFace = F.BOLD, TextSize = 24, TextColor3 = C.WHITE })
-			make("Frame", { LayoutOrder = i, Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = C.WHITE, BackgroundTransparency = 0.9, BorderSizePixel = 0, Parent = page.body })
+			make("Frame", { LayoutOrder = i, Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = C.PANEL_ROW, BackgroundTransparency = 0, BorderSizePixel = 0, Parent = page.body })
 		elseif kind == "h2" then
 			local h = MenuKit.paragraph(page.body, i, s, { FontFace = F.BOLD, TextSize = 20, TextColor3 = C.BLUE200 })
 			MenuKit.pad(h, 0, 0, 16, 4)
@@ -660,7 +672,7 @@ end
 
 -- Player profile (PlayerProfileModal: tabs Stats / Games / Clans)
 local function statCard(parent: Instance, order: number, label: string, value: string)
-	local c = make("Frame", { LayoutOrder = order, BackgroundColor3 = C.WHITE, BackgroundTransparency = 0.95, BorderSizePixel = 0, Parent = parent })
+	local c = make("Frame", { LayoutOrder = order, BackgroundColor3 = C.PANEL_ROW, BackgroundTransparency = 0, BorderSizePixel = 0, Parent = parent })
 	MenuKit.corner(c, 12)
 	MenuKit.stroke(c, 0.9)
 	MenuKit.text({ Position = UDim2.fromOffset(16, 14), Size = UDim2.new(1, -32, 0, 16), FontFace = F.BOLD, TextSize = 12, TextTransparency = 0.5, TextXAlignment = Enum.TextXAlignment.Left, Text = string.upper(label), Parent = c })
@@ -669,10 +681,11 @@ end
 
 local function renderProfileTab(page: any, ctx: any, tab: string)
 	page:clear()
+	if tab=="account" then AccountView.render(page,ctx);return end
 	local body = page.body
 	-- Identity strip: avatar, display name, level.
 	local head = make("Frame", { LayoutOrder = 1, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 64), Parent = body })
-	local av = make("ImageLabel", { Size = UDim2.fromOffset(56, 56), Position = UDim2.fromOffset(0, 4), BackgroundColor3 = C.WHITE, BackgroundTransparency = 0.9, BorderSizePixel = 0, Parent = head })
+	local av = make("ImageLabel", { Size = UDim2.fromOffset(56, 56), Position = UDim2.fromOffset(0, 4), BackgroundColor3 = C.PANEL_ROW, BackgroundTransparency = 0, BorderSizePixel = 0, Parent = head })
 	MenuKit.round(av)
 	task.spawn(function()
 		local ok, url = pcall(function()
@@ -732,11 +745,12 @@ local function renderProfileTab(page: any, ctx: any, tab: string)
 			local GameStatsView = require(script.Parent:WaitForChild("GameStatsView"))
 			for i = #list, 1, -1 do
 				local g = list[i]
-				local row = make("TextButton", { LayoutOrder = 3 + (#list - i), Text = "", AutoButtonColor = false, BackgroundColor3 = C.WHITE, BackgroundTransparency = 0.95, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 60), Parent = body })
+				local row = make("TextButton", { LayoutOrder = 3 + (#list - i), Text = "", AutoButtonColor = false, BackgroundColor3 = C.PANEL_ROW, BackgroundTransparency = 0, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 60), Parent = body })
 				MenuKit.corner(row, 12)
 				local st = MenuKit.stroke(row, 0.9)
 				MenuKit.hover(row, function(s)
-					row.BackgroundTransparency = if s == "idle" then 0.95 else 0.9
+					row.BackgroundTransparency = 0
+					row.BackgroundColor3=if s=="idle" then C.PANEL_ROW else C.PANEL_HI
 					st.Transparency = if s == "idle" then 0.9 else 0.7
 				end)
 				local won = g.won == true
@@ -767,10 +781,11 @@ end
 
 local function renderProfile(page: any, ctx: any)
 	page:setTabs({
+		{key="account",label="Customise"},
 		{ key = "stats", label = "Stats" },
 		{ key = "games", label = "Games" },
 		{ key = "clans", label = "Clans" },
-	}, "stats", function(key)
+	}, "account", function(key)
 		renderProfileTab(page, ctx, key)
 	end)
 end
@@ -805,59 +820,28 @@ local PATTERN_COLORS = {
 	{ 0x0ea5e9, 0x0a1628 },
 }
 
+local InventoryView = require(script.Parent:WaitForChild("InventoryView"))
+local inventoryPages = setmetatable({}, {__mode="k"})
 local function renderInventoryTab(page: any, ctx: any, tab: string)
 	page:clear()
-	local body = page.body
-	MenuKit.paragraph(body, 1, "Cosmetics are coming soon. Your territory colour can be picked in the Store.", { TextColor3 = C.WHITE, TextTransparency = 0.5 })
-	local grid = make("Frame", { LayoutOrder = 2, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Parent = body })
-	make("UIGridLayout", { CellPadding = UDim2.fromOffset(12, 12), CellSize = UDim2.fromOffset(128, 128), SortOrder = Enum.SortOrder.LayoutOrder, Parent = grid })
-	local function onTap()
-		ctx.toast("Coming Soon")
+	if tab ~= "colours" then
+		InventoryView.render(page,ctx,tab,{},true)
+		return
 	end
-	if tab == "skins" then
-		-- Territory patterns: two-tone checker previews of how a pattern fills your land.
-		for i, pc in PATTERN_COLORS do
-			local t = lockedTile(grid, i, function(art)
-				art.BackgroundTransparency = 0
-				art.BackgroundColor3 = Color3.fromHex(string.format("%06x", pc[1]))
-				for y = 0, 5 do
-					for x = 0, 5 do
-						if (x + y + i) % 2 == 0 then
-							make("Frame", { Position = UDim2.fromScale(x / 6, y / 6), Size = UDim2.fromScale(1 / 6, 1 / 6), BackgroundColor3 = Color3.fromHex(string.format("%06x", pc[2])), BorderSizePixel = 0, Parent = art })
-						end
-					end
-				end
-			end)
-			t.Activated:Connect(onTap)
-		end
-	elseif tab == "flags" then
-		local shown = 0
-		local seen = {}
-		for _, m in MapCatalog do
-			for _, nation in m.nations or {} do
-				local code = nation[4]
-				if shown < 12 and type(code) == "string" and code ~= "" and not seen[code] and FlagKit.has(code) then
-					seen[code] = true
-					shown += 1
-					local t = lockedTile(grid, shown, function(art)
-						FlagKit.image(code, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromScale(0.9, 0.9), Parent = art })
-					end)
-					t.Activated:Connect(onTap)
-				end
-			end
-		end
-	else
-		MenuKit.comingSoon(body, 3, if tab == "crowns" then "User" else "Radial")
-	end
+	local entries,loaded = MenuPages.inventoryColours(ctx)
+	InventoryView.render(page,ctx,"colours",entries,loaded)
 end
 
 local function renderInventory(page: any, ctx: any)
+	InventoryView.prepare(page)
+	inventoryPages[page] = ctx
 	page:setTabs({
+		{ key = "colours", label = "Colours" },
 		{ key = "skins", label = "Skins" },
 		{ key = "flags", label = "Flags" },
 		{ key = "crowns", label = "Crowns" },
 		{ key = "effects", label = "Effects" },
-	}, "skins", function(key)
+	}, "colours", function(key)
 		renderInventoryTab(page, ctx, key)
 	end)
 end
@@ -893,7 +877,7 @@ local function marketInfo(isPass: boolean, id: number): any?
 		marketCache[k] = false
 		task.spawn(function()
 			local ok, info = pcall(function()
-				return MarketplaceService:GetProductInfo(id, if isPass then Enum.InfoType.GamePass else Enum.InfoType.Product)
+				return MarketplaceService:GetProductInfoAsync(id, if isPass then Enum.InfoType.GamePass else Enum.InfoType.Product)
 			end)
 			if ok and type(info) == "table" then
 				marketCache[k] = info
@@ -921,12 +905,23 @@ local function marketIcon(art: Instance, info: any?): boolean
 	MenuKit.round(img)
 	return true
 end
+local refreshInventories
 metaEvent.OnClientEvent:Connect(function(kind: string, data: any)
 	if kind == "profile" and type(data) == "table" then
 		storeProfile = data
 		refreshStores()
+		if refreshInventories then refreshInventories() end
 	end
 end)
+refreshInventories=function()
+	for page,ctx in inventoryPages do
+		if page.inventoryShowing and page.frame.Parent and page.active then
+			local y=page.body.CanvasPosition
+			renderInventoryTab(page,ctx,page.active)
+			page.body.CanvasPosition=y
+		end
+	end
+end
 local function fetchProfile()
 	task.spawn(function()
 		local ok, success, p = pcall(function()
@@ -935,6 +930,7 @@ local function fetchProfile()
 		if ok and success and type(p) == "table" then
 			storeProfile = p
 			refreshStores()
+			refreshInventories()
 		end
 	end)
 end
@@ -1000,23 +996,24 @@ local function cardAction(parent: Instance, text: string, style: string, onClick
 			b.Activated:Connect(onClick)
 		end
 	end
+	StoreView.action(b, style, string.find(string.lower(text), "medals", 1, true) ~= nil)
 	return b
 end
 
 local function storeCard(grid: Instance, order: number, name: string, fillArt: (Frame) -> (), equipped: boolean?): Frame
-	local card = make("Frame", { Name = "Card", LayoutOrder = order, BackgroundColor3 = C.WHITE, BackgroundTransparency = 0.95, BorderSizePixel = 0, Parent = grid })
+	local card = make("Frame", { Name = "Card", LayoutOrder = order, BackgroundColor3 = C.PANEL_ROW, BackgroundTransparency = 0, BorderSizePixel = 0, Parent = grid })
 	MenuKit.corner(card, 12)
 	MenuKit.stroke(card, if equipped then 0.2 else 0.9, if equipped then C.MALIBU else C.WHITE, if equipped then 2 else 1)
 	MenuKit.pad(card, 12, 12, 12, 12)
 	MenuKit.list(card, false, 8, { HorizontalAlignment = Enum.HorizontalAlignment.Center })
-	local art = make("Frame", { Name = "Art", LayoutOrder = 1, BackgroundColor3 = C.WHITE, BackgroundTransparency = 0.95, BorderSizePixel = 0, Size = UDim2.new(1, 0, 1, -76), Parent = card })
+	local art = make("Frame", { Name = "Art", LayoutOrder = 1, BackgroundColor3 = C.PANEL_ROW, BackgroundTransparency = 0, BorderSizePixel = 0, Size = UDim2.new(1, 0, 1, -76), Parent = card })
 	MenuKit.corner(art, 8)
 	fillArt(art)
-	MenuKit.text({ LayoutOrder = 2, Size = UDim2.new(1, 0, 0, 20), FontFace = F.BOLD, TextSize = 14, Text = name, TextTruncate = Enum.TextTruncate.AtEnd, Parent = card })
+	MenuKit.text({ LayoutOrder = 2, Size = UDim2.new(1, 0, 0, 20), FontFace = Font.fromEnum(Enum.Font.GothamBlack), TextSize = 18, Text = name, TextTruncate = Enum.TextTruncate.AtEnd, Parent = card })
 	return card
 end
 
-local function storeGrid(parent: Instance, order: number, cellH: number): Frame
+local function storeGrid(parent: Instance, order: number, cellH: number, fiveColumns: boolean?): Frame
 	local grid = make("Frame", { Name = "Grid", LayoutOrder = order, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Parent = parent })
 	local layout = make("UIGridLayout", { CellPadding = UDim2.fromOffset(16, 16), CellSize = UDim2.fromOffset(176, cellH), SortOrder = Enum.SortOrder.LayoutOrder, Parent = grid })
 	local function fit()
@@ -1024,8 +1021,9 @@ local function storeGrid(parent: Instance, order: number, cellH: number): Frame
 		if w <= 0 then
 			return
 		end
-		local cols = math.max(2, math.floor((w + 16) / (176 + 16)))
-		layout.CellSize = UDim2.new(1 / cols, -16 * (cols - 1) / cols, 0, cellH)
+		local cols = if fiveColumns then StoreView.collectionColumns(w) elseif w < 500 then 1 else math.max(2, math.floor((w + 16) / (260 + 16)))
+		layout.FillDirectionMaxCells = cols
+		layout.CellSize = UDim2.fromOffset(math.floor((w - 16 * (cols - 1)) / cols), cellH)
 	end
 	grid:GetPropertyChangedSignal("AbsoluteSize"):Connect(fit)
 	fit()
@@ -1037,6 +1035,29 @@ local function ownsColor(p: any, c: any): boolean
 		return p.inGroup == true -- group members only (MetaConfig.GROUP)
 	end
 	return c.price == 0 or p.allColors == true or (type(p.ownedColors) == "table" and table.find(p.ownedColors, c.id) ~= nil)
+end
+
+function MenuPages.inventoryColours(ctx: any, profileOverride: any?)
+	local p=profileOverride or storeProfile
+	local entries={}
+	if not p then fetchProfile();return entries,false end
+	for _,c in MetaConfig.COLORS do
+		if ownsColor(p,c) then
+			table.insert(entries,{
+				name=string.upper(c.name),id=c.id,owned=true,equipped=p.color==c.id,
+				fill=function(art) StoreView.colourPreview(art,c.rgb) end,
+				equip=function(done)
+					task.spawn(function()
+						local ok,success,msg=pcall(function() return metaFn:InvokeServer("equipColor",c.id) end)
+						if ok and success then fetchProfile()
+						else ctx.toast(if ok and type(msg)=="string" then msg else "Couldn't equip colour. Try again.") end
+						done()
+					end)
+				end,
+			})
+		end
+	end
+	return entries,true
 end
 
 -- Roblox's join-group prompt, then the server checks membership and gives the rewards.
@@ -1067,18 +1088,29 @@ renderStoreTab = function(page: any, tab: string)
 		fetchProfile()
 		return
 	end
-	if tab == "colours" then
+	if tab == "featured" or tab == "coins" then
+		StoreView.featured(page, p, {
+			config = MetaConfig,
+			number = numberText,
+			price = function(isPass, id) return robuxText(marketInfo(isPass, id)) end,
+			buyPass = function(id) MarketplaceService:PromptGamePassPurchase(localPlayer, id) end,
+			buyProduct = function(id)
+				if not p.saving then
+					storeStatus(page, "Purchases are paused: your progress can't be saved right now.")
+					return
+				end
+				MarketplaceService:PromptProductPurchase(localPlayer, id)
+			end,
+		}, tab == "coins")
+	elseif tab == "colours" then
 		MenuKit.paragraph(body, 1, "Your territory colour in every round from your next one.", { TextColor3 = C.WHITE, TextTransparency = 0.5 })
-		local grid = storeGrid(body, 2, 220)
+		local grid = storeGrid(body, 2, 220, true)
 		for i, c in MetaConfig.COLORS do
 			local owned = ownsColor(p, c)
 			local equipped = p.color == c.id
 			local locked = (tonumber(p.level) or 1) < c.level and not owned
 			local card = storeCard(grid, i, c.name, function(art)
-				local sw = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromScale(0.62, 0.62), BackgroundColor3 = Color3.fromRGB(c.rgb[1], c.rgb[2], c.rgb[3]), BorderSizePixel = 0, Parent = art })
-				make("UIAspectRatioConstraint", { Parent = sw })
-				MenuKit.round(sw)
-				MenuKit.stroke(sw, 0.7)
+				StoreView.colourPreview(art,c.rgb)
 				if not owned then
 					-- Every colour you don't own yet (level-locked or still to buy) shows the lock, on a
 					-- dark badge so it reads on light swatches too (Snow, Ice, Gold).
@@ -1114,7 +1146,7 @@ renderStoreTab = function(page: any, tab: string)
 		end
 	elseif tab == "passes" then
 		local function passGrid(order: number, list: { any })
-			local grid = storeGrid(body, order, 240)
+			local grid = storeGrid(body, order, 240, true)
 			for i, pass in list do
 				if pass.id ~= 0 then
 					local info = marketInfo(true, pass.id)
@@ -1138,17 +1170,16 @@ renderStoreTab = function(page: any, tab: string)
 				end
 			end
 		end
-		passGrid(2, {
+		local passes = {
 			{ id = MetaConfig.GAMEPASS.VIP, name = "VIP", desc = "1.5x XP and medals, VIP tag on the leaderboard", owned = p.vip, icon = "User" },
 			{ id = MetaConfig.GAMEPASS.AllColors, name = "All Colours", desc = "Unlock every territory colour", owned = p.allColors, icon = "Layout" },
-		})
-		MenuKit.paragraph(body, 3, "Gameplay perks: work in solo, private and public games, never in ranked.", { FontFace = F.BOLD, TextColor3 = C.WHITE, TextTransparency = 0.3 })
-		local perks = {}
+		}
 		local ownedPerks = if type(p.perks) == "table" then p.perks else {}
 		for _, perk in MetaConfig.PERKS do
-			perks[#perks + 1] = { id = perk.id, name = perk.name, desc = perk.desc, owned = ownedPerks[perk.key] == true, gameIcon = perk.icon }
+			passes[#passes + 1] = { id = perk.id, name = perk.name, desc = perk.desc, owned = ownedPerks[perk.key] == true, gameIcon = perk.icon }
 		end
-		passGrid(4, perks)
+		passGrid(2, passes)
+		MenuKit.paragraph(body, 3, "Gameplay perks work in solo, private and public games, never in ranked.", { FontFace = F.BOLD, TextColor3 = C.WHITE, TextTransparency = 0.3 })
 	elseif tab == "group" then
 		local G = MetaConfig.GROUP
 		local boost = MetaConfig.boost(G.DAILY_BOOST)
@@ -1194,8 +1225,8 @@ renderStoreTab = function(page: any, tab: string)
 			end)
 		end
 	elseif tab == "boosts" then
-		MenuKit.paragraph(body, 1, "Boosts for your matches. Use them from the boosts bar at the top right once the fighting starts, as many as you own (" .. MetaConfig.BOOST_COOLDOWN .. " s apart per kind). Bought in a match, they're used right away. Extra Revives are used from the defeat screen. Never in ranked.", { TextColor3 = C.WHITE, TextTransparency = 0.5 })
-		local grid = storeGrid(body, 2, 270)
+		MenuKit.paragraph(body, 1, "Boosts for your matches. Use them from the boosts bar at the top right once the fighting starts, as many as you own. Bought in a match, they're used right away. Extra Revives are used from the defeat screen. Never in ranked.", { TextColor3 = C.WHITE, TextTransparency = 0.5 })
+		local grid = storeGrid(body, 2, 270, true)
 		local owned = if type(p.boosts) == "table" then p.boosts else {}
 		for i, b in MetaConfig.SHOP_ITEMS do
 			if b.hidden then
@@ -1228,6 +1259,7 @@ renderStoreTab = function(page: any, tab: string)
 				end)
 				robux.Size = UDim2.new(1, 0, 0, 32)
 				robux.LayoutOrder = 10
+				card.Art.Size = UDim2.new(1, 0, 1, -108)
 			end
 		end
 	else
@@ -1257,10 +1289,14 @@ renderStoreTab = function(page: any, tab: string)
 			MenuKit.comingSoon(body, 3, "Layout")
 		end
 	end
-	MenuKit.paragraph(body, 20, if tab == "colours" or tab == "coins" then "Colours are cosmetic. Medals buy colours and boosts." else "Perks and boosts never work in ranked games.", { TextSize = 12, TextXAlignment = Enum.TextXAlignment.Center, TextColor3 = C.WHITE, TextTransparency = 0.6 })
+	StoreView.decorate(page)
+	if tab ~= "featured" then
+		MenuKit.paragraph(body, 20, if tab == "colours" or tab == "coins" then "Colours are cosmetic. Medals buy colours and boosts." else "Perks and boosts never work in ranked games.", { TextSize = 12, TextXAlignment = Enum.TextXAlignment.Center, TextColor3 = C.WHITE, TextTransparency = 0.6 })
+	end
 end
 
 local function renderStore(page: any)
+	StoreView.prepare(page)
 	storePages[page] = true
 	page.storeMsg = ""
 	local coins = page.header:FindFirstChild("StoreCoins")
@@ -1282,12 +1318,12 @@ local function renderStore(page: any)
 		fetchProfile()
 	end
 	page:setTabs({
-		{ key = "colours", label = "Colours" },
+		{ key = "featured", label = "Featured" },
+		{ key = "coins", label = "Medals" },
 		{ key = "passes", label = "Passes" },
 		{ key = "boosts", label = "Boosts" },
-		{ key = "coins", label = "Medals" },
-		{ key = "group", label = "Group" },
-	}, "colours", function(key)
+		{ key = "colours", label = "Colours" },
+	}, "featured", function(key)
 		page.storeMsg = ""
 		renderStoreTab(page, key)
 	end)
@@ -1304,7 +1340,7 @@ local function renderLeaderboardTab(page: any, board: string)
 	local cols = if board == "elo" then { "Rank", "Player", "ELO", "Games", "Win/Loss" } else { "Rank", "Player", "Wins", "Games", "Win rate" }
 	local widths = { 0.1, 0.42, 0.16, 0.14, 0.18 }
 	local function rowFrame(order: number, values: { string }, header: boolean, mine: boolean?)
-		local r = make("Frame", { LayoutOrder = order, BackgroundColor3 = if mine then C.MALIBU else C.WHITE, BackgroundTransparency = if header then 1 elseif mine then 0.75 else 0.96, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, if header then 28 else 40), Parent = body })
+		local r = make("Frame", { LayoutOrder = order, BackgroundColor3 = if mine then Color3.fromRGB(8,60,91) else C.PANEL_ROW, BackgroundTransparency = if header then 1 else 0, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, if header then 28 else 40), Parent = body })
 		MenuKit.corner(r, 8)
 		local x = 0
 		for i, v in values do
@@ -1395,10 +1431,10 @@ local function renderFriends(page: any)
 		grid.CellSize = UDim2.new(if allList.AbsoluteSize.X < 520 then 1 else 0.5, -4, 0, 48)
 	end)
 	local function friendRow(parent: Instance, order: number, userId: number, name: string, sub: string?, dim: boolean?): Frame
-		local r = make("Frame", { LayoutOrder = order, BackgroundColor3 = C.WHITE, BackgroundTransparency = 0.95, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 48), Parent = parent })
+		local r = make("Frame", { LayoutOrder = order, BackgroundColor3 = C.PANEL_ROW, BackgroundTransparency = 0, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 48), Parent = parent })
 		MenuKit.corner(r, 10)
 		MenuKit.stroke(r, 0.9)
-		local av = make("ImageLabel", { Position = UDim2.fromOffset(8, 6), Size = UDim2.fromOffset(36, 36), BackgroundColor3 = C.WHITE, BackgroundTransparency = 0.9, Image = "rbxthumb://type=AvatarHeadShot&id=" .. userId .. "&w=48&h=48", ImageTransparency = if dim then 0.5 else 0, Parent = r })
+		local av = make("ImageLabel", { Position = UDim2.fromOffset(8, 6), Size = UDim2.fromOffset(36, 36), BackgroundColor3 = C.PANEL_ROW, BackgroundTransparency = 0, Image = "rbxthumb://type=AvatarHeadShot&id=" .. userId .. "&w=48&h=48", ImageTransparency = if dim then 0.5 else 0, Parent = r })
 		MenuKit.round(av)
 		MenuKit.text({ Position = UDim2.fromOffset(54, if sub then 6 else 0), Size = UDim2.new(1, -150, 0, if sub then 20 else 48), FontFace = F.BOLD, TextSize = 14, TextTransparency = if dim then 0.5 else 0, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Text = name, Parent = r })
 		if sub then
@@ -1468,6 +1504,8 @@ local function renderFriends(page: any)
 end
 
 function MenuPages.render(kind: string, page: any, ctx: any)
+	if kind ~= "inventory" and page.inventoryLeave then page:inventoryLeave() end
+	page.inventoryShowing = kind == "inventory"
 	page.title.Text = string.upper(MenuPages.TITLES[kind] or kind)
 	page.storeShowing = kind == "store"
 	local coins = page.header:FindFirstChild("StoreCoins")

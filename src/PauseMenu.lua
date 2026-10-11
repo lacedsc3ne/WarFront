@@ -54,8 +54,16 @@ gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 gui.Enabled = false
 gui.Parent = playerGui
 
+local MatchSkin=require(script.Parent:WaitForChild("MatchSkin"))
 local modal = MenuKit.modal(gui, "Panel")
+modal.box.Name="PauseCard";MatchSkin.panel(modal.box)
+modal.holder.DescendantAdded:Connect(function(v) task.defer(MatchSkin.decorate,v) end)
 local page = modal.page
+-- Night look (MatchSkin.night): plain words and the yellow main button.
+local NIGHT = MatchSkin.night == true
+local function w(old: string, new: string): string
+	return if NIGHT then new else old
+end
 
 local view = "main" -- "main" or a MenuPages kind
 local altView = false
@@ -101,6 +109,7 @@ local function openSub(kind: string, from: GuiObject?)
 	lastRow = from
 	view = kind
 	MenuPages.render(kind, page, pageCtx)
+ MatchSkin.decorateTree(modal.holder)
 	page.body.CanvasPosition = Vector2.zero
 	modal.layout()
 	selectIfGamepad(page.back)
@@ -116,41 +125,59 @@ renderMain = function()
 	view = "main"
 	page:setTabs({})
 	page:clear()
-	page.title.Text = "MENU"
+	page.title.Text = w("MENU", "Menu")
 	local coins = page.header:FindFirstChild("StoreCoins")
 	if coins then
 		coins.Visible = false
 	end
 	page.storeShowing = false
 	local body = page.body
-	local resume = MenuKit.button("primary", { Name = "Resume", LayoutOrder = 1, Size = UDim2.new(1, 0, 0, 52), FontFace = F.BOLD, TextSize = 18, Text = "RESUME", Parent = body })
+	local resume = MenuKit.button("primary", { Name = "Resume", LayoutOrder = 1, Size = UDim2.new(1, 0, 0, 52), FontFace = F.BOLD, TextSize = 18, Text = w("RESUME", "Back to battle"), Parent = body })
 	resume.Activated:Connect(PauseMenu.close)
+	if NIGHT then
+		local K = MatchSkin.Kit.C
+		resume.BackgroundColor3, resume.TextColor3, resume.FontFace = K.YELLOW, K.YELLOW_TEXT, MatchSkin.Kit.F.TITLE
+		resume.TextSize = 20
+		local corner = resume:FindFirstChildWhichIsA("UICorner") or Instance.new("UICorner")
+		corner.CornerRadius = UDim.new(0.5, 0)
+		corner.Parent = resume
+		-- MenuKit's hover recolours with its own blue: keep it yellow.
+		resume:GetPropertyChangedSignal("BackgroundColor3"):Connect(function()
+			if resume.BackgroundColor3 ~= K.YELLOW and resume.BackgroundColor3 ~= K.YELLOW:Lerp(K.WHITE, 0.12) then
+				resume.BackgroundColor3 = K.YELLOW
+			end
+		end)
+	end
 
 	-- SettingsModal rows (settings, toggle terrain, exit) plus help / store / stats / main menu.
-	local settingsRow = MenuKit.navRow(body, 2, "Gear", "Settings", "Gameplay, graphics, audio and keybind settings")
+	local settingsRow = MenuKit.navRow(body, 2, "Gear", "Settings", w("Gameplay, graphics, audio and keybind settings", "Sound, graphics, controls and keys"))
 	settingsRow.Activated:Connect(function()
 		openSub("settings", settingsRow)
 	end)
-	local terrainRow, terrainValue = MenuKit.navRow(body, 3, "Layout", "Toggle Terrain", "Alternate view (terrain/countries)")
+	local terrainRow, terrainValue = MenuKit.navRow(body, 3, "Layout", w("Toggle Terrain", "Show plain map"), w("Alternate view (terrain/countries)", "Switch between land and countries"))
 	terrainValue.Text = if altView then "On" else "Off"
 	terrainRow.Activated:Connect(function()
 		setAltView(not altView)
 		terrainValue.Text = if altView then "On" else "Off"
 	end)
-	local helpRow = MenuKit.navRow(body, 4, "Help", "Help", "Hotkeys, controller and touch controls, tutorial")
+	local helpRow = MenuKit.navRow(body, 4, "Help", w("Help", "How to play"), w("Hotkeys, controller and touch controls, tutorial", "Controls, keys and the tutorial"))
 	helpRow.Activated:Connect(function()
 		openSub("help", helpRow)
 	end)
-	local storeRow = MenuKit.navRow(body, 5, "Building", "Store", "Territory colours, passes and medals")
+	local storeRow = MenuKit.navRow(body, 5, "Building", w("Store", "Shop"), w("Territory colours, passes and medals", "Colours, boosts, passes and medals"))
 	storeRow.Activated:Connect(function()
+		if NIGHT and ctx.openStore and ctx.openStore() then
+			PauseMenu.close()
+			return
+		end
 		openSub("store", storeRow)
 	end)
-	local statsRow = MenuKit.navRow(body, 6, "User", "Stats", "Level, wins and record")
+	local statsRow = MenuKit.navRow(body, 6, "User", w("Stats", "Your profile"), w("Level, wins and record", "Level, wins and recent battles"))
 	statsRow.Activated:Connect(function()
 		openSub("profile", statsRow)
 	end)
 	if Replay.available() then
-		local replayRow = MenuKit.navRow(body, 7, "PlayTri", "Watch Replay", "Watch the last round again")
+		local replayRow = MenuKit.navRow(body, 7, "PlayTri", w("Watch Replay", "Watch replay"), w("Watch the last round again", "Watch the last battle again"))
 		replayRow.Activated:Connect(function()
 			PauseMenu.close()
 			Replay.start()
@@ -158,19 +185,19 @@ renderMain = function()
 	end
 	-- A live match server has no main menu of its own (the menu is the lobby place): only Exit Game.
 	if Place.role() ~= "match" or game:GetService("RunService"):IsStudio() then
-		local menuRow = MenuKit.navRow(body, 8, "Menu", "Main Menu", "Maps, voting and news (the battle keeps going)")
+		local menuRow = MenuKit.navRow(body, 8, "Menu", w("Main Menu", "Main menu"), w("Maps, voting and news (the battle keeps going)", "The battle keeps going while you look"))
 		menuRow.Activated:Connect(function()
 			PauseMenu.close()
 			ctx.showMainMenu()
 		end)
 	end
-	local exitRow, exitValue = MenuKit.navRow(body, 9, "X", "Exit Game", "Return to main menu", true)
+	local exitRow, exitValue = MenuKit.navRow(body, 9, "X", w("Exit Game", "Leave battle"), w("Return to main menu", "Go back to the main menu"), true)
 	exitRow.Activated:Connect(function()
 		-- First press arms it; a second press within 3 s leaves (OpenFront asks to confirm).
 		if exitValue.Text == "" then
 			leaveArmed += 1
 			local token = leaveArmed
-			exitValue.Text = "Press again"
+			exitValue.Text = w("Press again", "Tap again to leave")
 			task.delay(3, function()
 				if leaveArmed == token and exitValue.Parent then
 					exitValue.Text = ""
@@ -221,6 +248,7 @@ function PauseMenu.open()
 	if gui.Enabled or ctx.isMainMenuOpen() then
 		return
 	end
+	MatchSkin.decorateTree(modal.holder)
 	gui.Enabled = true
 	modal.open()
 	playerGui:SetAttribute("FrontlinesMenuOpen", true)

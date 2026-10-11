@@ -15,7 +15,9 @@
 -- GameStatsView.open(screenGui, stats, meta?)                            "STATS" modal over a GUI
 
 local MenuKit = require(script.Parent:WaitForChild("MenuKit"))
-local C, F, make = MenuKit.C, MenuKit.F, MenuKit.make
+local MatchSkin=require(script.Parent:WaitForChild("MatchSkin"))
+ local C, F = MenuKit.C, MenuKit.F
+ local function make(class,props) local v=MenuKit.make(class,props);MatchSkin.decorate(v);return v end
 
 local GameStatsView = {}
 
@@ -159,6 +161,7 @@ function GameStatsView.open(gui: Instance, stats: any, meta: any?)
 	if not modal or not modal.holder.Parent or modal.gui ~= gui then
 		modal = MenuKit.modal(gui, "GameStats")
 		modal.gui = gui
+  modal.box.Name="MatchStats";MatchSkin.panel(modal.box)
 		modal.holder.ZIndex = 80
 	end
 	local page = modal.page
@@ -167,7 +170,8 @@ function GameStatsView.open(gui: Instance, stats: any, meta: any?)
 	page.title.Text = "STATS" -- game_list.stats
 	GameStatsView.render(page.body, stats, meta)
 	page.body.CanvasPosition = Vector2.zero
-	modal.open()
+	MatchSkin.decorateTree(modal.holder)
+ modal.open()
 end
 
 return GameStatsView

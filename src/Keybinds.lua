@@ -175,7 +175,7 @@ function Keybinds.keyDown(input: InputObject): boolean
 		gridOn = not gridOn
 		pcall(MapFx.setGrid, gridOn)
 		return true
-	elseif is("centerCamera", input) then
+	elseif is("centerCamera", input) or (input.KeyCode == K.C and KeybindData.get("centerCamera") == "G") then
 		ctx.centerCamera()
 		return true
 	elseif is("pauseGame", input) then

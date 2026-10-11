@@ -176,7 +176,8 @@ local function placeable(map, tile: number, kind: string): boolean
 		if def.coastal then
 			local n = MapUtil.neighbors(map, t, NB)
 			for i = 1, n do
-				if not MapUtil.isLand(map, NB[i]) then
+				-- Ports need the ocean (lakes don't count), like CoreRules.isOceanShore.
+				if not MapUtil.isLand(map, NB[i]) and bit32.band(buffer.readu8(map.terrain, NB[i]), 32) ~= 0 then
 					return true
 				end
 			end
@@ -199,6 +200,50 @@ local function placeable(map, tile: number, kind: string): boolean
 		end
 	end
 	return false
+end
+
+-- Port preview: the tile the server will actually use (CoreRules.spawnTile: the nearest own
+-- ocean-shore tile within PORT_SPAWN_RADIUS, Manhattan, keeping the structure spacing), or nil.
+function BuildMenu.coastSnap(kind: string, tile: number?): number?
+	local def = Config.STRUCTURES[kind]
+	if not ctx or not tile or not def or not def.coastal then
+		return nil
+	end
+	local map = ctx.getMap()
+	local W, H = map.width, map.height
+	local myId = ctx.getMyId()
+	local structures = ctx.getStructures()
+	local function shoreOk(t: number): boolean
+		if ctx.ownerOf(t) ~= myId or not MapUtil.isOwnable(map, t) then
+			return false
+		end
+		local x, y = t % W, t // W
+		for _, s in structures do
+			if math.abs(s[3] % W - x) + math.abs(s[3] // W - y) < Config.MIN_STRUCTURE_DISTANCE then
+				return false
+			end
+		end
+		local n = MapUtil.neighbors(map, t, NB)
+		for i = 1, n do
+			if not MapUtil.isLand(map, NB[i]) and bit32.band(buffer.readu8(map.terrain, NB[i]), 32) ~= 0 then
+				return true
+			end
+		end
+		return false
+	end
+	local r = math.floor(Config.PORT_SPAWN_RADIUS)
+	local cx, cy = tile % W, tile // W
+	local best, bestD = nil, math.huge
+	for dy = -r, r do
+		for dx = -r, r do
+			local d = math.abs(dx) + math.abs(dy)
+			local x, y = cx + dx, cy + dy
+			if d <= r and d < bestD and x >= 0 and x < W and y >= 0 and y < H and shoreOk(y * W + x) then
+				best, bestD = y * W + x, d
+			end
+		end
+	end
+	return best
 end
 
 local function alive(): boolean
@@ -359,7 +404,7 @@ function BuildMenu.perform(kind: string, tile: number)
 end
 
 -- The grid
-local FONT = Font.fromEnum(Enum.Font.GothamMedium)
+local FONT = Font.fromEnum(Enum.Font.GothamBold)
 local FONT_BOLD = Font.fromEnum(Enum.Font.GothamBold)
 local WHITE = Color3.new(1, 1, 1)
 local BG = Color3.fromHex("#1e1e1e")
@@ -372,6 +417,7 @@ local BORDER_DISABLED = Color3.fromHex("#333333")
 local COST_RED = Color3.fromHex("#ff4444")
 local YELLOW = Color3.fromRGB(250, 204, 21)
 
+local MatchSkin=require(script.Parent:WaitForChild("MatchSkin"))
 local function make(className: string, props: { [string]: any })
 	local inst = Instance.new(className)
 	for k, v in props do
@@ -382,6 +428,7 @@ local function make(className: string, props: { [string]: any })
 	if props.Parent then
 		inst.Parent = props.Parent
 	end
+	MatchSkin.decorate(inst)
 	return inst
 end
 

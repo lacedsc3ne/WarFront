@@ -38,19 +38,20 @@ local ClockPanels = require(script.Parent:WaitForChild("ClockPanels"))
 
 local MatchHud = {}
 
-local FONT = Font.fromEnum(Enum.Font.GothamMedium)
+local FONT = Font.fromEnum(Enum.Font.GothamBold)
 local FONT_BOLD = Font.fromEnum(Enum.Font.GothamBold)
 local WHITE = Color3.new(1, 1, 1)
-local GRAY800 = Color3.fromRGB(31, 41, 55)
+local GRAY800 = Color3.fromRGB(14, 43, 64)
 local RED400 = Color3.fromRGB(248, 113, 113)
 local RED_ICON = Color3.fromRGB(220, 38, 38)
-local AQUARIUS = Color3.fromHex("#3fa9f5")
+local AQUARIUS = Color3.fromRGB(0,177,235)
 local SLATE300 = Color3.fromRGB(203, 213, 225)
 local BRIGHT_BLUE = Color3.fromHex("#1e90ff")
 
 local ctx: any = nil
 local gui: ScreenGui
 
+local MatchSkin=require(script.Parent:WaitForChild("MatchSkin"))
 local function make(className: string, props: { [string]: any })
 	local inst = Instance.new(className)
 	for k, v in props do
@@ -61,6 +62,7 @@ local function make(className: string, props: { [string]: any })
 	if props.Parent then
 		inst.Parent = props.Parent
 	end
+	MatchSkin.decorate(inst)
 	return inst
 end
 
@@ -97,7 +99,7 @@ end
 -- Attacks display
 local attacks = { rows = {} :: { [string]: any }, frame = nil :: any, grid = nil :: any }
 
-local ROW_H = 26
+local ROW_H = 32
 local MAX_H = 112 -- OpenFront max-h-[7rem]
 
 local function rowButton(parent: Instance, order: number)
@@ -140,6 +142,7 @@ local function makeRow(key: string)
 	local extra = label({ Size = UDim2.fromOffset(0, 16), AutomaticSize = Enum.AutomaticSize.X, TextSize = 12, TextColor3 = SLATE300, Text = "", LayoutOrder = 5, ZIndex = 4, Parent = main })
 	-- Right side: retreat (X), retaliate (sword) or "(retreating...)".
 	local action = make("TextButton", {
+		Name = "Action",
 		AnchorPoint = Vector2.new(1, 0.5),
 		Position = UDim2.new(1, 0, 0.5, 0),
 		Size = UDim2.fromOffset(26, 22),
@@ -154,10 +157,11 @@ local function makeRow(key: string)
 		Parent = f,
 	})
 	corner(action, 6)
+	local retreat = IconKit.image("Back", { Name = "RetreatArrow", AnchorPoint = Vector2.new(0.5,0.5), Position = UDim2.fromScale(0.5,0.5), Size = UDim2.fromOffset(18,18), ImageColor3 = AQUARIUS, ZIndex = 5, Parent = action })
 	local actionStroke = make("UIStroke", { Color = Color3.fromRGB(185, 28, 28), Transparency = 0.5, Enabled = false, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = action })
 	local sword = IconKit.image("Sword", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(16, 16), ImageColor3 = RED_ICON, Visible = false, ZIndex = 5, Parent = action })
 	local status = label({ AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -2, 0.5, 0), Size = UDim2.fromOffset(0, 16), AutomaticSize = Enum.AutomaticSize.X, TextSize = 13, TextColor3 = AQUARIUS, Text = "(retreating...)", Visible = false, ZIndex = 4, Parent = f })
-	local row = { frame = f, main = main, icon = icon, arrow = arrow, troops = troops, name = name, extra = extra, action = action, actionStroke = actionStroke, sword = sword, status = status }
+	local row = { frame = f, main = main, icon = icon, arrow = arrow, troops = troops, name = name, extra = extra, action = action, actionStroke = actionStroke, sword = sword, retreat = retreat, status = status }
 	main.Activated:Connect(function()
 		if row.onMain then
 			row.onMain()
@@ -178,27 +182,37 @@ local function fillRow(row, kind: string, order: number, d)
 	local incoming = kind == "in" or kind == "inboat"
 	local color = if incoming then RED400 else AQUARIUS
 	local boat = kind == "boat" or kind == "inboat"
-	local iconName = if boat then "Boat" else "Soldier"
+	local hud=gui:FindFirstChild("CornerHud")
+ local population=not boat and hud and hud:GetAttribute("InGameUILayout")=="Default"
+ local iconName = if boat then "Boat" elseif population then "Population" else "Soldier"
 	if row.iconName ~= iconName then
 		row.iconName = iconName
-		IconKit.set(row.icon, iconName)
+		if population then
+   row.icon.Image="rbxassetid://112831062230992";row.icon.ImageRectOffset=Vector2.zero;row.icon.ImageRectSize=Vector2.zero
+  else IconKit.set(row.icon, iconName) end
 	end
 	if boat then
 		local owner = ctx.roster[d.owner]
 		row.icon.ImageColor3 = if owner then Color3.fromRGB(owner.r or 255, owner.g or 255, owner.b or 255) else WHITE
 		row.icon.Size = UDim2.fromOffset(18, 18)
 	else
-		row.icon.ImageColor3 = if incoming then RED_ICON else AQUARIUS
-		row.icon.Size = UDim2.fromOffset(16, 16)
+		row.icon.ImageColor3 = if population then WHITE elseif incoming then RED_ICON else AQUARIUS
+		row.icon.Size = UDim2.fromOffset(if population then 18 else 16, if population then 18 else 16)
 	end
+ row.arrow.Visible=not population
 	row.arrow.Text = if boat then "" elseif incoming then "↓" else "↑"
-	row.arrow.Size = UDim2.fromOffset(if boat then 0 else 9, 16)
+	row.arrow.Size = UDim2.fromOffset(if boat or population then 0 else 9, 16)
 	row.arrow.TextColor3 = color
 	row.troops.Text = (ctx.fmtTroops or ctx.fmt)(d.troops) -- renderTroops
 	row.troops.TextColor3 = color
 	row.name.Text = d.name
 	row.name.TextColor3 = color
 	row.name.TextSize = if boat then 12 else 14
+	row.troops.AutomaticSize = Enum.AutomaticSize.None
+	row.troops.Size = UDim2.fromOffset(65,16)
+	row.name.Size = UDim2.new(1, -(if boat then 150 else 112), 0, 16)
+	row.extra.AutomaticSize = Enum.AutomaticSize.None
+	row.extra.Size = UDim2.fromOffset(if boat then 44 else 0,16)
 	row.extra.Text = d.extra or ""
 	row.onMain = d.onMain
 	row.onAction = d.onAction
@@ -206,7 +220,8 @@ local function fillRow(row, kind: string, order: number, d)
 	row.status.Visible = retreating
 	row.action.Visible = d.onAction ~= nil and not retreating
 	row.sword.Visible = kind == "in"
-	row.action.Text = if kind == "in" then "" else "❌"
+	row.action.Text = ""
+	row.retreat.Visible = kind ~= "in"
 	row.action.BackgroundTransparency = if kind == "in" then 0.5 else 1
 	row.actionStroke.Enabled = kind == "in"
 	row.action.Selectable = row.action.Visible
@@ -247,6 +262,7 @@ local function refreshAttacks()
 					onMain = focus(target),
 					onAction = function()
 						ctx.net:FireServer("retreat", target)
+						if ctx.onRetreat then ctx.onRetreat() end
 					end,
 				})
 			end
@@ -259,6 +275,7 @@ local function refreshAttacks()
 					retreating = a[3],
 					onAction = function()
 						ctx.net:FireServer("retreat", 0)
+						if ctx.onRetreat then ctx.onRetreat() end
 					end,
 				})
 			end
@@ -312,10 +329,11 @@ local function refreshAttacks()
 			attacks.rows[key] = nil
 		end
 	end
-	local rows = math.ceil(order / 2)
+	local rows = order
 	local h = rows * ROW_H + math.max(0, rows - 1) * 4
 	frame.Visible = order > 0
-	frame.Size = UDim2.new(1, 0, 0, math.min(h, MAX_H))
+	local available = if frame.Parent and frame.Parent:IsA("GuiObject") and frame.Parent.Name~="Stack" then frame.Parent.AbsoluteSize.Y else MAX_H
+	frame.Size = UDim2.new(1, 0, 0, math.min(h, MAX_H, math.max(0,available)))
 	frame.CanvasSize = UDim2.fromOffset(0, h)
 end
 
@@ -336,7 +354,7 @@ local function buildAttacks(parent: Instance)
 	attacks.frame = frame
 	attacks.grid = frame
 	make("UIGridLayout", {
-		CellSize = UDim2.new(0.5, -2, 0, ROW_H),
+		CellSize = UDim2.new(1, -4, 0, ROW_H),
 		CellPadding = UDim2.fromOffset(4, 4),
 		SortOrder = Enum.SortOrder.LayoutOrder,
 		Parent = frame,
@@ -362,7 +380,7 @@ local function buildTop()
 	headsUp = label({
 		Name = "HeadsUpMessage",
 		AnchorPoint = Vector2.new(0.5, 0),
-		Position = UDim2.fromScale(0.5, 0.15),
+		Position = UDim2.new(0.5,0,0,180),
 		Size = UDim2.fromOffset(0, 40),
 		AutomaticSize = Enum.AutomaticSize.X,
 		BackgroundTransparency = 0.3,
@@ -380,9 +398,9 @@ local function buildTop()
 	toastFrame = make("Frame", {
 		Name = "Toast",
 		AnchorPoint = Vector2.new(0.5, 0),
-		Position = UDim2.new(0.5, 0, 0, 24),
-		Size = UDim2.fromOffset(200, 0),
-		AutomaticSize = Enum.AutomaticSize.XY,
+		Position = UDim2.new(0.5, 0, 0, 86),
+		Size = UDim2.fromOffset(520, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
 		BackgroundColor3 = Color3.fromRGB(34, 197, 94),
 		BackgroundTransparency = 0.85,
 		Visible = false,
@@ -390,9 +408,36 @@ local function buildTop()
 		Parent = gui,
 	})
 	corner(toastFrame, 12)
-	make("UIPadding", { PaddingLeft = UDim.new(0, 24), PaddingRight = UDim.new(0, 24), PaddingTop = UDim.new(0, 14), PaddingBottom = UDim.new(0, 14), Parent = toastFrame })
+	make("UIPadding", { PaddingLeft = UDim.new(0, 16), PaddingRight = UDim.new(0, 16), PaddingTop = UDim.new(0, 10), PaddingBottom = UDim.new(0, 10), Parent = toastFrame })
 	make("UIStroke", { Name = "Border", Color = Color3.fromRGB(34, 197, 94), Transparency = 0.5, Parent = toastFrame })
-	toastText = label({ Size = UDim2.fromOffset(0, 18), AutomaticSize = Enum.AutomaticSize.X, FontFace = FONT, TextSize = 16, Text = "", ZIndex = 36, Parent = toastFrame })
+	toastText = label({ Size = UDim2.new(1,0,0,0), AutomaticSize = Enum.AutomaticSize.Y, TextWrapped=true, FontFace = FONT, TextSize = 16, Text = "", ZIndex = 36, Parent = toastFrame })
+end
+
+-- Keep transient messages beneath the actual top HUD rectangles, including scaled layouts.
+local function layoutToast()
+ if not toastFrame or not gui then return end
+ local origin=gui.AbsolutePosition;local size=gui.AbsoluteSize
+ local width=math.min(520,math.max(160,size.X-24))
+ toastFrame.Size=UDim2.fromOffset(width,0)
+ local left=origin.X+(size.X-width)/2;local right=left+width
+ local top=math.max(12,GuiService.TopbarInset.Max.Y+6)
+ local function avoid(v)
+  if not v or not v:IsA("GuiObject") or not v.Visible then return end
+  local p,s=v.AbsolutePosition,v.AbsoluteSize
+  if s.X>0 and s.Y>0 and p.Y<origin.Y+size.Y*.55 and p.X<right and p.X+s.X>left then
+   top=math.max(top,p.Y-origin.Y+s.Y+10)
+  end
+ end
+ local corner=gui:FindFirstChild("CornerHud")
+ if corner and corner.Visible then
+  avoid(corner:FindFirstChild("RoundStatus"));avoid(corner:FindFirstChild("Resources"))
+  local utilities=corner:FindFirstChild("Utilities")
+  if utilities then for _,v in utilities:GetChildren() do if v:IsA("GuiButton") then avoid(v) end end end
+ end
+ -- Toasts own the message lane; hover and spawn prompts resume when the toast expires.
+ local banner=gui:FindFirstChild("Banner");if banner and toastFrame.Visible then banner.Visible=false end
+ if headsUp and toastFrame.Visible then headsUp.Visible=false end
+ toastFrame.Position=UDim2.new(.5,0,0,top)
 end
 
 function MatchHud.toast(text: string, color: string?, seconds: number?)
@@ -400,13 +445,14 @@ function MatchHud.toast(text: string, color: string?, seconds: number?)
 		return
 	end
 	local c = if color == "red" then Color3.fromRGB(239, 68, 68) else Color3.fromRGB(34, 197, 94)
-	toastFrame.BackgroundColor3 = c
+	toastFrame.BackgroundColor3 = MatchSkin.C.panel
 	local border = toastFrame:FindFirstChild("Border") :: UIStroke?
 	if border then
 		border.Color = c
 	end
 	toastText.Text = text
 	toastFrame.Visible = true
+	layoutToast()
 	toastToken += 1
 	local token = toastToken
 	task.delay(seconds or 2, function()
@@ -419,6 +465,7 @@ end
 local function refreshTop()
 	local ph = ctx.getPhase()
 	local inSpawn = ph == "Spawn"
+ local banner=gui:FindFirstChild("Banner");if banner then headsUp.Position=UDim2.new(.5,0,0,banner.AbsolutePosition.Y-gui.AbsolutePosition.Y) end
 	spawnBar.Visible = inSpawn
 	if inSpawn then
 		local total = Config.SPAWN_PHASE_TICKS
@@ -427,10 +474,11 @@ local function refreshTop()
 	end
 	-- (Overtime: "Overtime! ..." for its first 5 seconds, HeadsUpMessage.isOvertimeNotice.)
 	local overtime = not inSpawn and ClockPanels.overtimeNotice()
-	headsUp.Visible = inSpawn or overtime
+	headsUp.Visible = (inSpawn or overtime) and not toastFrame.Visible
 	if inSpawn then
 		local mine = ctx.roster[ctx.getMyId()]
-		headsUp.Text = if ctx.getMyId() ~= 0 and mine then "Choose a starting location" else "Players are choosing starting locations"
+		headsUp.Text = if MatchSkin.night then (if ctx.getMyId() ~= 0 and mine then "Pick your starting spot" else "Everyone is picking a starting spot")
+		elseif ctx.getMyId() ~= 0 and mine then "Choose a starting location" else "Players are choosing starting locations"
 	elseif overtime then
 		headsUp.Text = "Overtime! The territory needed to win is now dropping."
 	end
@@ -469,16 +517,47 @@ local function buildWin()
 	-- p-4 md:p-6
 	make("UIPadding", { PaddingLeft = UDim.new(0, 24), PaddingRight = UDim.new(0, 24), PaddingTop = UDim.new(0, 24), PaddingBottom = UDim.new(0, 24), Parent = c })
 	make("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 16), HorizontalAlignment = Enum.HorizontalAlignment.Center, Parent = c })
-	win.title = label({ Size = UDim2.new(1, 0, 0, 32), TextSize = 26, TextWrapped = true, Text = "", LayoutOrder = 1, ZIndex = 61, Parent = c })
-	local box = make("Frame", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.7, LayoutOrder = 2, ZIndex = 61, Parent = c })
+	local kicker=label({Size=UDim2.new(1,0,0,16),TextSize=11,TextColor3=MatchSkin.C.cyan,Text="MATCH COMPLETE",LayoutOrder=0,ZIndex=61,Parent=c})
+	kicker.Visible=not MatchSkin.night
+	if MatchSkin.night then
+		-- Night: trophy when you win, torn flag when you don't.
+		win.art = require(script.Parent:WaitForChild("NightMenu"):WaitForChild("Art")).image("YouWon", { Size = UDim2.fromOffset(96, 96), LayoutOrder = 0, Visible = false, ZIndex = 61, Parent = c })
+	end
+ win.title = label({ Size = UDim2.new(1, 0, 0, 58), TextSize = 42, TextColor3=MatchSkin.C.gold,TextWrapped = true, Text = "", LayoutOrder = 1, ZIndex = 61, Parent = c })
+ win.result=label({Size=UDim2.new(1,0,0,24),TextSize=14,Text=" ",LayoutOrder=2,ZIndex=61,Parent=c})
+ win.metrics=label({Size=UDim2.new(1,0,0,40),TextWrapped=true,TextSize=12,TextColor3=MatchSkin.C.cyan,Text="",LayoutOrder=3,ZIndex=61,Parent=c})
+	local box = make("Frame", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.7, LayoutOrder = 4, ZIndex = 61, Parent = c })
 	corner(box, 2) -- rounded-sm
+	if MatchSkin.night then
+		-- Night: rewards earned (Meta "reward") and today's missions under the result.
+		local K = MatchSkin.Kit.C
+		box.BackgroundColor3, box.BackgroundTransparency = K.CARD, 0
+		box:FindFirstChildWhichIsA("UICorner").CornerRadius = UDim.new(0, 12)
+		win.rewards = Instance.new("Frame")
+		win.rewards.Name = "Rewards"
+		win.rewards.BackgroundTransparency = 1
+		win.rewards.Size = UDim2.new(1, 0, 0, 30)
+		win.rewards.LayoutOrder = 3
+		win.rewards.Visible = false
+		win.rewards.ZIndex = 61
+		win.rewards.Parent = c
+		MatchSkin.Kit.list(win.rewards, true, 8, { HorizontalAlignment = Enum.HorizontalAlignment.Center, VerticalAlignment = Enum.VerticalAlignment.Center })
+		win.missions = MatchSkin.Kit.card({ Name = "Missions", Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 4, Visible = false, ZIndex = 61, Parent = c })
+		MatchSkin.Kit.pad(win.missions, 14, 14, 10, 10)
+		MatchSkin.Kit.list(win.missions, false, 6)
+		box.LayoutOrder = 5
+	end
 	make("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10), PaddingTop = UDim.new(0, 10), PaddingBottom = UDim.new(0, 10), Parent = box })
 	win.body = label({ Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, FontFace = FONT_BOLD, TextSize = 20, TextWrapped = true, Text = "", ZIndex = 62, Parent = box }) -- h3 text-xl font-semibold
-	local buttons = make("Frame", { Size = UDim2.new(1, 0, 0, 48), BackgroundTransparency = 1, LayoutOrder = 3, ZIndex = 61, Parent = c })
-	make("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 10), Parent = buttons })
+	local buttons = make("Frame", { Size = UDim2.new(1, 0, 0, 48), BackgroundTransparency = 1, LayoutOrder = 6, ZIndex = 61, Parent = c })
+	win.buttonFrame=buttons
+ win.buttonGrid=make("UIGridLayout",{CellSize=UDim2.new(.5,-5,0,48),CellPadding=UDim2.fromOffset(10,10),FillDirectionMaxCells=4,SortOrder=Enum.SortOrder.LayoutOrder,Parent=buttons})
 	-- o-button primary block: bg-malibu-blue hover:bg-aquarius, rounded-xl, bold uppercase.
 	local function oButton(text: string, order: number, onClick: () -> ())
-		local malibu = Color3.fromHex("#0084d1")
+		local malibu = if text=="KEEP PLAYING" then MatchSkin.C.cyan else MatchSkin.C.raised
+		if MatchSkin.night then
+			malibu = if text=="KEEP PLAYING" then MatchSkin.C.gold else MatchSkin.C.raised
+		end
 		local b = make("TextButton", {
 			Size = UDim2.new(0.5, -5, 1, 0),
 			BackgroundColor3 = malibu,
@@ -492,14 +571,22 @@ local function buildWin()
 			Parent = buttons,
 		})
 		corner(b, 12)
+		if MatchSkin.night then
+			b.Text = ({ ["KEEP PLAYING"] = "Play again", ["EXIT GAME"] = "Leave", ["WATCH REPLAY"] = "Watch replay", STATS = "Stats" })[text] or text
+			b.FontFace = MatchSkin.Kit.F.TITLE
+			b.TextSize = 18
+			b.TextColor3 = if text == "KEEP PLAYING" then MatchSkin.Kit.C.YELLOW_TEXT else WHITE
+			b:FindFirstChildWhichIsA("UICorner").CornerRadius = UDim.new(0.5, 0)
+		end
+		local hoverColor = if MatchSkin.night then malibu:Lerp(WHITE, 0.12) else AQUARIUS
 		b.MouseEnter:Connect(function()
-			b.BackgroundColor3 = AQUARIUS
+			b.BackgroundColor3 = hoverColor
 		end)
 		b.MouseLeave:Connect(function()
 			b.BackgroundColor3 = malibu
 		end)
 		b.SelectionGained:Connect(function()
-			b.BackgroundColor3 = AQUARIUS
+			b.BackgroundColor3 = hoverColor
 		end)
 		b.SelectionLost:Connect(function()
 			b.BackgroundColor3 = malibu
@@ -513,7 +600,11 @@ local function buildWin()
 			ctx.exitGame()
 		end
 	end)
-	win.keep = oButton("KEEP PLAYING", 3, hideWin)
+	win.keep = oButton("KEEP PLAYING", 3, function()
+		if ctx.getPhase() ~= "Ended" then return end
+		hideWin()
+		ctx.net:FireServer("requeue")
+	end)
 	-- War Front: the round can be watched again right away (Replay.lua); OpenFront lists replays
 	-- in the player's game history instead.
 	win.replay = oButton("WATCH REPLAY", 2, function()
@@ -529,12 +620,120 @@ local function buildWin()
 	end)
 	win.stats.Visible = false
 	win.card = c
+ local mobileScale=Instance.new("UIScale");mobileScale.Name="MobileDialogScale";mobileScale.Parent=c
+ local fitting=false
+ local function fitMobile()
+  if fitting then return end;fitting=true
+  local st=require(script.Parent.DeviceLayout).state
+  local height=c.AbsoluteSize.Y/math.max(.01,mobileScale.Scale)
+  mobileScale.Scale=if st.touch and (st.profile=="phone" or st.profile=="tablet") then math.min(1,(gui.AbsoluteSize.Y-24)/math.max(1,height)) else 1
+  fitting=false
+ end
+ local resize=gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitMobile)
+ local contentResize=c:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitMobile)
+ c.Destroying:Connect(function()resize:Disconnect();contentResize:Disconnect()end);fitMobile()
+end
+
+-- Night results extras: reward pills (Meta "reward", sent when the round's rewards are saved) and
+-- today's missions (MetaFn "missions"), refreshed each time the results show.
+local lastReward: any = nil
+local function nightRewards()
+	if not win.rewards then
+		return
+	end
+	local Kit = MatchSkin.Kit
+	for _, v in win.rewards:GetChildren() do
+		if v:IsA("GuiObject") then
+			v:Destroy()
+		end
+	end
+	local r = lastReward
+	win.rewards.Visible = r ~= nil
+	if not r then
+		return
+	end
+	Kit.chip("+" .. tostring(r.coins or 0) .. " medals", { icon = "Medal", textColor = Kit.C.YELLOW, height = 30, layoutOrder = 1, parent = win.rewards })
+	Kit.chip("+" .. tostring(r.xp or 0) .. " XP", { textColor = Kit.C.CYAN, height = 30, layoutOrder = 2, parent = win.rewards })
+	if r.vip then
+		Kit.chip("VIP bonus", { icon = "Star", iconColor = Kit.C.YELLOW, height = 30, layoutOrder = 3, parent = win.rewards })
+	end
+	if r.friend then
+		Kit.chip("Friend bonus", { icon = "Friends", iconColor = Kit.C.GREEN, height = 30, layoutOrder = 4, parent = win.rewards })
+	end
+end
+local missionsAsk = 0
+function MatchHud.nightResults(_won: boolean)
+	nightRewards()
+	if not win.missions then
+		return
+	end
+	missionsAsk += 1
+	local my = missionsAsk
+	task.spawn(function()
+		task.wait(2) -- the server saves the round's mission progress first
+		local fn = Shared:FindFirstChild("MetaFn")
+		local ok, success, data
+		for _ = 1, 3 do -- MetaFn calls can be briefly rate limited right after a round
+			ok, success, data = pcall(function()
+				if not fn then
+					return false
+				end
+				return fn:InvokeServer("missions") -- both results (an `and` here would keep only the first)
+			end)
+			if (ok and success and type(data) == "table") or my ~= missionsAsk then
+				break
+			end
+			task.wait(1.5)
+		end
+		if my ~= missionsAsk or not win.missions.Parent then
+			return
+		end
+		local Kit = MatchSkin.Kit
+		local Art = require(script.Parent:WaitForChild("NightMenu"):WaitForChild("Art"))
+		for _, v in win.missions:GetChildren() do
+			if v:IsA("GuiObject") then
+				v:Destroy()
+			end
+		end
+		local list = ok and success and type(data) == "table" and data.daily
+		win.missions.Visible = type(list) == "table" and #list > 0
+		if not win.missions.Visible then
+			return
+		end
+		Kit.text({ Text = "Today's missions", FontFace = Kit.F.TITLE, TextSize = 15, TextColor3 = Kit.C.MUTED, LayoutOrder = 0, Parent = win.missions })
+		for i, m in list do
+			local n, goal = tonumber(m.n) or 0, math.max(1, tonumber(m.goal) or 1)
+			local done = n >= goal
+			local row = Kit.make("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 24), LayoutOrder = i, ZIndex = 62, Parent = win.missions })
+			Kit.list(row, true, 8, { VerticalAlignment = Enum.VerticalAlignment.Center })
+			if done then
+				Kit.icon("CheckCircle", { Size = UDim2.fromOffset(20, 20), ImageColor3 = Kit.C.GREEN, LayoutOrder = 1, Parent = row })
+			else
+				Art.image(Art.mission(m.id), { Size = UDim2.fromOffset(22, 22), LayoutOrder = 1, Parent = row })
+			end
+			local t = Kit.text({ Text = tostring(m.text or ""), FontFace = Kit.F.BOLD, TextSize = 15, TextXAlignment = Enum.TextXAlignment.Left, Size = UDim2.new(1, -110, 1, 0), AutomaticSize = Enum.AutomaticSize.None, LayoutOrder = 2, Parent = row })
+			t.TextTruncate = Enum.TextTruncate.AtEnd
+			Kit.text({ Text = if m.claimed then "Collected" elseif done then "Done!" else n .. "/" .. goal, FontFace = Kit.F.TITLE, TextSize = 15, TextColor3 = if done then Kit.C.GREEN else Kit.C.MUTED, LayoutOrder = 3, Parent = row })
+		end
+	end)
+end
+
+if MatchSkin.night then
+	task.spawn(function()
+		Shared:WaitForChild("Meta").OnClientEvent:Connect(function(kind, data)
+			if kind == "reward" and type(data) == "table" then
+				lastReward = data
+				nightRewards()
+			end
+		end)
+	end)
 end
 
 local function refreshWin()
 	if ctx.getPhase() ~= "Ended" then
 		hideWin()
 		win.shownFor = ""
+		lastReward = nil
 		return
 	end
 	local myId = ctx.getMyId()
@@ -557,15 +756,37 @@ local function refreshWin()
 		else
 			title = "Round over"
 		end
-		win.title.Text = title
+		local won=wid==myId and myId~=0 or (phaseInfo.winnerTeam~=nil and mineP and mineP.team==phaseInfo.winnerTeam)
+ win.title.Text=if won then "VICTORY" elseif myId~=0 then "DEFEAT" else "MATCH OVER"
+ win.title.TextColor3=if won then MatchSkin.C.gold else MatchSkin.C.red
+ win.result.Text=title
 		local mine = ctx.roster[myId]
-		win.keep.Text = if mine and mine.stats.alive then "KEEP PLAYING" else "SPECTATE"
+		win.keep.Text = "KEEP PLAYING"
+		if MatchSkin.night then
+			win.title.Text = if won then "You won!" else "Battle over"
+			win.title.TextColor3 = if won then MatchSkin.C.gold else MatchSkin.C.white
+			win.title.FontFace = MatchSkin.Kit.F.TITLE
+			if win.art then
+				require(script.Parent:WaitForChild("NightMenu"):WaitForChild("Art")).set(win.art, if won then "YouWon" else "Defeated")
+				win.art.Visible = won or myId ~= 0
+			end
+			win.result.Text = string.gsub(title, "^You Won!$", "You took the most land")
+			win.keep.Text = "Play again"
+			MatchHud.nightResults(won)
+		end
 		win.card.Visible = true
 		if UserInputService.GamepadEnabled and string.find(UserInputService:GetLastInputType().Name, "Gamepad") then
 			GuiService.SelectedObject = win.keep
 		end
 	end
-	local secs = math.max(0, math.ceil((phaseInfo.ticksLeft - (os.clock() - phaseInfo.at) / Config.TICK) * Config.TICK))
+	local st=win.matchStats
+ win.metrics.Visible=st~=nil
+ if st then win.metrics.Text=string.format("PEAK LAND %.1f%%  /  ELIMINATIONS %d  /  TIME %d:%02d",tonumber(st.peakPercent) or 0,tonumber(st.kills) or 0,(tonumber(st.seconds) or 0)//60,(tonumber(st.seconds) or 0)%60) end
+ if st and MatchSkin.night then
+  win.metrics.Text=string.format("Most land %.0f%%  ·  Beat %d  ·  %d:%02d long",tonumber(st.peakPercent) or 0,tonumber(st.kills) or 0,(tonumber(st.seconds) or 0)//60,(tonumber(st.seconds) or 0)%60)
+  win.metrics.TextColor3=MatchSkin.C.muted;win.metrics.TextSize=14
+ end
+ local secs = math.max(0, math.ceil((phaseInfo.ticksLeft - (os.clock() - phaseInfo.at) / Config.TICK) * Config.TICK))
 	win.body.Text = string.format("Next round starts in %ds", secs)
 	if workspace:GetAttribute("WFPlaceRole") == "match" then
 		win.body.Text = string.format("Back to the lobby in %ds", secs)
@@ -573,6 +794,16 @@ local function refreshWin()
 	-- flex-1 buttons: share the row between the visible ones
 	local canReplay = Replay.available()
 	local hasStats = win.matchStats ~= nil
+ local n=2+(if canReplay then 1 else 0)+(if hasStats then 1 else 0)
+ local cols=if ctx.gui.AbsoluteSize.X<600 then 2 else n
+ -- Whole-pixel cells leave a rounding margin so the last button cannot wrap.
+ local available=math.max(1,win.buttonFrame.AbsoluteSize.X)
+ local cellWidth=math.max(1,math.floor((available-10*(cols-1)-2)/cols))
+ win.buttonGrid.FillDirectionMaxCells=cols
+ win.buttonGrid.CellSize=UDim2.fromOffset(cellWidth,48)
+ local rows=math.ceil(n/cols)
+ win.buttonFrame.Size=UDim2.new(1,0,0,math.max(rows*48+(rows-1)*10,win.buttonGrid.AbsoluteContentSize.Y))
+ win.title.TextSize=math.min(42,math.max(26,ctx.gui.AbsoluteSize.X*.08))
 	if win.replay.Visible ~= canReplay or win.stats.Visible ~= hasStats then
 		win.replay.Visible = canReplay
 		win.stats.Visible = hasStats
@@ -687,8 +918,10 @@ function MatchHud.setup(c)
 		acc = 0
 		refreshAttacks()
 		refreshTop()
+		if toastFrame.Visible then layoutToast() end
 		refreshWin()
 	end)
 end
 
 return MatchHud
+

@@ -462,8 +462,14 @@ function MapFx.boat(data)
 	if data.kind ~= "transport" then
 		return
 	end
+	-- A rerouted boat reuses its id; never orphan the previous landing ring.
+	local previous = attackRings[data.id]
+	if previous then
+		previous.holder:Destroy()
+		attackRings[data.id] = nil
+	end
 	MapRender.addTrail(data.id, data.path, data.start, data.speed, data.owner)
-	if data.owner ~= ctx.getMyId() then
+	if data.retreating or data.owner ~= ctx.getMyId() then
 		return
 	end
 	local n = buffer.len(data.path) // 4
@@ -648,7 +654,7 @@ local function stepSmallGlows(now: number)
 		lastPhase = phase
 		playStart = if phase == "Play" then now else nil
 	end
-	local want = playStart ~= nil and now - playStart >= SMALL_GRACE and not Settings.values.lowDetail
+	local want = false -- Names, avatars and G locate territory; no persistent post-spawn country glow.
 	if now - lastSmallScan > 1 then
 		lastSmallScan = now
 		local land = math.max(1, ctx.landTiles())

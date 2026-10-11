@@ -31,11 +31,11 @@ local SimClock = require(game:GetService("ReplicatedStorage"):WaitForChild("Shar
 
 local AlertsPanel = {}
 
-local FONT = Font.fromEnum(Enum.Font.GothamMedium)
+local FONT = Font.fromEnum(Enum.Font.GothamBold)
 local FONT_BOLD = Font.fromEnum(Enum.Font.GothamBold)
 
 -- Tailwind colours OpenFront uses for these panels.
-local GRAY800 = Color3.fromRGB(31, 41, 55)
+local GRAY800 = Color3.fromRGB(14, 43, 64)
 local GRAY500 = Color3.fromRGB(107, 114, 128)
 local GREEN600 = Color3.fromRGB(22, 163, 74)
 local BLUE500 = Color3.fromRGB(59, 130, 246)
@@ -70,6 +70,9 @@ local EVENT_SECONDS = 8 -- OpenFront: 80 ticks
 local MINOR_MAX, MINOR_MAX_COMPACT = 4, 2
 local IMPORTANT_MAX, IMPORTANT_MAX_COMPACT = 6, 3
 local REQUESTS_MAX, REQUESTS_MAX_COMPACT = 3, 2
+-- Night look: the feed is a scrollable history (newest on top, up to the 30 kept events) instead of
+-- rows that fade after EVENT_SECONDS. Same switch as MatchSkin.night.
+local HISTORY = workspace:GetAttribute("WFNightMenu") ~= false
 
 local ctx: any = nil
 local hooks: any = {}
@@ -85,6 +88,7 @@ local feedEnabled = true
 local events: { any } = {} -- { text, kind, owner, important, at, row }
 local cards: { [number]: any } = {} -- fromId -> { frame, title, accept, expiresAt, renew, order }
 
+local MatchSkin=require(script.Parent:WaitForChild("MatchSkin"))
 local function make(className: string, props: { [string]: any })
 	local inst = Instance.new(className)
 	for k, v in props do
@@ -95,6 +99,7 @@ local function make(className: string, props: { [string]: any })
 	if props.Parent then
 		inst.Parent = props.Parent
 	end
+	MatchSkin.decorate(inst)
 	return inst
 end
 
@@ -182,7 +187,14 @@ local function isAboutMe(text: string, owner: number?): boolean
 		return true
 	end
 	local p = ctx.roster[myId]
-	return p ~= nil and p.name ~= "" and string.find(text, p.name, 1, true) ~= nil
+	if p ~= nil and p.name ~= "" and string.find(text, p.name, 1, true) ~= nil then return true end
+ local other = owner and ctx.roster[owner]
+ local a,b = p and p.stats, other and other.stats
+ if a and b and a.tiles>0 and b.tiles>0 then
+  local reach = math.sqrt(a.tiles)+math.sqrt(b.tiles)+32
+  return (a.cx-b.cx)^2+(a.cy-b.cy)^2 <= reach^2
+ end
+ return false
 end
 
 local function selectObj(obj: GuiObject?)
@@ -228,8 +240,11 @@ local function makeRow(e)
 		TextXAlignment = Enum.TextXAlignment.Left,
 		TextColor3 = SEVERITY[KIND_SEVERITY[e.kind] or "info"] or SEVERITY.info,
 		Text = e.text,
-		LayoutOrder = e.order,
+		LayoutOrder = if HISTORY then -e.order else e.order,
 	})
+	if HISTORY and e.important then
+		row:SetAttribute("Important", true) -- one list in history mode: the Night look styles these stronger
+	end
 	if focusable then
 		local b = row :: TextButton
 		b.AutoButtonColor = false
@@ -249,7 +264,7 @@ local function layoutEvents()
 	local t = os.clock()
 	for i = #events, 1, -1 do
 		local e = events[i]
-		if t - e.at >= EVENT_SECONDS then
+		if not HISTORY and t - e.at >= EVENT_SECONDS then
 			if e.row then
 				leaveSelection(e.row)
 				e.row:Destroy()
@@ -257,8 +272,8 @@ local function layoutEvents()
 			table.remove(events, i)
 		end
 	end
-	local minorMax = if compact then MINOR_MAX_COMPACT else MINOR_MAX
-	local importantMax = if compact then IMPORTANT_MAX_COMPACT else IMPORTANT_MAX
+	local minorMax = if HISTORY then math.huge elseif compact then MINOR_MAX_COMPACT else MINOR_MAX
+	local importantMax = if HISTORY then math.huge elseif compact then IMPORTANT_MAX_COMPACT else IMPORTANT_MAX
 	local nMinor, nImportant = 0, 0
 	-- Newest first when counting, so the oldest drop off.
 	for i = #events, 1, -1 do
@@ -274,12 +289,17 @@ local function layoutEvents()
 		keep = keep and feedEnabled
 		if keep and not e.row then
 			e.row = makeRow(e)
-			e.row.Parent = if e.important then importantRows else minorRows
+			e.row.Parent = if e.important and not HISTORY then importantRows else minorRows
 		elseif not keep and e.row then
 			leaveSelection(e.row)
 			e.row:Destroy()
 			e.row = nil
 		end
+	end
+	if HISTORY then
+		minorBox.Visible = feedEnabled and (nMinor + nImportant) > 0
+		importantBox.Visible = false
+		return
 	end
 	minorBox.Visible = feedEnabled and nMinor > 0
 	importantBox.Visible = feedEnabled and nImportant > 0
@@ -437,9 +457,9 @@ local function newCard(fromId: number)
 		Parent = inner,
 	})
 	list(buttons, 6, true)
-	local focus = cardButton(buttons, "Focus", GRAY500, 1)
-	local accept = cardButton(buttons, "Accept", GREEN600, 2)
-	local reject = cardButton(buttons, "Reject", BLUE500, 3)
+	local focus = cardButton(buttons, "FOCUS", Color3.fromRGB(14,43,64), 1)
+	local accept = cardButton(buttons, "ACCEPT", Color3.fromRGB(0,177,235), 2)
+	local reject = cardButton(buttons, "DECLINE", Color3.fromRGB(14,43,64), 3)
 	for _, b in { focus, accept, reject } do
 		b:SetAttribute("AlertRequestFrom", fromId)
 	end
@@ -456,7 +476,9 @@ local function newCard(fromId: number)
 	reject.Activated:Connect(function()
 		answer(fromId, false)
 	end)
-	local c = { frame = frame, title = title, accept = accept, order = cardOrder }
+	local timer=make("Frame",{Name="RequestTimer",Size=UDim2.new(1,0,0,3),BackgroundColor3=MatchSkin.C.raised,BorderSizePixel=0,LayoutOrder=3,Parent=inner})
+ local fill=make("Frame",{Name="Remaining",Size=UDim2.fromScale(1,1),BackgroundColor3=MatchSkin.C.cyan,BorderSizePixel=0,Parent=timer})
+ local c = { frame = frame, title = title, accept = accept, timer=fill, order = cardOrder }
 	cards[fromId] = c
 	return c
 end
@@ -485,6 +507,7 @@ function AlertsPanel.setRequests(incoming)
 			fresh = c.accept
 		end
 		c.expiresAt, c.renew = r[2], r[3] == true
+		c.timer.Size=UDim2.fromScale(math.clamp(((r[2] or nowServer()+30)-nowServer())/30,0,1),1)
 		c.title.Text = cardTitle(fromId, c.renew)
 	end
 	for fromId in cards do
@@ -529,18 +552,19 @@ end
 
 function AlertsPanel.create(c): Frame
 	ctx = c
-	root = make("Frame", {
+	root = make("ScrollingFrame", {
+        CanvasSize=UDim2.new(),AutomaticCanvasSize=Enum.AutomaticSize.Y,ScrollBarThickness=3,ScrollingDirection=Enum.ScrollingDirection.Y,ClipsDescendants=true,BorderSizePixel=0,
 		Name = "Alerts",
 		AnchorPoint = Vector2.new(1, 1),
 		Position = UDim2.new(1, -12, 1, -12),
-		Size = UDim2.fromOffset(340, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
+		Size = UDim2.fromOffset(340, 240),
+		AutomaticSize = Enum.AutomaticSize.None,
 		BackgroundTransparency = 1,
 		ZIndex = 6,
 		Parent = c.gui,
 	}) :: Frame
 	local l = list(root, 6)
-	l.VerticalAlignment = Enum.VerticalAlignment.Bottom
+	l.VerticalAlignment = Enum.VerticalAlignment.Top
 
 	-- bg-gray-800/92 + opacity-90 for the minor box; solid with a red accent for the important one.
 	minorBox, minorRows = box("Events", 0.17, nil, 1)
@@ -566,7 +590,7 @@ function AlertsPanel.create(c): Frame
 		acc = 0
 		local t = os.clock()
 		for _, e in events do
-			if t - e.at >= EVENT_SECONDS then
+			if not HISTORY and t - e.at >= EVENT_SECONDS then
 				layoutEvents()
 				break
 			end

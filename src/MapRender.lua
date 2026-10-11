@@ -47,11 +47,18 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared:WaitForChild("Config"))
 local SimClock = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("SimClock")) -- game clock (speed / pause)
 local Theme = require(Shared:WaitForChild("Theme"))
+local MapStyles = require(Shared:WaitForChild("MapStyles"))
 local Settings = require(script.Parent:WaitForChild("Settings"))
 local DeviceLayout = require(script.Parent:WaitForChild("DeviceLayout"))
 local ContextMenu = require(script.Parent:WaitForChild("ContextMenu"))
 
 local MapRender = {}
+local CosmeticTestStyles = if game.GameId==10769671248 and workspace:GetAttribute("WFEnableCosmeticTesting")==true then require(script.Parent:WaitForChild("CosmeticTestStyles")) else nil
+local cosmeticTiles = {}
+local cosmeticCursor = nil
+local cosmeticStyle = nil
+local cosmeticTime = 0
+local lastCosmeticUpdate = 0
 
 local readu16, readu8, readu32 = buffer.readu16, buffer.readu8, buffer.readu32
 local writeu32 = buffer.writeu32
@@ -98,6 +105,23 @@ local qHead = 1
 local tileFlag = buffer.create(0) -- 1 = tile queued
 local tileQueue: { number } = {} -- dirty tiles (owner changes and their neighbours)
 local tHead = 1
+local lowQueue: { number } = {} -- dirty cells painted after the tiles (hover highlight)
+local lHead = 1
+-- Dirty cells / tiles outside the view wait here (still flagged) and are painted right after the
+-- work in view, in the same frame budget.
+local offCells: { number } = {}
+local ocHead = 1
+local offTiles: { number } = {}
+local otHead = 1
+-- The map area on screen in tiles, with a margin (computed each frame in step).
+local VIEW_MARGIN = 2 * CELL
+local viewValid = false
+local viewX0, viewY0, viewX1, viewY1 = 0, 0, -1, -1
+-- Hover highlight scan (see applyHighlight)
+local hlOwners: { [number]: boolean } = {} -- owners whose cells still need the repaint
+local hlPhase = 0 -- 0 idle, 1 cells in view, 2 the rest of the map
+local hlCursor = 0
+local hlX0, hlY0, hlX1, hlY1 = 0, 0, -1, -1 -- cell rectangle scanned in phase 1
 
 local highlight = 0
 local wantHighlight, wantSince = 0, 0 -- hovered owner waiting to be applied (see setHighlight)
@@ -114,7 +138,22 @@ local railPaint: any = nil
 -- appear at the middle of that range: 2 px per full-size tile = 2 * LINEAR_SCALE px per our tile.
 local RAIL_SHOW_ZOOM = 2 * Config.LINEAR_SCALE
 local railsShown = false
+-- Capture visuals run between server batches; authoritative owners remain immediate.
+local captureSteps: { [number]: any } = {}
+local captureStepCount = 0
+local captureNow = 0
+local CAPTURE_SECONDS = 0.075
+local MAX_CAPTURE_STEPS = 1024
+-- Captures are cosmetic: none in Low detail (1 px tiles), offscreen, or while the tile repaint
+-- backlog is already longer than this (the map would show them late anyway).
+local CAPTURE_BACKLOG_LIMIT = 2000
+local capturePool: { any } = {} -- finished capture records (and their S x S pixel buffers) to reuse
+-- Upload unit: one cell row (strip) by BLOCK_CELLS cells, so far-apart changes in one strip upload
+-- separately instead of everything between them.
+local BLOCK_CELLS = 8
+
 local lastUpload = 0
+local uploadPending = false
 local lastResample: Enum.ResamplerMode? = nil
 
 local function pack(r: number, g: number, b: number): number
@@ -193,6 +232,10 @@ local function markEverything()
 	buffer.fill(cellFlag, 0, 0)
 	table.clear(queue)
 	qHead = 1
+	table.clear(lowQueue)
+	lHead = 1
+	table.clear(offCells)
+	ocHead = 1
 	for ci = 0, CX * CY - 1 do
 		markCell(ci)
 	end
@@ -206,7 +249,16 @@ function MapRender.markAll()
 end
 
 -- Forces the next markAll() to repaint (owners were replaced wholesale, e.g. a new round).
+local function clearCaptures()
+	for _, c in captureSteps do
+		capturePool[#capturePool + 1] = c
+	end
+	table.clear(captureSteps)
+	captureStepCount = 0
+end
+
 function MapRender.invalidate()
+	clearCaptures()
 	lastSignature = ""
 end
 
@@ -335,8 +387,11 @@ local function roundCorners(o: number, t: number, x: number, y: number, nN: numb
 end
 
 -- Paints tile t (at x, y) into buf; off = byte offset of the tile's top-left pixel.
-local function paintTile(owners: buffer, t: number, x: number, y: number, buf: buffer, off: number, stride: number)
+local function drawTile(owners: buffer, t: number, x: number, y: number, buf: buffer, off: number, stride: number)
 	local o = readu16(owners, t * 2)
+	if CosmeticTestStyles then
+		if o~=0 and o==ctx.getMyId() then cosmeticTiles[t]=true else cosmeticTiles[t]=nil end
+	end
 	local SS = S
 	if o == 0 then
 		local col = readu32(base, t * 4)
@@ -426,6 +481,14 @@ local function paintTile(owners: buffer, t: number, x: number, y: number, buf: b
 		fr, fg, fb, a = rel[1], rel[2], rel[3], ALT_FILL_ALPHA
 	else
 		fr, fg, fb, a = c[1], c[2], c[3], Theme.TERRITORY_ALPHA
+		if CosmeticTestStyles and cosmeticStyle and o==myId then
+			local stats=p and p.stats
+			local radius=math.max(32,math.sqrt(stats and stats.tiles or 1)*2)
+			local u=.5+(x-(stats and stats.cx or W*.5))/radius
+			local v=.53+(y-(stats and stats.cy or H*.5))/radius
+			fr,fg,fb=CosmeticTestStyles.sample(cosmeticStyle,u,v,cosmeticTime)
+			a=.94
+		end
 		if hl then
 			fr, fg, fb = contrastBoost(fr), contrastBoost(fg), contrastBoost(fb)
 		end
@@ -509,6 +572,66 @@ local function paintTile(owners: buffer, t: number, x: number, y: number, buf: b
 	end
 end
 
+-- Snapshot the currently displayed block before its authoritative owner changes.
+function MapRender.captureTile(t: number, nextOwner: number)
+	if not ctx or failed or S == 0 or t < 0 or t >= SIZE then return end
+	local x, y = t % W, t // W
+	local old = captureSteps[t]
+	-- Cosmetic only: skip it in Low detail / 1 px tiles, offscreen, and when repaints are behind.
+	if ctx.getPhase() ~= "Play" or nextOwner == 0 or nextOwner == FALLOUT_OWNER
+		or S < 2 or Settings.values.lowDetail
+		or (viewValid and (x < viewX0 or x > viewX1 or y < viewY0 or y > viewY1))
+		or #tileQueue - tHead + 1 > CAPTURE_BACKLOG_LIMIT then
+		if old then
+			captureSteps[t] = nil
+			captureStepCount -= 1
+			capturePool[#capturePool + 1] = old
+		end
+		return
+	end
+	local owners = ctx.getOwners()
+	local previous = readu16(owners, t * 2)
+	if previous == nextOwner or previous == FALLOUT_OWNER then return end
+	if captureStepCount >= MAX_CAPTURE_STEPS and not old then return end
+	local ch = chunks[(y // chunkTH) * chunkCols + x // chunkTW + 1]
+	if not ch then return end
+	local rec = old or table.remove(capturePool) or {}
+	local from = rec.from
+	if not from or buffer.len(from) ~= S * S * 4 then
+		from = buffer.create(S * S * 4)
+	end
+	local stride = ch.pw * 4
+	local off = (y - ch.y0) * S * stride + (x - ch.x0) * S * 4
+	for j = 0, S - 1 do buffer.copy(from, j * S * 4, ch.buf, off + j * stride, S * 4) end
+	-- Enter from an existing friendly edge; row order varies without colour blending.
+	local dir = if x > 0 and readu16(owners, (t - 1) * 2) == nextOwner then 1
+		elseif x < W - 1 and readu16(owners, (t + 1) * 2) == nextOwner then 2
+		elseif y > 0 and readu16(owners, (t - W) * 2) == nextOwner then 3
+		else 4
+	if not old then captureStepCount += 1 end
+	rec.from, rec.dir, rec.reverse = from, dir, (x + y) % 2 == 1
+	rec.start = os.clock() + ((t * 17) % 11) * 0.001
+	captureSteps[t] = rec
+end
+
+local function paintTile(owners: buffer, t: number, x: number, y: number, buf: buffer, off: number, stride: number)
+	drawTile(owners, t, x, y, buf, off, stride)
+	local c = captureSteps[t]
+	if not c then return end
+	local progress = math.clamp((captureNow - c.start) / CAPTURE_SECONDS, 0, 1)
+	for j = 0, S - 1 do
+		for i = 0, S - 1 do
+			local depth = if c.dir == 1 then i elseif c.dir == 2 then S - 1 - i
+				elseif c.dir == 3 then j else S - 1 - j
+			local across = if c.dir <= 2 then j else i
+			if c.reverse then across = S - 1 - across end
+			if progress < (depth * S + across + 0.5) / (S * S) then
+				writeu32(buf, off + j * stride + i * 4, readu32(c.from, (j * S + i) * 4))
+			end
+		end
+	end
+end
+
 local function paintCell(owners: buffer, ci: number)
 	local cx, cy = ci % CX, ci // CX
 	local x0, y0 = cx * CELL, cy * CELL
@@ -530,8 +653,8 @@ local function paintCell(owners: buffer, ci: number)
 			t += 1
 		end
 	end
-	local k = (y0 - ch.y0) // CELL
 	local px0, px1 = (x0 - ch.x0) * SS, (x1 + 1 - ch.x0) * SS - 1
+	local k = ((y0 - ch.y0) // CELL) * ch.nb + px0 // ch.blockPx -- strip x block (a cell never spans two blocks)
 	local pmin = ch.pmin[k]
 	if pmin == nil or px0 < pmin then
 		ch.pmin[k] = px0
@@ -556,8 +679,8 @@ local function paintOne(owners: buffer, t: number)
 	if railsShown and railBuf and t < buffer.len(railBuf) and readu8(railBuf, t) ~= 0 then
 		railPaint(owners, t, x, y, ch.buf, (y - ch.y0) * SS * stride + lx * SS * 4, stride, SS)
 	end
-	local k = (y - ch.y0) // CELL
 	local px0 = lx * SS
+	local k = ((y - ch.y0) // CELL) * ch.nb + px0 // ch.blockPx
 	local pmin = ch.pmin[k]
 	if pmin == nil or px0 < pmin then
 		ch.pmin[k] = px0
@@ -677,7 +800,10 @@ local function buildChunks(s: number): boolean
 				pw = w * s,
 				ph = h * s,
 				buf = buffer.create(w * s * h * s * 4),
-				pmin = {}, -- strip -> dirty pixel column range (strip = one cell row)
+				-- upload blocks: strip (one cell row) x BLOCK_CELLS cells; key = strip * nb + block
+				blockPx = BLOCK_CELLS * CELL * s,
+				nb = math.ceil(w / (BLOCK_CELLS * CELL)),
+				pmin = {}, -- block key -> dirty pixel column range inside that block
 				pmax = {},
 				anyPending = false,
 			}
@@ -687,83 +813,160 @@ local function buildChunks(s: number): boolean
 	return true
 end
 
--- Uploads the dirty column range of every touched strip (one cell row) of every chunk.
-local function upload()
-	local stripH = CELL * S
-	for _, ch in chunks do
-		if ch.anyPending then
-			ch.anyPending = false
-			local stride = ch.pw * 4
-			for k, px0 in ch.pmin do
-				local px1 = ch.pmax[k]
-				local py0 = k * stripH
-				local rows = min(stripH, ch.ph - py0)
-				local w = px1 - px0 + 1
-				if rows > 0 and w > 0 then
-					local rowLen = w * 4
-					local out = scratchOf(rows * rowLen)
-					for j = 0, rows - 1 do
-						buffer.copy(out, j * rowLen, ch.buf, (py0 + j) * stride + px0 * 4, rowLen)
-					end
-					local ok, err = pcall(function()
-						ch.img:WritePixelsBuffer(Vector2.new(px0, py0), Vector2.new(w, rows), out)
-					end)
-					if not ok then
-						warn("[War Front] Map can't be drawn: " .. tostring(err))
-						failed = true
-						showError()
-						return
-					end
-				end
-			end
-			table.clear(ch.pmin)
-			table.clear(ch.pmax)
-		end
-	end
+-- Is this tile rectangle (inclusive) in the current view? Everything counts as visible until the
+-- first view is known.
+local function inView(x0: number, y0: number, x1: number, y1: number): boolean
+	return not viewValid or not (x1 < viewX0 or x0 > viewX1 or y1 < viewY0 or y0 > viewY1)
 end
 
--- Paints dirty cells, then dirty tiles, for up to `budget` seconds.
+-- Uploads dirty blocks (one cell row by BLOCK_CELLS cells) of every chunk: blocks in view first,
+-- then the rest while the budget lasts. The budget is checked before each write, so one call
+-- does at most one write past it. Returns true when nothing is left to upload.
+local uploadCursor = 1
+local function upload(budget: number?)
+	local started = os.clock()
+	local count = #chunks
+	if count == 0 then return true end
+	local first = math.clamp(uploadCursor, 1, count)
+	local stripH = CELL * S
+	local wrote = 0
+	for pass = 1, 2 do
+		for offset = 0, count - 1 do
+			local index = (first + offset - 1) % count + 1
+			local ch = chunks[index]
+			if ch.anyPending then
+				local stride = ch.pw * 4
+				local nb, blockPx = ch.nb, ch.blockPx
+				local blockTiles = blockPx // S
+				for key, px0 in ch.pmin do
+					local k, b = key // nb, key % nb
+					local tx0, ty0 = ch.x0 + b * blockTiles, ch.y0 + k * CELL
+					if pass == 2 or inView(tx0, ty0, tx0 + blockTiles - 1, ty0 + CELL - 1) then
+						if budget and wrote > 0 and os.clock() - started >= budget then
+							uploadCursor = index
+							return false
+						end
+						local px1 = ch.pmax[key]
+						local py0 = k * stripH
+						local rows = min(stripH, ch.ph - py0)
+						local w = px1 - px0 + 1
+						if rows > 0 and w > 0 then
+							local rowLen = w * 4
+							local out = scratchOf(rows * rowLen)
+							for j = 0, rows - 1 do
+								buffer.copy(out, j * rowLen, ch.buf, (py0 + j) * stride + px0 * 4, rowLen)
+							end
+							local ok, err = pcall(function()
+								ch.img:WritePixelsBuffer(Vector2.new(px0, py0), Vector2.new(w, rows), out)
+							end)
+							if not ok then
+								warn("[War Front] Map can't be drawn: " .. tostring(err))
+								failed = true
+								showError()
+								return false
+							end
+							wrote += 1
+						end
+						ch.pmin[key], ch.pmax[key] = nil, nil
+					end
+				end
+				ch.anyPending = next(ch.pmin) ~= nil
+			end
+		end
+	end
+	uploadCursor = 1
+	return true
+end
+
+-- Paints from a cell list (from head), deferring cells outside the view to offCells (unless
+-- `anywhere`). Returns the new head and whether the budget ran out.
+local function drainCells(owners: buffer, list: { number }, head: number, t0: number, budget: number, anywhere: boolean): (number, boolean)
+	local n = #list
+	local i = head
+	while i <= n do
+		local ci = list[i]
+		i += 1
+		local x0, y0 = (ci % CX) * CELL, (ci // CX) * CELL
+		if anywhere or inView(x0, y0, x0 + CELL - 1, y0 + CELL - 1) then
+			buffer.writeu8(cellFlag, ci, 0)
+			paintCell(owners, ci)
+			if os.clock() - t0 >= budget then
+				return i, true
+			end
+		else
+			offCells[#offCells + 1] = ci -- stays flagged: painted once in view or when idle
+		end
+	end
+	return i, false
+end
+
+local function drainTiles(owners: buffer, list: { number }, head: number, t0: number, budget: number, anywhere: boolean): (number, boolean)
+	local n = #list
+	local i = head
+	while i <= n do
+		local t = list[i]
+		i += 1
+		if anywhere or inView(t % W, t // W, t % W, t // W) then
+			buffer.writeu8(tileFlag, t, 0)
+			paintOne(owners, t)
+		else
+			offTiles[#offTiles + 1] = t -- stays flagged
+		end
+		if i % 32 == 0 and os.clock() - t0 >= budget then
+			return i, true
+		end
+	end
+	return i, false
+end
+
+-- Paints dirty cells, then dirty tiles, then highlight cells, for up to `budget` seconds; work
+-- outside the view is deferred and done after that while the budget lasts.
 local function drain(budget: number)
 	local owners = ctx.getOwners()
 	local t0 = os.clock()
-	local n = #queue
-	local i = qHead
-	while i <= n do
-		local ci = queue[i]
-		buffer.writeu8(cellFlag, ci, 0)
-		paintCell(owners, ci)
-		i += 1
-		if i % 8 == 0 and os.clock() - t0 > budget then
-			break
-		end
-	end
-	if i > n then
+	local out
+	qHead, out = drainCells(owners, queue, qHead, t0, budget, false)
+	if qHead > #queue then
 		table.clear(queue)
 		qHead = 1
-	else
-		qHead = i
-		return
 	end
-	n = #tileQueue
-	i = tHead
-	while i <= n do
-		local t = tileQueue[i]
-		buffer.writeu8(tileFlag, t, 0)
-		paintOne(owners, t)
-		i += 1
-		if i % 256 == 0 and os.clock() - t0 > budget then
-			break
-		end
-	end
-	if i > n then
+	if out then return end
+	tHead, out = drainTiles(owners, tileQueue, tHead, t0, budget, false)
+	if tHead > #tileQueue then
 		table.clear(tileQueue)
 		tHead = 1
-	else
-		tHead = i
+	end
+	if out then return end
+	lHead, out = drainCells(owners, lowQueue, lHead, t0, budget, false)
+	if lHead > #lowQueue then
+		table.clear(lowQueue)
+		lHead = 1
+	end
+	if out then return end
+	-- Then the offscreen work, with the rest of the budget (the whole map stays current, so
+	-- zooming out never shows stale areas catching up).
+	ocHead, out = drainCells(owners, offCells, ocHead, t0, budget, true)
+	if ocHead > #offCells then
+		table.clear(offCells)
+		ocHead = 1
+	end
+	if out then return end
+	otHead = drainTiles(owners, offTiles, otHead, t0, budget, true)
+	if otHead > #offTiles then
+		table.clear(offTiles)
+		otHead = 1
 	end
 end
 
 local function rebuild()
+	uploadPending = false
+	uploadCursor = 1
+	clearCaptures()
+	table.clear(capturePool) -- the tile size may change
+	table.clear(offTiles)
+	otHead = 1
+	hlPhase = 0
+	table.clear(hlOwners)
 	failed = false
 	local s = wantedScale()
 	while not buildChunks(s) do
@@ -969,11 +1172,12 @@ end
 
 -- Public API
 function MapRender.buildBase()
-	local rgb = if Settings.values.terrainShading then Theme.terrainRGB else Theme.flatTerrainRGB
+	local palette = MapStyles.palette(map.name)
+	local rgb = if Settings.values.terrainShading then (palette.tileRGB or palette.terrainRGB) else palette.flatTerrainRGB
 	local terrain = map.terrain
 	base = buffer.create(SIZE * 4)
 	for t = 0, SIZE - 1 do
-		local r, g, b = rgb(buffer.readu8(terrain, t))
+		local r, g, b = rgb(buffer.readu8(terrain, t), t % W, t // W, W, H)
 		writeu32(base, t * 4, r + g * 256 + b * 65536 + OPAQUE)
 	end
 end
@@ -992,12 +1196,13 @@ function MapRender.repaintTerrain(tiles: { number })
 	end
 	x0, y0 = max(0, x0 - 64), max(0, y0 - 64)
 	x1, y1 = min(W - 1, x1 + 64), min(H - 1, y1 + 64)
-	local rgb = if Settings.values.terrainShading then Theme.terrainRGB else Theme.flatTerrainRGB
+	local palette = MapStyles.palette(map.name)
+	local rgb = if Settings.values.terrainShading then (palette.tileRGB or palette.terrainRGB) else palette.flatTerrainRGB
 	local terrain = map.terrain
 	for y = y0, y1 do
 		for x = x0, x1 do
 			local t = y * W + x
-			local r, g, b = rgb(buffer.readu8(terrain, t))
+			local r, g, b = rgb(buffer.readu8(terrain, t), x, y, W, H)
 			writeu32(base, t * 4, r + g * 256 + b * 65536 + OPAQUE)
 		end
 	end
@@ -1005,6 +1210,8 @@ function MapRender.repaintTerrain(tiles: { number })
 end
 
 function MapRender.setMap(m)
+	table.clear(cosmeticTiles)
+	cosmeticCursor=nil
 	map = m
 	W, H, SIZE = m.width, m.height, m.size
 	cover = buffer.create(SIZE * 2)
@@ -1033,56 +1240,110 @@ function MapRender.setHighlight(owner: number)
 	end
 end
 
+-- Hover highlight: the cells holding the old or new highlighted player's tiles are found by a
+-- scan spread over frames (cells in view first) and repainted after the tile updates, so a hover
+-- never stalls a frame or delays captures. Tiles changing owner under the pointer repaint through
+-- markTile with the current highlight.
+local function markLow(ci: number)
+	if readu8(cellFlag, ci) == 0 then
+		buffer.writeu8(cellFlag, ci, 1)
+		lowQueue[#lowQueue + 1] = ci
+	end
+end
+
+local function cellHasOwner(owners: buffer, ci: number): boolean
+	local x0, y0 = (ci % CX) * CELL, (ci // CX) * CELL
+	local x1, y1 = min(x0 + CELL, W) - 1, min(y0 + CELL, H) - 1
+	for pass = 0, 1 do -- even rows first, then odd rows
+		for y = y0 + pass, y1, 2 do
+			local t = y * W + x0
+			for _ = x0, x1 do
+				local o = readu16(owners, t * 2)
+				if o ~= 0 and hlOwners[o] then
+					return true
+				end
+				t += 1
+			end
+		end
+	end
+	return false
+end
+
 local function applyHighlight(owner: number)
 	if owner == highlight then
 		return
 	end
-	local old = highlight
+	if highlight ~= 0 then
+		hlOwners[highlight] = true
+	end
+	if owner ~= 0 then
+		hlOwners[owner] = true
+	end
 	highlight = owner
-	-- Repaint the cells holding the old or new highlighted player's tiles.
+	if next(hlOwners) == nil or CX == 0 then
+		return
+	end
+	-- (Re)start the scan with the cells in view.
+	if viewValid then
+		hlX0, hlY0 = max(0, viewX0 // CELL), max(0, viewY0 // CELL)
+		hlX1, hlY1 = min(CX - 1, viewX1 // CELL), min(CY - 1, viewY1 // CELL)
+	else
+		hlX0, hlY0, hlX1, hlY1 = 0, 0, CX - 1, CY - 1
+	end
+	hlPhase, hlCursor = 1, 0
+end
+
+local function scanHighlight(budget: number)
+	if hlPhase == 0 then
+		return
+	end
 	local owners = ctx.getOwners()
-	for ci = 0, CX * CY - 1 do
-		if readu8(cellFlag, ci) == 0 then
-			local cx, cy = ci % CX, ci // CX
-			local x0, y0 = cx * CELL, cy * CELL
-			local x1, y1 = min(x0 + CELL, W) - 1, min(y0 + CELL, H) - 1
-			local hit = false
-			for y = y0, y1, 2 do
-				local t = y * W + x0
-				for _ = x0, x1 do
-					local o = readu16(owners, t * 2)
-					if o ~= 0 and (o == old or o == owner) then
-						hit = true
-						break
-					end
-					t += 1
-				end
-				if hit then
-					break
-				end
+	local t0 = os.clock()
+	if hlPhase == 1 then
+		local rw, rh = hlX1 - hlX0 + 1, hlY1 - hlY0 + 1
+		local total = if rw > 0 and rh > 0 then rw * rh else 0
+		while hlCursor < total do
+			local ci = (hlY0 + hlCursor // rw) * CX + hlX0 + hlCursor % rw
+			hlCursor += 1
+			if readu8(cellFlag, ci) == 0 and cellHasOwner(owners, ci) then
+				markLow(ci)
 			end
-			if not hit and y1 > y0 then
-				-- odd rows (skipped above)
-				for y = y0 + 1, y1, 2 do
-					local t = y * W + x0
-					for _ = x0, x1 do
-						local o = readu16(owners, t * 2)
-						if o ~= 0 and (o == old or o == owner) then
-							hit = true
-							break
-						end
-						t += 1
-					end
-					if hit then
-						break
-					end
-				end
-			end
-			if hit then
-				markCell(ci)
+			if hlCursor % 8 == 0 and os.clock() - t0 >= budget then
+				return
 			end
 		end
+		hlPhase, hlCursor = 2, 0
 	end
+	local total = CX * CY
+	while hlCursor < total do
+		local ci = hlCursor
+		hlCursor += 1
+		local cx, cy = ci % CX, ci // CX
+		if not (cx >= hlX0 and cx <= hlX1 and cy >= hlY0 and cy <= hlY1) and readu8(cellFlag, ci) == 0 and cellHasOwner(owners, ci) then
+			markLow(ci)
+		end
+		if hlCursor % 8 == 0 and os.clock() - t0 >= budget then
+			return
+		end
+	end
+	hlPhase = 0
+	table.clear(hlOwners)
+end
+
+-- The map area on screen (tiles, plus a margin): work there is painted and uploaded first.
+local function updateView()
+	local holder = ctx.holder
+	local size, pos = ctx.parent.AbsoluteSize, ctx.parent.AbsolutePosition
+	if not holder or size.X < 1 or size.Y < 1 then
+		viewValid = false
+		return
+	end
+	local hs, hp = holder.AbsoluteSize, holder.AbsolutePosition
+	viewX0 = max(0, floor((hp.X - pos.X) / size.X * W) - VIEW_MARGIN)
+	viewY0 = max(0, floor((hp.Y - pos.Y) / size.Y * H) - VIEW_MARGIN)
+	viewX1 = min(W - 1, floor((hp.X + hs.X - pos.X) / size.X * W) + VIEW_MARGIN)
+	viewY1 = min(H - 1, floor((hp.Y + hs.Y - pos.Y) / size.Y * H) + VIEW_MARGIN)
+	viewValid = true
 end
 
 function MapRender.setAltView(on: boolean)
@@ -1109,6 +1370,7 @@ function MapRender.step(now: number, zoom: number)
 	if not ctx or failed or #chunks == 0 then
 		return
 	end
+	updateView()
 	if now - lastSpawnCheck > 0.25 then
 		lastSpawnCheck = now
 		refreshSpawnHalos()
@@ -1125,11 +1387,51 @@ function MapRender.step(now: number, zoom: number)
 	if wantHighlight ~= highlight and os.clock() - wantSince >= 0.06 then
 		applyHighlight(wantHighlight)
 	end
-	local pending = (#queue - qHead + 1) * 64 + #tileQueue - tHead + 1
-	drain(if pending > 20000 then 0.010 else 0.006)
-	if now - lastUpload > (if Settings.values.lowDetail then 0.2 else 0.033) then
+	if CosmeticTestStyles then
+		local wanted=game:GetService("Players").LocalPlayer.PlayerGui:GetAttribute("WFTestTerritoryStyle")
+		if not CosmeticTestStyles.valid(wanted) then wanted=nil end
+		if wanted~=cosmeticStyle then
+			cosmeticStyle=wanted
+			for t in cosmeticTiles do markOne(t) end
+		end
+		if cosmeticStyle and not altView and now-lastCosmeticUpdate>=.125 then
+			lastCosmeticUpdate=now;cosmeticTime=now
+			local started=os.clock()
+			local size,pos=ctx.parent.AbsoluteSize,ctx.parent.AbsolutePosition
+			local hs,hp=ctx.holder.AbsoluteSize,ctx.holder.AbsolutePosition
+			local x0=math.max(0,(hp.X-pos.X)/math.max(1,size.X)*W)
+			local y0=math.max(0,(hp.Y-pos.Y)/math.max(1,size.Y)*H)
+			local x1=math.min(W,(hp.X+hs.X-pos.X)/math.max(1,size.X)*W)
+			local y1=math.min(H,(hp.Y+hs.Y-pos.Y)/math.max(1,size.Y)*H)
+			if cosmeticCursor and not cosmeticTiles[cosmeticCursor] then cosmeticCursor=nil end
+			for i=1,4096 do
+				local t=next(cosmeticTiles,cosmeticCursor)
+				cosmeticCursor=t
+				if t==nil then break end
+				local x,y=t%W,t//W
+				if x>=x0 and x<=x1 and y>=y0 and y<=y1 then markOne(t) end
+				if i%32==0 and os.clock()-started>.001 then break end
+			end
+		end
+	end
+	captureNow = os.clock()
+	for t, c in captureSteps do
+		markOne(t)
+		if captureNow >= c.start + CAPTURE_SECONDS then
+			captureSteps[t] = nil
+			captureStepCount -= 1
+			capturePool[#capturePool + 1] = c
+		end
+	end
+	scanHighlight(0.001)
+	debug.profilebegin("Capture.repaint")
+	drain(0.003)
+	debug.profileend()
+	if uploadPending or now - lastUpload > (if captureStepCount > 0 then 0 elseif Settings.values.lowDetail then 0.2 else 0.033) then
 		lastUpload = now
-		upload()
+		debug.profilebegin("Capture.upload")
+		uploadPending = not upload(0.001)
+		debug.profileend()
 	end
 	-- Magnified: crisp pixels. Shrunk below one pixel per map pixel: smooth, so thin borders don't flicker.
 	local mode = if zoom >= S then Enum.ResamplerMode.Pixelated else Enum.ResamplerMode.Default

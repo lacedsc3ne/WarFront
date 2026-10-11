@@ -42,6 +42,8 @@ local MessagingService = game:GetService("MessagingService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TextService = game:GetService("TextService")
+local HttpService = game:GetService("HttpService")
+local RunService = game:GetService("RunService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local MetaConfig = require(Shared:WaitForChild("MetaConfig"))
@@ -54,7 +56,7 @@ local TOPIC = "WFClans"
 local store
 do
 	local ok, result = pcall(function()
-		return DataStoreService:GetDataStore("WF_Clans_v1")
+		return DataStoreService:GetDataStore("WF_Clans_v1" .. (if RunService:IsStudio() then "_Studio" else ""))
 	end)
 	store = if ok then result else nil
 end
@@ -95,7 +97,7 @@ local function get(key: string): any
 	local ok, v = pcall(function()
 		return store:GetAsync(key)
 	end)
-	return if ok then v else nil
+	return if ok then v else nil, ok
 end
 
 -- UpdateAsync with a callback that may refuse (return nil + reason). Returns ok, newValue | reason.
@@ -120,17 +122,34 @@ local function update(key: string, f: (any) -> (any, string?)): (boolean, any)
 	return true, result
 end
 
-local function setUser(uid: number, tag: string?)
-	if not store then
-		return
-	end
-	pcall(function()
-		if tag then
-			store:SetAsync("u_" .. uid, tag)
-		else
-			store:RemoveAsync("u_" .. uid)
-		end
-	end)
+-- u_<uid> is the authority for membership. Legacy string indexes remain readable.
+local function membershipTag(value)
+ return if type(value) == "string" then value elseif type(value) == "table" then value.tag else nil
+end
+local function claimMembership(uid, tag)
+ local token = HttpService:GenerateGUID(false)
+ local ok, value = update("u_" .. uid, function(old)
+  if type(old) == "table" and old.claim == token then return old end
+  if membershipTag(old) then return nil, "That player already has a clan or a pending membership." end
+  return { tag=tag, claim=token, phase="pending", at=now() }
+ end)
+ return ok, if ok then token else value
+end
+local function commitMembership(uid, tag, token)
+ return update("u_" .. uid, function(old)
+  if type(old) ~= "table" or old.claim ~= token or old.tag ~= tag then
+   return nil, "Membership changed while this request was running."
+  end
+  local out = table.clone(old); out.phase = "committed"; return out
+ end)
+end
+local function clearMembership(uid, tag, token)
+ return update("u_" .. uid, function(old)
+  if membershipTag(old) ~= tag or (token and (type(old) ~= "table" or old.claim ~= token)) then
+   return nil, "Membership has already changed."
+  end
+  return false -- UpdateAsync nil cancels; false durably represents no clan.
+ end)
 end
 
 local function setLocal(uid: number, tag: string?)
@@ -183,6 +202,9 @@ local function readIndex(): { [string]: any }
 	return indexCache.data
 end
 
+-- Weekly clan goal: every member can collect GOAL.MEDALS once the clan has GOAL.WINS wins this week.
+local GOAL = { WINS = 25, MEDALS = 200 }
+
 -- What a client sees of a clan. Requests only for officers of that clan.
 local function view(rec, viewer: number)
 	local members = {}
@@ -229,6 +251,15 @@ local function view(rec, viewer: number)
 		end
 	end
 	out.rank = better + 1
+	-- Weekly clan goal (wins this week, counted in Clans.roundEnded).
+	local wk = (os.time() // 86400 + 3) // 7
+	out.weekWins = if type(rec.week) == "table" and rec.week.n == wk then tonumber(rec.week.wins) or 0 else 0
+	out.goal = GOAL.WINS
+	out.goalMedals = GOAL.MEDALS
+	local viewerPlayer = Players:GetPlayerByUserId(viewer)
+	if mine and viewerPlayer and ctx.progression and ctx.progression.clanGoalClaimed then
+		out.goalClaimed = ctx.progression.clanGoalClaimed(viewerPlayer, wk)
+	end
 	return out
 end
 
@@ -239,11 +270,39 @@ local function normalize(rec)
 end
 
 local function readClan(tag: string)
-	local rec = get("c_" .. tag)
-	if type(rec) ~= "table" then
-		return nil
+	local rec, ok = get("c_" .. tag)
+	if not ok or type(rec) ~= "table" then
+		return nil, ok
 	end
-	return normalize(rec)
+	return normalize(rec), true
+end
+
+-- Resolve unknown write outcomes by reading, never by blindly removing a claim.
+-- A crash leaves a durable pending claim; load() completes or reconciles it.
+local function finishMembership(uid, tag, token, rec)
+ if not rec then
+  local readOK
+  rec, readOK = readClan(tag)
+  if not readOK then return false, "Membership is pending; please try again later." end
+ end
+ local member = rec and rec.members[tostring(uid)]
+ if member and member.claim == token then
+  local ok, why = commitMembership(uid, tag, token)
+  if ok then return true, rec end
+  -- Fence compensation by claim token: never remove a replacement member.
+  local index, readOK = get("u_" .. uid)
+  if readOK and (type(index) ~= "table" or index.claim ~= token) then
+   update("c_" .. tag, function(old)
+    if type(old) ~= "table" then return nil end
+    local out = normalize(old); local m = out.members[tostring(uid)]
+    if m and m.claim == token then out.members[tostring(uid)] = nil end
+    return out
+   end)
+  end
+  return false, why
+ end
+ clearMembership(uid, tag, token)
+ return false, "The clan membership could not be completed."
 end
 
 -- Text checks
@@ -282,6 +341,27 @@ end
 
 -- Ops
 local ops = {}
+
+function ops.claimGoal(plr: Player)
+	local uid = plr.UserId
+	local tag = userTag[uid]
+	if not tag then
+		return false, "Join a clan first."
+	end
+	local rec = readClan(tag)
+	if not rec or not rec.members[tostring(uid)] then
+		return false, "Join a clan first."
+	end
+	local wk = (os.time() // 86400 + 3) // 7
+	local wins = if type(rec.week) == "table" and rec.week.n == wk then tonumber(rec.week.wins) or 0 else 0
+	if wins < GOAL.WINS then
+		return false, "Your clan needs " .. (GOAL.WINS - wins) .. " more wins this week."
+	end
+	if not (ctx.progression and ctx.progression.claimClanGoal) then
+		return false, "Rewards can't be saved right now."
+	end
+	return ctx.progression.claimClanGoal(plr, wk, GOAL.MEDALS)
+end
 
 function ops.me(plr: Player)
 	local uid = plr.UserId
@@ -363,17 +443,22 @@ function ops.create(plr: Player, arg: any)
 			return false, why or "That name, tag or description isn't allowed."
 		end
 	end
+	local claimed, token = claimMembership(uid, tag)
+	if not claimed then return false, token end
 	-- Pay first (refunded if the tag is taken).
 	local pay = if arg.pay == "charter" then "charter" else "medals"
 	local prog = ctx.progression
 	if not prog then
+		clearMembership(uid, tag, token)
 		return false, "Clans can't be saved right now."
 	end
 	if pay == "charter" then
 		if not prog.takeBoost(plr, CFG.CHARTER.key) then
+			clearMembership(uid, tag, token)
 			return false, "You don't have a Clan Charter."
 		end
 	elseif not prog.spendCoins(plr, CFG.CREATE_MEDALS) then
+		clearMembership(uid, tag, token)
 		return false, "You need " .. CFG.CREATE_MEDALS .. " medals to create a clan."
 	end
 	local function refund()
@@ -396,15 +481,22 @@ function ops.create(plr: Player, arg: any)
 			created = now(),
 			wins = 0,
 			games = 0,
-			members = { [tostring(uid)] = { r = "leader", n = displayName(plr), j = now() } },
+			members = { [tostring(uid)] = { r = "leader", n = displayName(plr), j = now(), claim = token } },
 			requests = {},
 		}
 	end)
 	if not ok then
-		refund()
-		return false, rec
+		local recovered, outcome = finishMembership(uid, tag, token)
+		if not recovered then
+			local index, readOK = get("u_" .. uid)
+			if readOK and membershipTag(index) ~= tag then refund() end
+			return false, outcome
+		end
+		rec = outcome
+	else
+		local committed, outcome = finishMembership(uid, tag, token, rec)
+		if not committed then return false, outcome end
 	end
-	setUser(uid, tag)
 	setIndex(tag, indexEntry(normalize(rec)))
 	announce(uid, tag)
 	return true, view(normalize(rec), uid)
@@ -419,11 +511,21 @@ function ops.join(plr: Player, tag: any)
 	if userTag[uid] then
 		return false, "Leave your clan first."
 	end
+	local initial, readOK = readClan(tag)
+	if not readOK then return false, "Could not read the clan; try again later." end
+	if not initial then return false, "That clan does not exist." end
+	local token
+	if initial.open then
+		local claimed, result = claimMembership(uid, tag)
+		if not claimed then return false, result end
+		token = result
+	end
 	local joined = false
 	local ok, rec = update("c_" .. tag, function(old)
 		if type(old) ~= "table" then
 			return nil, "That clan doesn't exist anymore."
 		end
+		joined = false -- UpdateAsync can rerun after a conflict.
 		local r = normalize(old)
 		local key = tostring(uid)
 		if r.members[key] then
@@ -434,7 +536,8 @@ function ops.join(plr: Player, tag: any)
 			return nil, "That clan is full."
 		end
 		if r.open then
-			r.members[key] = { r = "member", n = displayName(plr), j = now() }
+			if not token then return nil, "Clan settings changed; please try joining again." end
+			r.members[key] = { r = "member", n = displayName(plr), j = now(), claim = token }
 			r.requests[key] = nil
 			joined = true
 		else
@@ -443,14 +546,21 @@ function ops.join(plr: Player, tag: any)
 		return r
 	end)
 	if not ok then
-		return false, rec
+		if not token then return false, rec end
+		local recovered, outcome = finishMembership(uid, tag, token)
+		if not recovered then return false, outcome end
+		rec, joined = outcome, true
 	end
 	rec = normalize(rec)
 	if joined then
-		setUser(uid, tag)
+		if token then
+			local committed, why = finishMembership(uid, tag, token, rec)
+			if not committed then return false, why end
+		end
 		setIndex(tag, indexEntry(rec))
 		announce(uid, tag)
 	else
+		if token then clearMembership(uid, tag, token) end
 		clanChanged(tag) -- new request: the clan's officers see it
 	end
 	return true, view(rec, uid)
@@ -507,39 +617,30 @@ local function isOfficer(m): boolean
 end
 
 function ops.accept(plr: Player, target: any)
-	local tid = tonumber(target)
-	if not tid then
-		return false, "Unknown player."
-	end
-	-- Someone who joined another clan meanwhile can't be accepted.
-	local other = get("u_" .. tid)
-	local tag = userTag[plr.UserId]
-	local ok, rec = manage(plr, tid, function(r, me, key)
-		if not isOfficer(me) then
-			return nil, "Only officers can accept requests."
-		end
-		local req = r.requests[key]
-		if not req then
-			return nil, "That request is gone."
-		end
-		r.requests[key] = nil
-		if type(other) == "string" and other ~= r.tag then
-			return r -- already in a clan: request just removed
-		end
-		if memberCount(r) >= CFG.MAX_MEMBERS then
-			return nil, "Your clan is full."
-		end
-		r.members[key] = { r = "member", n = req.n, j = now() }
-		return r
-	end)
-	if not ok then
-		return false, rec
-	end
-	if rec.members[tostring(tid)] then
-		setUser(tid, tag)
-		announce(tid, tag)
-	end
-	return true, view(rec, plr.UserId)
+ local tid = tonumber(target)
+ if not tid or tid ~= tid or math.abs(tid) == math.huge or tid % 1 ~= 0 then return false, "Unknown player." end
+ local tag = userTag[plr.UserId]
+ if not tag then return false, "You're not in a clan." end
+ local initial, readOK = readClan(tag)
+ if not readOK then return false, "Could not read the clan." end
+ local me = initial and initial.members[tostring(plr.UserId)]
+ if not me or not isOfficer(me) then return false, "Only officers can accept requests." end
+ if not initial.requests[tostring(tid)] then return false, "That request is gone." end
+ local claimed, token = claimMembership(tid, tag)
+ if not claimed then return false, token end
+ local ok, rec = manage(plr, tid, function(r, officer, key)
+  if not isOfficer(officer) then return nil, "Only officers can accept requests." end
+  local req = r.requests[key]
+  if not req then return nil, "That request is gone." end
+  if memberCount(r) >= CFG.MAX_MEMBERS then return nil, "Your clan is full." end
+  r.requests[key] = nil
+  r.members[key] = { r="member", n=req.n, j=now(), claim=token }
+  return r
+ end)
+ local committed, outcome = finishMembership(tid, tag, token, if ok then rec else nil)
+ if not committed then return false, outcome end
+ announce(tid, tag)
+ return true, view(outcome, plr.UserId)
 end
 
 function ops.decline(plr: Player, target: any)
@@ -577,7 +678,7 @@ function ops.kick(plr: Player, target: any)
 		return false, rec
 	end
 	if tid then
-		setUser(tid, nil)
+		clearMembership(tid, rec.tag)
 		announce(tid, nil)
 	end
 	return true, view(rec, plr.UserId)
@@ -666,6 +767,7 @@ function ops.leave(plr: Player)
 		if type(old) ~= "table" then
 			return nil
 		end
+		disband = false -- Recompute for each UpdateAsync callback.
 		local r = normalize(old)
 		local me = r.members[tostring(uid)]
 		if not me then
@@ -691,7 +793,7 @@ function ops.leave(plr: Player)
 	elseif type(rec) == "table" then
 		setIndex(tag, indexEntry(normalize(rec)))
 	end
-	setUser(uid, nil)
+	clearMembership(uid, tag)
 	announce(uid, nil)
 	return true, if disband then "Clan disbanded." else "You left [" .. tag .. "]."
 end
@@ -745,34 +847,40 @@ function Clans.init(c)
 end
 
 function Clans.load(plr: Player)
-	task.spawn(function()
-		local uid = plr.UserId
-		local tag = get("u_" .. uid)
-		if type(tag) ~= "string" then
-			return
-		end
-		local rec = readClan(tag)
-		if rec and rec.members[tostring(uid)] then
-			-- Keep the stored display name current.
-			if rec.members[tostring(uid)].n ~= plr.DisplayName then
-				update("c_" .. tag, function(old)
-					if type(old) ~= "table" then
-						return nil
-					end
-					local r = normalize(old)
-					if r.members[tostring(uid)] then
-						r.members[tostring(uid)].n = plr.DisplayName
-					end
-					return r
-				end)
-			end
-			if plr.Parent then
-				setLocal(uid, tag)
-			end
-		else
-			setUser(uid, nil) -- removed while offline
-		end
-	end)
+ task.spawn(function()
+  local uid = plr.UserId
+  local index, indexOK = get("u_" .. uid)
+  if not indexOK then return end
+  local tag = membershipTag(index)
+  if not tag then return end
+  local rec, readOK = readClan(tag)
+  if not readOK then return end -- An outage is not proof that membership was removed.
+  if type(index) == "table" and index.phase == "pending" then
+   local member = rec and rec.members[tostring(uid)]
+   if member and member.claim == index.claim then
+    local committed = commitMembership(uid, tag, index.claim)
+    if not committed then return end
+   elseif now() - (index.at or now()) >= 600 then
+    clearMembership(uid, tag, index.claim)
+    return
+   else
+    return -- Allow the in-flight transaction to finish; do not clear its claim.
+   end
+  end
+  if rec and rec.members[tostring(uid)] then
+   if rec.members[tostring(uid)].n ~= plr.DisplayName then
+    update("c_" .. tag, function(old)
+     if type(old) ~= "table" then return nil end
+     local r = normalize(old)
+     if r.members[tostring(uid)] then r.members[tostring(uid)].n = plr.DisplayName end
+     return r
+    end)
+   end
+   if plr.Parent then setLocal(uid, tag) end
+  else
+   clearMembership(uid, tag, if type(index) == "table" then index.claim else nil)
+  end
+ end)
 end
 
 function Clans.forget(plr: Player)
@@ -809,6 +917,11 @@ function Clans.roundEnded(results)
 			r.games = (r.games or 0) + 1
 			if won then
 				r.wins = (r.wins or 0) + 1
+				local wk = (os.time() // 86400 + 3) // 7
+				if type(r.week) ~= "table" or r.week.n ~= wk then
+					r.week = { n = wk, wins = 0 }
+				end
+				r.week.wins = (tonumber(r.week.wins) or 0) + 1
 			end
 			return r
 		end)

@@ -23,11 +23,11 @@ local ContextMenu = {}
 ContextMenu.alliances = {} :: { any }
 ContextMenu.betrayals = {} :: { [number]: number } -- player id -> alliances broken this round (seen by us)
 
-local FONT = Font.fromEnum(Enum.Font.GothamMedium)
+local FONT = Font.fromEnum(Enum.Font.GothamBold)
 local FONT_BOLD = Font.fromEnum(Enum.Font.GothamBold)
-local PANEL = Color3.fromRGB(24, 28, 36)
+local PANEL = Color3.fromRGB(5, 22, 40)
 local ACCENT = Color3.fromRGB(70, 110, 200)
-local DISABLED = Color3.fromRGB(70, 74, 86)
+local DISABLED = Color3.fromRGB(14, 43, 64)
 local RED = Color3.fromRGB(190, 60, 60)
 local GREEN = Color3.fromRGB(50, 150, 90)
 local ALLY_COLOR = Color3.fromRGB(110, 240, 160)
@@ -173,6 +173,7 @@ function ContextMenu.applyDiplomacy(data): boolean
 end
 
 -- UI helpers
+local MatchSkin=require(script.Parent:WaitForChild("MatchSkin"))
 local function make(className: string, props: { [string]: any })
 	local inst = Instance.new(className)
 	for k, v in props do
@@ -183,6 +184,7 @@ local function make(className: string, props: { [string]: any })
 	if props.Parent then
 		inst.Parent = props.Parent
 	end
+	MatchSkin.decorate(inst)
 	return inst
 end
 
@@ -616,7 +618,7 @@ function ContextMenu.setup(c)
 		Parent = c.gui,
 	})
 	corner(menu)
-	make("UIStroke", { Color = Color3.fromRGB(90, 100, 120), Thickness = 1, Parent = menu })
+	make("UIStroke", { Color = Color3.fromRGB(14, 43, 64), Thickness = 1, Parent = menu })
 	menuHeader = make("TextLabel", {
 		Position = UDim2.fromOffset(PAD + 2, PAD),
 		Size = UDim2.new(1, -PAD * 2 - 4, 0, HEADER_H - 4),
@@ -639,7 +641,9 @@ function ContextMenu.setup(c)
 	})
 	make("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 4), Parent = menuList })
 
-	popup = make("Frame", {
+	local st=require(script.Parent.DeviceLayout).state
+ local mobile=st.touch and (st.profile=="phone" or st.profile=="tablet")
+	popup = make(if mobile then "ScrollingFrame" else "Frame", {
 		Name = "AllianceRequests",
 		AnchorPoint = Vector2.new(0.5, 0),
 		Position = UDim2.new(0.5, 0, 0, 64),
@@ -650,7 +654,15 @@ function ContextMenu.setup(c)
 		ZIndex = 25,
 		Parent = c.gui,
 	})
-	make("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 6), Parent = popup })
+	local popupList=make("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 6), Parent = popup })
+ if mobile then
+  popup.AutomaticSize=Enum.AutomaticSize.None;popup.AutomaticCanvasSize=Enum.AutomaticSize.Y
+  popup.CanvasSize=UDim2.new();popup.ScrollingDirection=Enum.ScrollingDirection.Y;popup.ScrollBarThickness=3;popup.BorderSizePixel=0
+  local function fitPopup()popup.Size=UDim2.fromOffset(math.min(380,c.gui.AbsoluteSize.X-24),math.min(popupList.AbsoluteContentSize.Y,c.gui.AbsoluteSize.Y*.45))end
+  local resize=c.gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitPopup)
+  local contentResize=popupList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(fitPopup)
+  popup.Destroying:Connect(function()resize:Disconnect();contentResize:Disconnect()end);fitPopup()
+ end
 
 	-- Esc / gamepad B close the menu; B on a request popup declines it.
 	local lastSel: GuiObject? = nil

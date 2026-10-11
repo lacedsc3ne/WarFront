@@ -8,10 +8,10 @@ It is a modified port of **OpenFront** (https://github.com/openfrontio/OpenFront
 
 ## Contents
 
-- `src/` - the game's Luau scripts (ModuleScripts, server Scripts and client LocalScripts). The header comment of each file says what it does.
+- `src/` - the game's Luau scripts (ModuleScripts, server Scripts and client LocalScripts). The header comment of each file says what it does. Scripts nested in Studio are in matching subfolders (for example `src/NightMenu/Pages/`).
 - `tools/` - Python scripts that generate the icon, flag, sprite, map catalog, quick-chat and tribe-name data modules from OpenFront's `resources/` folder (run them against a clone of the OpenFront repo).
 
-Map terrain data comes from OpenFront's `map16x.bin` files and is stored in Roblox Studio under `ReplicatedStorage.Shared.Maps`.
+Map terrain data is generated from Natural Earth (public domain) and stored in Roblox Studio under `ReplicatedStorage.Shared.Maps`. It is not included here, and neither are the menu background image modules (`MenuBackgroundData1`-`20`).
 
 ## License
 

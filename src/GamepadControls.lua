@@ -110,9 +110,19 @@ function GamepadControls.start(ctx)
 		return gui.AbsolutePosition + cursorLocal
 	end
 
-	local function selecting(): boolean
-		return GuiService.SelectedObject ~= nil
-	end
+ local function visible(object)
+  while object do
+   if object:IsA("GuiObject") and not object.Visible then return false end
+   if object:IsA("ScreenGui") and not object.Enabled then return false end
+   object = object.Parent
+  end
+  return true
+ end
+ local function selecting(): boolean
+  local selected = GuiService.SelectedObject
+  if selected and (not selected.Parent or not visible(selected)) then GuiService.SelectedObject = nil end
+  return GuiService.SelectedObject ~= nil
+ end
 
 	-- The MainMenu script sets this attribute on PlayerGui while the menu covers the match.
 	local menuGui = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
@@ -122,7 +132,7 @@ function GamepadControls.start(ctx)
 
 	local function selectionInBuildBar(): boolean
 		local sel = GuiService.SelectedObject
-		return sel ~= nil and ctx.buildBar ~= nil and sel:IsDescendantOf(ctx.buildBar)
+		return sel ~= nil and (sel:IsDescendantOf(ctx.buildBar) or sel:FindFirstAncestor("DevelopmentNavbar") ~= nil)
 	end
 
 	local function setActive(on: boolean)
@@ -202,7 +212,8 @@ function GamepadControls.start(ctx)
 				GuiService.SelectedObject = nil
 				return SINK
 			elseif selecting() then
-				return PASS -- someone else's popup owns the selection
+    if ctx.cancel() then GuiService.SelectedObject = nil; return SINK end
+				return PASS -- popup owns the selection
 			elseif ctx.cancel() then
 				return SINK
 			end
@@ -219,7 +230,7 @@ function GamepadControls.start(ctx)
 				GuiService.SelectedObject = nil
 			elseif not selecting() then
 				local target = ctx.focusTarget()
-				if target then
+				if target and visible(target) then
 					GuiService.SelectedObject = target
 				end
 			else
@@ -265,18 +276,25 @@ function GamepadControls.start(ctx)
 		K.Thumbstick2
 	)
 
-	-- Build bar focus: leaving it after a button is chosen, so the cursor can place it.
-	if ctx.buildBar then
-		for _, b in ctx.buildBar:GetChildren() do
-			if b:IsA("GuiButton") then
-				b.Activated:Connect(function()
-					if api.active and selectionInBuildBar() then
-						GuiService.SelectedObject = nil
-					end
-				end)
-			end
-		end
-	end
+ -- Borrowed controls may be rebuilt when a saved HUD preference arrives.
+ local function wireButton(b)
+  if not b:IsA("GuiButton") or b:GetAttribute("WFGamepadWired") then return end
+  b:SetAttribute("WFGamepadWired",true)
+  local focus=Instance.new("UIStroke")
+  focus.Name="GamepadFocus"
+  focus.Color=Color3.fromRGB(255,220,90)
+  focus.Thickness=3
+  focus.ApplyStrokeMode=Enum.ApplyStrokeMode.Border
+  focus.Enabled=false
+  focus.Parent=b
+  b.SelectionGained:Connect(function() focus.Enabled=visible(b) end)
+  b.SelectionLost:Connect(function() focus.Enabled=false end)
+  b.Activated:Connect(function()
+   if api.active and selectionInBuildBar() and GuiService.SelectedObject==b then GuiService.SelectedObject=nil end
+  end)
+ end
+ for _,b in gui:GetDescendants() do wireButton(b) end
+ gui.DescendantAdded:Connect(wireButton)
 
 	-- Analog: sticks and triggers polled every frame ----------------------------------------
 	RunService.RenderStepped:Connect(function(dt)

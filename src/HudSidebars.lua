@@ -535,7 +535,7 @@ local function step()
 	local now = os.clock()
 	local ph = info.phase
 	local inGame = (ph == "Spawn" or ph == "Play" or ph == "Ended") and playerGui:GetAttribute("WFReplay") ~= true
-	ui.bar.Visible = inGame
+	ui.bar.Visible = inGame and ui.cornerHud == nil
 	-- Speed / pause controls (solo rounds)
 	local solo = inGame and info.solo and ph ~= "Ended"
 	ui.speedBtn.Visible = solo
@@ -625,6 +625,7 @@ local function step()
 	else
 		ui.bar.BackgroundColor3, ui.bar.BackgroundTransparency = GRAY800, 0.08
 	end
+	if ui.cornerHud then ui.cornerHud.sideStep(ui) end
 	if lastMin and not info.warned and ph == "Play" then
 		info.warned = true
 		if ctx.toast then
@@ -712,6 +713,11 @@ function HudSidebars.setup(c)
 		acc = 0
 		step()
 	end)
+end
+
+function HudSidebars.setCornerHud(api)
+ ui.cornerHud=api
+ api.sideStep(ui)
 end
 
 return HudSidebars

@@ -22,7 +22,7 @@ local MenuKit = require(localPlayer:WaitForChild("PlayerScripts"):WaitForChild("
 local FONT = MenuKit.F.MEDIUM
 local FONT_BOLD = MenuKit.F.BOLD
 local PANEL = MenuKit.C.ZINC900 -- nav / footer bg-zinc-900/90
-local ACCENT = MenuKit.C.MALIBU
+local ACCENT = Color3.fromRGB(0, 177, 235)
 local GOLD = MenuKit.C.CYBER
 
 local function make(className: string, props: { [string]: any })
@@ -91,13 +91,13 @@ local IconKit = require(localPlayer:WaitForChild("PlayerScripts"):WaitForChild("
 local TOAST_SECONDS = 4.5
 local toastUi: any = {}
 do
-	local t = make("Frame", { Name = "RewardToast", AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, -160), Size = UDim2.fromOffset(420, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundColor3 = MenuKit.C.GRAY900, BackgroundTransparency = 0.04, BorderSizePixel = 0, Visible = false, ClipsDescendants = true, Parent = gui })
-	corner(t, 14)
+	local t = make("Frame", { Name = "RewardToast", AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, -160), Size = UDim2.fromOffset(420, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundColor3 = MenuKit.C.PANEL, BackgroundTransparency = 0.04, BorderSizePixel = 0, Visible = false, ClipsDescendants = true, Parent = gui })
+	corner(t, 8)
 	make("UISizeConstraint", { MaxSize = Vector2.new(420, 400), Parent = t })
-	toastUi.stroke = make("UIStroke", { Color = GOLD, Transparency = 0.55, Thickness = 1.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = t })
+	toastUi.stroke = make("UIStroke", { Color = ACCENT, Transparency = 0.15, Thickness = 1.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = t })
 	make("UIPadding", { PaddingTop = UDim.new(0, 14), PaddingBottom = UDim.new(0, 18), PaddingLeft = UDim.new(0, 14), PaddingRight = UDim.new(0, 16), Parent = t })
 	local tile = make("Frame", { Name = "IconTile", Size = UDim2.fromOffset(52, 52), BackgroundColor3 = GOLD, BackgroundTransparency = 0.82, BorderSizePixel = 0, Parent = t })
-	corner(tile, 12)
+	corner(tile, 6)
 	toastUi.tileStroke = make("UIStroke", { Color = GOLD, Transparency = 0.6, Thickness = 1, Parent = tile })
 	toastUi.tile = tile
 	toastUi.icon = IconKit.image("Crown", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(30, 30), ImageColor3 = GOLD, Parent = tile })
@@ -117,22 +117,27 @@ end
 
 local toastQueue = {}
 local toastBusy = false
+local toastHook: ((any) -> ())? = nil -- Night menu: swaps in the full-colour art after each render
+local toastShownAt = function(): UDim2
+	return UDim2.new(0.5, 0, 0, if DeviceLayout.state.profile == "phone" then 126 else 160)
+end
+local toastHiddenAt = UDim2.new(0.5, 0, 0, -160)
 
 -- opts: { kicker = "DAILY REWARD", icon = IconKit name, color = Color3, pills = { { text, icon?, color? } } }
 local function renderToast(title: string, body: string, opts: any)
 	local color = opts.color or GOLD
 	toastUi.kicker.Text = string.upper(opts.kicker or "")
 	toastUi.kicker.Visible = (opts.kicker or "") ~= ""
-	toastUi.kicker.TextColor3 = color
+	toastUi.kicker.TextColor3 = ACCENT
 	toastUi.title.Text = title
 	toastUi.body.Text = body
 	toastUi.body.Visible = body ~= ""
-	toastUi.stroke.Color = color
+	toastUi.stroke.Color = ACCENT
 	toastUi.tile.BackgroundColor3 = color
 	toastUi.tileStroke.Color = color
 	IconKit.set(toastUi.icon, opts.icon or "Crown")
 	toastUi.icon.ImageColor3 = color
-	toastUi.bar.BackgroundColor3 = color
+	toastUi.bar.BackgroundColor3 = ACCENT
 	for _, c in toastUi.pills:GetChildren() do
 		if c:IsA("Frame") then
 			c:Destroy()
@@ -142,7 +147,7 @@ local function renderToast(title: string, body: string, opts: any)
 	for i, pill in opts.pills or {} do
 		local pc = pill.color or color
 		local f = make("Frame", { LayoutOrder = i, Size = UDim2.fromOffset(0, 26), AutomaticSize = Enum.AutomaticSize.X, BackgroundColor3 = pc, BackgroundTransparency = 0.84, BorderSizePixel = 0, Parent = toastUi.pills })
-		corner(f, 13)
+		corner(f, 5)
 		make("UIStroke", { Color = pc, Transparency = 0.55, Thickness = 1, Parent = f })
 		make("UIPadding", { PaddingLeft = UDim.new(0, if pill.icon then 6 else 10), PaddingRight = UDim.new(0, 10), Parent = f })
 		make("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, VerticalAlignment = Enum.VerticalAlignment.Center, Padding = UDim.new(0, 5), SortOrder = Enum.SortOrder.LayoutOrder, Parent = f })
@@ -151,9 +156,20 @@ local function renderToast(title: string, body: string, opts: any)
 		end
 		label({ LayoutOrder = 2, Size = UDim2.fromOffset(0, 26), AutomaticSize = Enum.AutomaticSize.X, FontFace = FONT_BOLD, TextSize = 13, TextColor3 = pc, Text = pill.text, Parent = f })
 	end
+	if toastHook then
+		toastHook(opts)
+	end
 end
 
+local function mobileDevice()
+ local st=DeviceLayout.state
+ return (st.touch==true or st.input=="Touch") and (st.profile=="phone" or st.profile=="tablet")
+end
 local function showToast(title: string, body: string, opts: any?)
+ if mobileDevice() then
+  local key=string.lower(title.." "..tostring(opts and opts.kicker or ""))
+  if key:find("group",1,true) or key:find("rate war front",1,true) or key:find("support war front",1,true) or key:find("rating unavailable",1,true) or key:find("streak",1,true) then return end
+ end
 	table.insert(toastQueue, { title, body, opts or {} })
 	if toastBusy then
 		return
@@ -166,11 +182,11 @@ local function showToast(title: string, body: string, opts: any?)
 			renderToast(item[1], item[2], item[3])
 			t.Visible = true -- hidden while idle: on scaled/TV layouts the off-screen spot can peek in
 			toastUi.bar.Size = UDim2.fromScale(1, 1)
-			TweenService:Create(t, TweenInfo.new(0.4, Enum.EasingStyle.Back), { Position = UDim2.new(0.5, 0, 0, 96) }):Play()
+			TweenService:Create(t, TweenInfo.new(0.4, Enum.EasingStyle.Back), { Position = toastShownAt() }):Play()
 			local seconds = item[3].seconds or TOAST_SECONDS
 			TweenService:Create(toastUi.bar, TweenInfo.new(seconds, Enum.EasingStyle.Linear), { Size = UDim2.fromScale(0, 1) }):Play()
 			task.wait(seconds)
-			TweenService:Create(t, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Position = UDim2.new(0.5, 0, 0, -160) }):Play()
+			TweenService:Create(t, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Position = toastHiddenAt }):Play()
 			task.wait(0.35)
 		end
 		t.Visible = false
@@ -184,73 +200,48 @@ end
 local groupPopup: any = { shown = false, busy = false }
 do
 	local G = MetaConfig.GROUP
-	local TEAL = Color3.fromRGB(20, 205, 185)
-	local boost = MetaConfig.boost(G.DAILY_BOOST)
-	local colour = MetaConfig.color(G.COLOR)
-	local shade = make("Frame", { Name = "GroupPopup", Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.4, Active = true, Visible = false, ZIndex = 50, Parent = gui })
-	local card = make("Frame", { Name = "Card", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(1, -32, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundColor3 = MenuKit.C.GRAY900, BorderSizePixel = 0, Active = true, Parent = shade })
-	corner(card, 18)
-	make("UIStroke", { Color = TEAL, Transparency = 0.5, Thickness = 1.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = card })
-	make("UIPadding", { PaddingTop = UDim.new(0, 24), PaddingBottom = UDim.new(0, 20), PaddingLeft = UDim.new(0, 22), PaddingRight = UDim.new(0, 22), Parent = card })
-	make("UIListLayout", { Padding = UDim.new(0, 10), HorizontalAlignment = Enum.HorizontalAlignment.Center, SortOrder = Enum.SortOrder.LayoutOrder, Parent = card })
-	make("UISizeConstraint", { MaxSize = Vector2.new(440, math.huge), Parent = card }) -- full width minus 16 px on phones
-	local badge = make("Frame", { LayoutOrder = 1, Size = UDim2.fromOffset(68, 68), BackgroundColor3 = TEAL, BackgroundTransparency = 0.8, BorderSizePixel = 0, Parent = card })
-	corner(badge, 18)
-	make("UIStroke", { Color = TEAL, Transparency = 0.5, Thickness = 1, Parent = badge })
-	IconKit.image("Alliance", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(40, 40), ImageColor3 = TEAL, Parent = badge })
-	label({ LayoutOrder = 2, Size = UDim2.new(1, 0, 0, 14), FontFace = FONT_BOLD, TextSize = 11, TextColor3 = TEAL, Text = "FREE GROUP REWARDS", Parent = card })
-	label({ LayoutOrder = 3, Size = UDim2.new(1, 0, 0, 28), FontFace = FONT_BOLD, TextSize = 24, Text = "Join " .. G.name, Parent = card })
-	label({ LayoutOrder = 4, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, TextSize = 14, TextTransparency = 0.35, TextWrapped = true, Text = "Join our Roblox group and get these rewards right away:", Parent = card })
-	local list = make("Frame", { LayoutOrder = 5, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, Parent = card })
-	make("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = list })
-	make("UIPadding", { PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 6), Parent = list })
-	local rows = {
-		{ icon = "Gold", color = GOLD, title = G.MEDALS .. " medals", desc = "Once, as a welcome gift" },
-		{ swatch = colour, color = TEAL, title = (if colour then colour.name else "Group colour") .. " territory colour", desc = "Only group members can use it" },
-		{ icon = if boost then boost.icon else "Gold", color = MenuKit.C.MALIBU, title = "Free " .. (if boost then boost.name else "boost") .. " every day", desc = (if boost then boost.desc else "A free boost") .. ", each day you play" },
-	}
-	for i, row in rows do
-		local f = make("Frame", { LayoutOrder = i, Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 0.96, BorderSizePixel = 0, Parent = list })
-		corner(f, 12)
-		make("UIStroke", { Color = Color3.new(1, 1, 1), Transparency = 0.92, Thickness = 1, Parent = f })
-		local tile = make("Frame", { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 10, 0.5, 0), Size = UDim2.fromOffset(38, 38), BackgroundColor3 = row.color, BackgroundTransparency = 0.82, BorderSizePixel = 0, Parent = f })
-		corner(tile, 10)
-		if row.swatch then
-			local sw = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(22, 22), BackgroundColor3 = Color3.fromRGB(row.swatch.rgb[1], row.swatch.rgb[2], row.swatch.rgb[3]), BorderSizePixel = 0, Parent = tile })
-			corner(sw, 11)
-		else
-			IconKit.image(row.icon, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(22, 22), ImageColor3 = row.color, Parent = tile })
-		end
-		label({ Position = UDim2.fromOffset(60, 9), Size = UDim2.new(1, -70, 0, 20), FontFace = FONT_BOLD, TextSize = 15, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Text = row.title, Parent = f })
-		label({ Position = UDim2.fromOffset(60, 29), Size = UDim2.new(1, -70, 0, 16), TextSize = 12, TextTransparency = 0.45, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Text = row.desc, Parent = f })
-	end
-	local join = button({ Name = "Join", LayoutOrder = 6, Size = UDim2.new(1, 0, 0, 48), BackgroundColor3 = TEAL, TextColor3 = MenuKit.C.GRAY900, TextSize = 17, Text = "JOIN GROUP", Parent = card })
-	join:FindFirstChildWhichIsA("UICorner").CornerRadius = UDim.new(0, 12)
-	local later = button({ Name = "Later", LayoutOrder = 7, Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 0.94, TextTransparency = 0.3, TextSize = 14, Text = "Maybe later", Parent = card })
-	later:FindFirstChildWhichIsA("UICorner").CornerRadius = UDim.new(0, 10)
-	local status = label({ LayoutOrder = 8, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, TextSize = 13, TextColor3 = MenuKit.C.AMBER300, TextWrapped = true, Text = "", Visible = false, Parent = card })
+ local NAVY=Color3.fromRGB(5,22,40)
+ local BORDER=Color3.fromRGB(71,145,197)
+ local shade=make("Frame",{Name="GroupPopup",Size=UDim2.fromScale(1,1),BackgroundTransparency=1,Active=false,Visible=false,ZIndex=50,Parent=gui})
+ local card=make("Frame",{Name="Card",AnchorPoint=Vector2.new(0,1),Position=UDim2.new(0,18,1,-18),Size=UDim2.fromOffset(420,166),BackgroundColor3=NAVY,BorderSizePixel=0,Active=true,ZIndex=50,Parent=shade})
+ corner(card,6)
+ make("UIStroke",{Color=BORDER,Thickness=1.5,ApplyStrokeMode=Enum.ApplyStrokeMode.Border,Parent=card})
+ local scale=make("UIScale",{Parent=card})
+ local function fitPrompt()
+  scale.Scale=math.min(1,math.max(.5,(gui.AbsoluteSize.X-36)/420))
+ end
+ gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitPrompt);fitPrompt()
+ IconKit.image("Alliance",{Position=UDim2.fromOffset(18,16),Size=UDim2.fromOffset(38,38),ImageColor3=ACCENT,ZIndex=51,Parent=card})
+ label({Name="Heading",Position=UDim2.fromOffset(68,16),Size=UDim2.fromOffset(302,34),FontFace=Font.fromEnum(Enum.Font.GothamBlack),TextSize=23,TextXAlignment=Enum.TextXAlignment.Left,TextStrokeColor3=Color3.new(0,0,0),TextStrokeTransparency=.25,Text="JOIN OUR GROUP",ZIndex=51,Parent=card})
+ make("ImageLabel",{Name="Medal",Image="rbxassetid://98450321632062",BackgroundTransparency=1,Position=UDim2.fromOffset(18,64),Size=UDim2.fromOffset(34,38),ScaleType=Enum.ScaleType.Fit,ZIndex=51,Parent=card})
+ label({Name="Rewards",Position=UDim2.fromOffset(64,64),Size=UDim2.fromOffset(340,36),FontFace=FONT_BOLD,TextSize=17,TextWrapped=true,TextXAlignment=Enum.TextXAlignment.Left,Text="Get "..G.MEDALS.." medals + daily rewards",ZIndex=51,Parent=card})
+ label({Name="GroupName",Position=UDim2.fromOffset(18,118),Size=UDim2.fromOffset(146,36),TextSize=13,TextColor3=Color3.fromRGB(155,184,219),TextWrapped=true,TextXAlignment=Enum.TextXAlignment.Left,Text=G.name,ZIndex=51,Parent=card})
+ local join=button({Name="Join",Position=UDim2.fromOffset(178,112),Size=UDim2.fromOffset(226,38),BackgroundColor3=ACCENT,TextColor3=NAVY,FontFace=Font.fromEnum(Enum.Font.GothamBlack),TextSize=19,Text="JOIN GROUP",AutoButtonColor=false,ZIndex=51,Parent=card})
+ MenuKit.stroke(join,.15,Color3.fromRGB(56,213,255),1)
+ make("UIGradient",{Rotation=90,Color=ColorSequence.new(Color3.new(1,1,1),Color3.fromRGB(0,161,220)),Parent=join})
+ MenuKit.hover(join,function(st)join.BackgroundColor3=if st=="idle" then ACCENT elseif st=="press" then ACCENT:Lerp(Color3.new(0,0,0),.15) else ACCENT:Lerp(Color3.new(1,1,1),.15) end)
+ local later=button({Name="Close",Position=UDim2.new(1,-36,0,10),Size=UDim2.fromOffset(26,26),BackgroundTransparency=1,TextColor3=BORDER,TextSize=23,Text="×",ZIndex=52,Parent=card})
+ local status=label({Name="Status",Position=UDim2.fromOffset(18,160),Size=UDim2.fromOffset(384,38),TextSize=12,TextColor3=MenuKit.C.AMBER300,TextWrapped=true,Text="",Visible=false,ZIndex=51,Parent=card})
+ status:GetPropertyChangedSignal("Visible"):Connect(function()card.Size=UDim2.fromOffset(420,if status.Visible then 206 else 166)end)
 	local B_ACTION = "WFGroupPopupBack"
 	local function close()
 		shade.Visible = false
+  groupPopup.dismissed=true
 		ContextActionService:UnbindAction(B_ACTION)
 		local sel = GuiService.SelectedObject
 		if sel and sel:IsDescendantOf(shade) then
 			GuiService.SelectedObject = nil
 		end
 	end
+	groupPopup.close = close
 	function groupPopup.open()
+  if mobileDevice() then return end
+		if not profile or profile.groupKnown ~= true or profile.inGroup ~= false then return end
 		groupPopup.shown = true
+  groupPopup.dismissed=false
 		status.Visible = false
 		join.Text = "JOIN GROUP"
 		shade.Visible = true
-		card.Position = UDim2.new(0.5, 0, 0.5, 24)
-		TweenService:Create(card, TweenInfo.new(0.3, Enum.EasingStyle.Back), { Position = UDim2.fromScale(0.5, 0.5) }):Play()
-		ContextActionService:BindActionAtPriority(B_ACTION, function(_, state)
-			if state == Enum.UserInputState.Begin then
-				close()
-			end
-			return Enum.ContextActionResult.Sink
-		end, false, Enum.ContextActionPriority.High.Value + 30, Enum.KeyCode.ButtonB)
 		if DeviceLayout.usingGamepad() then
 			GuiService.SelectedObject = join
 		end
@@ -284,6 +275,145 @@ do
 	end)
 	ev.Parent = localPlayer:WaitForChild("PlayerGui")
 	groupPopup.shade = shade
+	groupPopup.card = card
+end
+
+-- Night menu look (test experience with Workspace.WFNightMenu on, like MainMenu): the same reward
+-- popups and group invite, recoloured with NightMenu.Kit. renderToast reads ACCENT / GOLD per call.
+do
+	local Config = require(Shared:WaitForChild("Config"))
+	if workspace:GetAttribute("WFNightMenu") ~= false then
+		local Kit = require(localPlayer:WaitForChild("PlayerScripts"):WaitForChild("NightMenu"):WaitForChild("Kit"))
+		local C, F = Kit.C, Kit.F
+		ACCENT, GOLD = C.CYAN, C.YELLOW
+		local t = toastUi.frame
+		t.BackgroundColor3, t.BackgroundTransparency = C.PAGE, 0
+		t:FindFirstChildOfClass("UICorner").CornerRadius = UDim.new(0, 16)
+		toastUi.stroke.Thickness = 2
+		toastUi.tile:FindFirstChildOfClass("UICorner").CornerRadius = UDim.new(0, 12)
+		toastUi.kicker.FontFace, toastUi.kicker.TextSize = F.TITLE, 13
+		toastUi.title.FontFace, toastUi.title.TextSize = F.TITLE, 21
+		toastUi.body.FontFace, toastUi.body.TextSize = F.BOLD, 14
+		toastUi.body.TextColor3, toastUi.body.TextTransparency = C.MUTED, 0
+		local card = groupPopup.card
+		card.BackgroundColor3 = C.PAGE
+		card:FindFirstChildOfClass("UICorner").CornerRadius = UDim.new(0, 16)
+		card:FindFirstChildOfClass("UIStroke").Color = C.YELLOW
+		local heading = card:FindFirstChild("Heading")
+		if heading then
+			heading.FontFace, heading.Text, heading.TextStrokeTransparency = F.TITLE, "Join our group", 1
+		end
+		local rewards = card:FindFirstChild("Rewards")
+		if rewards then
+			rewards.FontFace = F.BOLD
+		end
+		local groupName = card:FindFirstChild("GroupName")
+		if groupName then
+			groupName.TextColor3 = C.MUTED
+		end
+		local join = card:FindFirstChild("Join")
+		if join then
+			local gradient = join:FindFirstChildOfClass("UIGradient")
+			if gradient then
+				gradient:Destroy()
+			end
+			join.FontFace, join.TextColor3 = F.TITLE, C.YELLOW_TEXT
+			join:FindFirstChildOfClass("UICorner").CornerRadius = UDim.new(0.5, 0)
+			join:FindFirstChildOfClass("UIStroke").Color = C.YELLOW_EDGE
+			join:GetPropertyChangedSignal("BackgroundColor3"):Connect(function()
+				if join.BackgroundColor3 ~= C.YELLOW and join.BackgroundColor3 ~= C.YELLOW:Lerp(C.WHITE, 0.12) then
+					join.BackgroundColor3 = C.YELLOW -- the old hover recolour uses the old accent
+				end
+			end)
+			join.BackgroundColor3 = C.YELLOW
+			join.Text = "Join group"
+		end
+		local later = card:FindFirstChild("Close")
+		if later then
+			later.TextColor3 = C.MUTED
+		end
+
+		-- Full-colour art and a cleaner layout (same buttons and logic as above).
+		local Art = require(localPlayer.PlayerScripts.NightMenu:WaitForChild("Art"))
+		local ART_FOR = { Gold = "Gift", Crown = "WinBattle", Leaderboard = "PlayBattles", UpperLimit = "Season", Alliance = "Friends", Info = "Bell" }
+		-- Rises from the bottom middle (the top would cover the battle name and Play).
+		t.AnchorPoint = Vector2.new(0.5, 1)
+		toastHiddenAt = UDim2.new(0.5, 0, 1, 240)
+		t.Position = toastHiddenAt
+		toastShownAt = function(): UDim2
+			return UDim2.new(0.5, 0, 1, if DeviceLayout.state.profile == "phone" then -84 else -96)
+		end
+		toastUi.tile.BackgroundTransparency = 1
+		toastUi.tileStroke.Enabled = false
+		toastUi.icon.Visible = false
+		local toastArt = Art.image(nil, { Name = "Art", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromScale(1, 1), Parent = toastUi.tile })
+		toastHook = function(opts)
+			local artName = opts.art or ART_FOR[opts.icon or "Crown"]
+			Art.set(toastArt, artName)
+			toastUi.icon.Visible = artName == nil
+			toastUi.tile.BackgroundTransparency = if artName then 1 else 0.82
+			for _, f in toastUi.pills:GetChildren() do
+				if f:IsA("Frame") then
+					local pill = opts.pills and opts.pills[f.LayoutOrder]
+					f.BackgroundColor3, f.BackgroundTransparency = C.CARD, 0
+					f:FindFirstChildOfClass("UICorner").CornerRadius = UDim.new(0.5, 0)
+					local s = f:FindFirstChildOfClass("UIStroke")
+					s.Color, s.Transparency = C.LINE, 0
+					for _, d in f:GetChildren() do
+						if d:IsA("TextLabel") then
+							d.FontFace = F.TITLE
+							d.TextSize = 14
+						elseif d:IsA("ImageLabel") and pill and pill.icon == "Gold" then
+							d:Destroy()
+							Art.image("Medal", { LayoutOrder = 1, Size = UDim2.fromOffset(20, 20), Parent = f })
+						end
+					end
+				end
+			end
+		end
+
+		-- Group card: picture, title, group name, one line of rewards, a full-width yellow pill.
+		for _, d in card:GetChildren() do
+			if d:IsA("ImageLabel") and d.Name ~= "Medal" then
+				d.Visible = false -- old Alliance icon
+			end
+		end
+		Art.image("Friends", { Name = "GroupArt", Position = UDim2.fromOffset(16, 14), Size = UDim2.fromOffset(50, 50), ZIndex = 51, Parent = card })
+		if heading then
+			heading.Position, heading.Size, heading.TextSize = UDim2.fromOffset(76, 14), UDim2.fromOffset(290, 28), 24
+		end
+		if groupName then
+			groupName.Position, groupName.Size = UDim2.fromOffset(76, 42), UDim2.fromOffset(290, 18)
+			groupName.FontFace, groupName.TextSize, groupName.TextWrapped = F.BOLD, 14, false
+			groupName.TextXAlignment = Enum.TextXAlignment.Left
+			groupName.TextTruncate = Enum.TextTruncate.AtEnd
+		end
+		local medal = card:FindFirstChild("Medal")
+		if medal then
+			medal.Position, medal.Size = UDim2.fromOffset(18, 74), UDim2.fromOffset(28, 28)
+			Art.set(medal, "Medal")
+		end
+		if rewards then
+			rewards.Position, rewards.Size, rewards.TextSize = UDim2.fromOffset(54, 72), UDim2.fromOffset(350, 32), 16
+			rewards.Text = "+" .. MetaConfig.GROUP.MEDALS .. " medals, a free boost every day and a group colour"
+		end
+		if join then
+			join.Position, join.Size, join.TextSize = UDim2.fromOffset(16, 114), UDim2.new(1, -32, 0, 40), 20
+		end
+		if later then
+			later.Text = ""
+			later.BackgroundColor3, later.BackgroundTransparency = C.RAISED, 0
+			later.Size, later.Position = UDim2.fromOffset(30, 30), UDim2.new(1, -42, 0, 12)
+			later:FindFirstChildOfClass("UICorner").CornerRadius = UDim.new(0.5, 0)
+			Kit.icon("Close", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromScale(0.55, 0.55), ImageColor3 = C.TEXT, ZIndex = 53, Parent = later })
+		end
+		local status = card:FindFirstChild("Status")
+		if status then
+			status.Position = UDim2.fromOffset(16, 160)
+			status.FontFace, status.TextSize, status.TextColor3 = F.BOLD, 13, C.YELLOW
+		end
+		card.Size = UDim2.fromOffset(420, 168)
+	end
 end
 
 -- Store / stats window: an OpenFront o-modal (MenuKit.modal) showing the same pages as the
@@ -404,6 +534,7 @@ openEvent.Event:Connect(function(tab: string)
 end)
 
 local function applyMetaLayout()
+ if mobileDevice() then groupPopup.shade.Visible=false;toastUi.frame.Visible=false end
 	local st = DeviceLayout.state
 	local phone = st.profile == "phone"
 	local s = if st.profile == "console" then st.scale else 1
@@ -438,6 +569,8 @@ local function applyMetaLayout()
 
 		DeviceLayout.setScale(toastUi.frame, s)
 	end
+	-- Fit the join card on short landscape/mobile viewports as well as desktop.
+	DeviceLayout.setScale(groupPopup.card, math.min(s, math.max(0.4, (gui.AbsoluteSize.X - 24) / 440), math.max(0.4, (gui.AbsoluteSize.Y - 24) / 580)))
 	if window.Visible then
 		modal.layout()
 	end
@@ -447,98 +580,73 @@ DeviceLayout.attachScreenGui(gui)
 DeviceLayout.Changed:Connect(applyMetaLayout)
 applyMetaLayout()
 
--- Group rewards on the side of the main menu, always there for non-members while the menu is
--- open: a card in the empty space left of the main column, or a round button in the bottom-right
--- corner when there's no room (phones, small windows). Both open the group popup.
+-- All menu group invitation entry points use one non-modal bottom-left prompt.
 do
-	local G = MetaConfig.GROUP
-	local TEAL = Color3.fromRGB(20, 205, 185)
-	local boost = MetaConfig.boost(G.DAILY_BOOST)
-	local colour = MetaConfig.color(G.COLOR)
-	local side = make("TextButton", { Name = "GroupSide", Text = "", AutoButtonColor = false, AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 20, 0.5, 30), Size = UDim2.fromOffset(220, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundColor3 = MenuKit.C.GRAY900, BackgroundTransparency = 0.04, BorderSizePixel = 0, Visible = false, ZIndex = 5, Parent = gui })
-	corner(side, 16)
-	local sideStroke = make("UIStroke", { Color = TEAL, Transparency = 0.45, Thickness = 1.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = side })
-	make("UIPadding", { PaddingTop = UDim.new(0, 18), PaddingBottom = UDim.new(0, 16), PaddingLeft = UDim.new(0, 16), PaddingRight = UDim.new(0, 16), Parent = side })
-	make("UIListLayout", { Padding = UDim.new(0, 8), HorizontalAlignment = Enum.HorizontalAlignment.Center, SortOrder = Enum.SortOrder.LayoutOrder, Parent = side })
-	local badge = make("Frame", { LayoutOrder = 1, Size = UDim2.fromOffset(56, 56), BackgroundColor3 = TEAL, BackgroundTransparency = 0.8, BorderSizePixel = 0, Parent = side })
-	corner(badge, 16)
-	local badgeStroke = make("UIStroke", { Color = TEAL, Transparency = 0.6, Thickness = 1.5, Parent = badge })
-	IconKit.image("Alliance", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(32, 32), ImageColor3 = TEAL, Parent = badge })
-	label({ LayoutOrder = 2, Size = UDim2.new(1, 0, 0, 14), FontFace = FONT_BOLD, TextSize = 11, TextColor3 = TEAL, Text = "FREE REWARDS", Parent = side })
-	label({ LayoutOrder = 3, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, FontFace = FONT_BOLD, TextSize = 18, TextWrapped = true, Text = "Join our group", Parent = side })
-	local items = make("Frame", { LayoutOrder = 4, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, Parent = side })
-	make("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = items })
-	make("UIPadding", { PaddingTop = UDim.new(0, 2), PaddingBottom = UDim.new(0, 4), Parent = items })
-	local rows = {
-		{ icon = "Gold", color = GOLD, text = "+" .. G.MEDALS .. " medals" },
-		{ swatch = colour, text = (if colour then colour.name else "Group") .. " colour" },
-		{ icon = if boost then boost.icon else "Gold", color = MenuKit.C.MALIBU, text = "Free " .. (if boost then boost.name else "boost") .. " daily" },
-	}
-	for i, row in rows do
-		local f = make("Frame", { LayoutOrder = i, Size = UDim2.new(1, 0, 0, 20), BackgroundTransparency = 1, Parent = items })
-		if row.swatch then
-			local sw = make("Frame", { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 1, 0.5, 0), Size = UDim2.fromOffset(16, 16), BackgroundColor3 = Color3.fromRGB(row.swatch.rgb[1], row.swatch.rgb[2], row.swatch.rgb[3]), BorderSizePixel = 0, Parent = f })
-			corner(sw, 8)
-		else
-			IconKit.image(row.icon, { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 0, 0.5, 0), Size = UDim2.fromOffset(18, 18), ImageColor3 = row.color, Parent = f })
-		end
-		label({ Position = UDim2.fromOffset(26, 0), Size = UDim2.new(1, -26, 1, 0), TextSize = 13, TextTransparency = 0.15, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Text = row.text, Parent = f })
-	end
-	local joinPill = label({ LayoutOrder = 5, Size = UDim2.new(1, 0, 0, 38), BackgroundTransparency = 0, BackgroundColor3 = TEAL, FontFace = FONT_BOLD, TextSize = 15, TextColor3 = MenuKit.C.GRAY900, Text = "JOIN GROUP", Parent = side })
-	joinPill.BackgroundTransparency = 0 -- label() makes backgrounds transparent
-	corner(joinPill, 10)
-	MenuKit.hover(side, function(st)
-		sideStroke.Transparency = if st == "idle" then 0.45 else 0.1
-		joinPill.BackgroundColor3 = if st == "idle" then TEAL else TEAL:Lerp(Color3.new(1, 1, 1), 0.2)
-	end)
-
-	-- Small screens: round button in the bottom-right corner with a FREE tag.
-	local fab = make("TextButton", { Name = "GroupButton", Text = "", AutoButtonColor = false, AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -16, 1, -16), Size = UDim2.fromOffset(60, 60), BackgroundColor3 = TEAL, BorderSizePixel = 0, Visible = false, ZIndex = 5, Parent = gui })
-	corner(fab, 30)
-	make("UIStroke", { Color = Color3.new(1, 1, 1), Transparency = 0.6, Thickness = 2, Parent = fab })
-	IconKit.image("Alliance", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(32, 32), ImageColor3 = MenuKit.C.GRAY900, Parent = fab })
-	local tag = label({ AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0, -2), Size = UDim2.fromOffset(42, 16), BackgroundTransparency = 0, BackgroundColor3 = GOLD, FontFace = FONT_BOLD, TextSize = 10, TextColor3 = MenuKit.C.GRAY900, Text = "FREE", Parent = fab })
-	tag.BackgroundTransparency = 0
-	corner(tag, 8)
-
-	-- A slow glow so the eye finds it.
-	TweenService:Create(badgeStroke, TweenInfo.new(1.2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Transparency = 0.05 }):Play()
-
-	local pg = localPlayer:WaitForChild("PlayerGui")
-	local function update()
-		local show = pg:GetAttribute("FrontlinesMenuOpen") == true and pg:GetAttribute("WFInGroup") == false and not window.Visible and not groupPopup.shade.Visible
-		local w = gui.AbsoluteSize.X
-		local column = if w >= 1536 then 907 else 756
-		local room = (w - column) / 2 >= 260 and DeviceLayout.state.input ~= "Touch"
-		side.Visible = show and room
-		fab.Visible = show and not room
-	end
-	for _, b in { side, fab } do
-		b.Activated:Connect(function()
-			groupPopup.open()
-			update()
-		end)
-	end
-	pg:GetAttributeChangedSignal("FrontlinesMenuOpen"):Connect(update)
-	pg:GetAttributeChangedSignal("WFInGroup"):Connect(update)
-	window:GetPropertyChangedSignal("Visible"):Connect(update)
-	groupPopup.shade:GetPropertyChangedSignal("Visible"):Connect(update)
-	gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(update)
-	DeviceLayout.Changed:Connect(update)
-	update()
+ local pg=localPlayer:WaitForChild("PlayerGui")
+ local function update()
+  local eligible=not mobileDevice() and pg:GetAttribute("FrontlinesMenuOpen")==true and pg:GetAttribute("WFInGroup")==false and not window.Visible
+  if not eligible then groupPopup.shade.Visible=false
+  elseif not groupPopup.dismissed and not groupPopup.shade.Visible then groupPopup.open() end
+ end
+ pg:GetAttributeChangedSignal("FrontlinesMenuOpen"):Connect(update)
+ pg:GetAttributeChangedSignal("WFInGroup"):Connect(update)
+ window:GetPropertyChangedSignal("Visible"):Connect(update)
+ update()
 end
 
 -- Server messages
+local feedbackPromptAttempted = false
+local feedbackPromptBusy = false
+local function offerGroupFeedback()
+ if mobileDevice() then return end
+	if feedbackPromptAttempted or feedbackPromptBusy or not profile or not profile.groupFeedbackNeeded or not profile.saving then return end
+	feedbackPromptAttempted = true
+	task.spawn(function()
+		local pg = localPlayer:WaitForChild("PlayerGui")
+		while pg.Parent and profile and profile.groupFeedbackNeeded do
+			if pg:GetAttribute("FrontlinesMenuOpen") == true and not window.Visible and not groupPopup.shade.Visible then break end
+			task.wait(1)
+		end
+		if not pg.Parent or not profile or not profile.groupFeedbackNeeded then return end
+		if game:GetService("RunService"):IsStudio() then
+			showToast("Rate War Front", "Roblox's rating prompt is available in the Roblox app. Your group rewards can be claimed there.", { kicker = "GROUP REWARDS", icon = "Alliance", color = ACCENT, seconds = 6 })
+			return
+		end
+		feedbackPromptBusy = true
+		showToast("Support War Front", "Please rate the game in Roblox's prompt, then collect your group rewards.", { kicker = "GROUP REWARDS", icon = "Alliance", color = ACCENT, seconds = 6 })
+		local opened, err = pcall(function()
+			game:GetService("SocialService"):PromptFeedbackSubmissionAsync()
+		end)
+		if opened and pg.Parent then
+			-- A just-completed join check uses the same five-second server cooldown.
+			task.wait(5.1)
+			local ok, result, message = pcall(function() return metaFn:InvokeServer("groupCheck", "feedbackPromptClosed") end)
+			if not ok or result ~= true then
+				showToast("Group rewards", "Please open Rewards and try claiming again.", { icon = "Alliance", color = ACCENT })
+				task.delay(30, function() feedbackPromptAttempted = false end)
+			end
+		else
+			showToast("Rating unavailable", "Roblox could not open the rating prompt. Try Rewards again later.", { icon = "Alliance", color = ACCENT })
+			warn("[War Front] Rating prompt unavailable: " .. tostring(err))
+			-- A manual Rewards check may retry after the cooldown; do not loop prompts.
+			task.delay(30, function() feedbackPromptAttempted = false end)
+		end
+		feedbackPromptBusy = false
+	end)
+end
+
 local function applyProfile(p)
 	if not p then
 		return
 	end
 	profile = p
+	offerGroupFeedback()
 	local pg = localPlayer:FindFirstChild("PlayerGui")
 	if pg then
-		pg:SetAttribute("WFInGroup", p.inGroup == true)
+		pg:SetAttribute("WFInGroup", if p.groupKnown == true then p.inGroup == true else nil)
 	end
-	if p.inGroup == false and p.saving and not groupPopup.shown and not groupPopup.waiting then
+	if p.inGroup == true and groupPopup.close then groupPopup.close() end
+	if p.groupKnown == true and p.inGroup == false and p.saving and not groupPopup.shown and not groupPopup.waiting then
 		-- Once per session: a few seconds after joining, when the main menu is up (never mid-match).
 		groupPopup.waiting = true
 		task.delay(6, function()
@@ -546,7 +654,7 @@ local function applyProfile(p)
 				if profile and profile.inGroup then
 					return
 				end
-				if pg and pg:GetAttribute("FrontlinesMenuOpen") == true and not window.Visible then
+				if profile and profile.groupKnown == true and profile.inGroup == false and pg and pg:GetAttribute("FrontlinesMenuOpen") == true and not window.Visible then
 					groupPopup.open()
 					return
 				end
@@ -568,7 +676,7 @@ metaEvent.OnClientEvent:Connect(function(kind: string, data: any)
 	elseif kind == "reward" then
 		local place = data.placement
 		local suffix = if place == 1 then "st" elseif place == 2 then "nd" elseif place == 3 then "rd" else "th"
-		local title = if data.won then "Victory!" else string.format("You placed %d%s", place, suffix)
+		local title = if data.won then "Victory!" elseif not place then "Participation saved" else string.format("You placed %d%s", place, suffix)
 		showToast(title, if data.vip and data.event then "VIP and event bonus included." elseif data.vip then "VIP bonus included." elseif data.event then "Event bonus included." else "", {
 			kicker = "Match rewards",
 			icon = if data.won then "Crown" else "Leaderboard",
@@ -577,9 +685,12 @@ metaEvent.OnClientEvent:Connect(function(kind: string, data: any)
 	elseif kind == "levelUp" then
 		showToast("Level " .. data, "New colours may be unlocked in the store.", { kicker = "Level up", icon = "UpperLimit", color = MenuKit.C.MALIBU })
 	elseif kind == "daily" then
-		showToast("Day " .. data.day .. " streak", "Come back tomorrow to keep your streak going.", {
-			kicker = "Daily reward",
+		local day = tonumber(data.day) or 1
+		local step = (day - 1) % 7 + 1
+		showToast("Day " .. day .. " streak!", if step == 7 then "Big gift day! A new week of gifts starts tomorrow." else "Come back tomorrow for day " .. (day + 1) .. ". Day 7 is the big gift.", {
+			kicker = "Daily gift",
 			icon = "Gold",
+			art = if step == 7 then "GiftBig" else "Gift",
 			pills = { { text = "+" .. data.coins .. " medals", icon = "Gold" } },
 		})
 	elseif kind == "announce" and type(data) == "table" then
@@ -602,7 +713,7 @@ metaEvent.OnClientEvent:Connect(function(kind: string, data: any)
 		showToast("Thanks for being in the group!", if data.boost then "A new free boost every day you play." else "", {
 			kicker = MetaConfig.GROUP.name .. " reward",
 			icon = "Alliance",
-			color = Color3.fromRGB(20, 205, 185),
+			color = ACCENT,
 			pills = pills,
 		})
 	end

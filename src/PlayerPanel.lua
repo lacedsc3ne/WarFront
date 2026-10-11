@@ -32,13 +32,13 @@ local FlagKit = require(script.Parent:WaitForChild("FlagKit"))
 
 local PlayerPanel = {}
 
-local FONT = Font.fromEnum(Enum.Font.GothamMedium)
+local FONT = Font.fromEnum(Enum.Font.GothamBold)
 local FONT_BOLD = Font.fromEnum(Enum.Font.GothamBold)
 local WHITE = Color3.new(1, 1, 1)
-local ZINC900 = Color3.fromRGB(24, 24, 27)
-local ZINC800 = Color3.fromRGB(39, 39, 42)
-local ZINC700 = Color3.fromRGB(63, 63, 70)
-local ZINC600 = Color3.fromRGB(82, 82, 91)
+local ZINC900 = Color3.fromRGB(5, 22, 40)
+local ZINC800 = Color3.fromRGB(5, 22, 40)
+local ZINC700 = Color3.fromRGB(14, 43, 64)
+local ZINC600 = Color3.fromRGB(14, 43, 64)
 local ZINC400 = Color3.fromRGB(161, 161, 170)
 local ZINC300 = Color3.fromRGB(212, 212, 216)
 local ZINC200 = Color3.fromRGB(228, 228, 231)
@@ -59,7 +59,7 @@ local AMBER_FILL = Color3.fromRGB(234, 179, 8)
 local RELATION_LOOK = {
 	[0] = { "Hostile", Color3.fromRGB(254, 202, 202), RED500, RED400 },
 	[1] = { "Distrustful", Color3.fromRGB(252, 165, 165), Color3.fromRGB(252, 165, 165), Color3.fromRGB(252, 165, 165) },
-	[2] = { "Neutral", ZINC200, Color3.fromRGB(113, 113, 122), ZINC400 },
+	[2] = { "Neutral", ZINC200, Color3.fromRGB(14, 43, 64), ZINC400 },
 	[3] = { "Friendly", Color3.fromRGB(167, 243, 208), Color3.fromRGB(16, 185, 129), EMERALD400 },
 }
 local BUTTON_COLORS = { normal = Color3.fromRGB(240, 240, 240), red = RED400, green = EMERALD400, indigo = INDIGO400, yellow = GOLD }
@@ -69,6 +69,7 @@ local PANEL_W = 360
 local ctx: any = nil
 local gui: ScreenGui
 
+local MatchSkin=require(script.Parent:WaitForChild("MatchSkin"))
 local function make(className: string, props: { [string]: any })
 	local inst = Instance.new(className)
 	for k, v in props do
@@ -79,6 +80,7 @@ local function make(className: string, props: { [string]: any })
 	if props.Parent then
 		inst.Parent = props.Parent
 	end
+	MatchSkin.decorate(inst)
 	return inst
 end
 
@@ -135,7 +137,7 @@ end
 
 local function closeButton(parent: Instance, onClick: () -> (), zindex: number)
 	local b = make("TextButton", {
-		Name = "Close",
+		Name = "ReportBack",
 		AnchorPoint = Vector2.new(1, 0),
 		Position = UDim2.new(1, -10, 0, 10),
 		Size = UDim2.fromOffset(28, 28),
@@ -144,19 +146,20 @@ local function closeButton(parent: Instance, onClick: () -> (), zindex: number)
 		FontFace = FONT_BOLD,
 		TextSize = 14,
 		TextColor3 = WHITE,
-		Text = "X",
+		Text = "",
 		ZIndex = zindex,
 		Parent = parent,
 	})
-	corner(b, 14)
+	corner(b, 4)
+	IconKit.image('Back',{Name='BackArrow',Size=UDim2.fromOffset(16,16),AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.5,.5),ImageColor3=MatchSkin.C.muted,ZIndex=zindex+1,Parent=b})
 	b.MouseEnter:Connect(function()
-		b.BackgroundColor3 = RED500
+		b.BackgroundColor3 = MatchSkin.C.raised
 	end)
 	b.MouseLeave:Connect(function()
 		b.BackgroundColor3 = ZINC700
 	end)
 	b.SelectionGained:Connect(function()
-		b.BackgroundColor3 = RED500
+		b.BackgroundColor3 = MatchSkin.C.raised
 	end)
 	b.SelectionLost:Connect(function()
 		b.BackgroundColor3 = ZINC700
@@ -202,6 +205,22 @@ local function card(name: string, width: number, zindex: number, radius: number?
 	corner(c, radius or 16)
 	local stroke = make("UIStroke", { Color = WHITE, Transparency = 0.95, Thickness = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = c })
 	make("UISizeConstraint", { MaxSize = Vector2.new(width, math.huge), Parent = c })
+	local scale=Instance.new("UIScale");scale.Name="MobileDialogScale";scale.Parent=c
+ local fitting=false
+ local function fitMobile()
+  if fitting then return end;fitting=true
+  local st=require(script.Parent.DeviceLayout).state
+  if st.touch and (st.profile=="phone" or st.profile=="tablet") then
+   c.Size=UDim2.fromOffset(math.min(width,gui.AbsoluteSize.X-24),c.Size.Y.Offset)
+   local height=c.AbsoluteSize.Y/math.max(.01,scale.Scale)
+   scale.Scale=math.min(1,(gui.AbsoluteSize.Y-24)/math.max(1,height))
+  else scale.Scale=1;c.Size=UDim2.fromOffset(width,c.Size.Y.Offset)end
+  fitting=false
+ end
+ local resize=gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitMobile)
+ local contentResize=c:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitMobile)
+ c.Destroying:Connect(function()resize:Disconnect();contentResize:Disconnect()end)
+ fitMobile()
 	return c, stroke
 end
 
@@ -477,7 +496,7 @@ local function buildSendModal()
 		Parent = track,
 	})
 	sendUI.bubble.BackgroundTransparency = 0
-	sendUI.bubble.BackgroundColor3 = Color3.fromRGB(15, 17, 22)
+	sendUI.bubble.BackgroundColor3 = Color3.fromRGB(5, 22, 40)
 	corner(sendUI.bubble, 4)
 	make("UIPadding", { PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6), Parent = sendUI.bubble })
 	local dragging = false
@@ -637,6 +656,7 @@ local function buildPanel()
 	local body = make("Frame", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, ZIndex = 72, Parent = scroll })
 	make("UIPadding", { PaddingLeft = UDim.new(0, 24), PaddingRight = UDim.new(0, 24), PaddingTop = UDim.new(0, 22), PaddingBottom = UDim.new(0, 22), Parent = body })
 	local list = make("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 9), Parent = body })
+ ui.report=label({Name="ReportType",Size=UDim2.new(1,-30,0,18),FontFace=FONT_BOLD,TextSize=10,TextColor3=MatchSkin.C.cyan,TextXAlignment=Enum.TextXAlignment.Left,Text="TERRITORY INTEL",LayoutOrder=0,ZIndex=73,Parent=body})
 	ui.body = body
 	-- The card is as tall as its content, up to 90% of the screen (then it scrolls).
 	local function fit()
@@ -993,6 +1013,8 @@ function PlayerPanel.show(playerId: number)
 	hideEmojiTable()
 	closeSend()
 	panel.open, panel.id, panel.actionsKey, panel.alliesKey = true, playerId, "", ""
+ local mine=ctx.roster[ctx.getMyId()]
+ ui.report.Text=if mine and mine.stats.alive then "TERRITORY INTEL" else "SPECTATING / READ ONLY"
 	-- Identity row (static while open).
 	clearChildren(ui.flagBox, "ImageLabel")
 	local flag = if p.flag and p.flag ~= "" then FlagKit.image(p.flag, { Size = UDim2.fromScale(1, 1), ScaleType = Enum.ScaleType.Crop, ZIndex = 74, Parent = ui.flagBox }) else nil

@@ -26,10 +26,10 @@ local MenuKit = require(script.Parent:WaitForChild("MenuKit"))
 
 local BoostsPanel = {}
 
-local FONT = Font.fromEnum(Enum.Font.GothamMedium)
+local FONT = Font.fromEnum(Enum.Font.GothamBold)
 local FONT_BOLD = Font.fromEnum(Enum.Font.GothamBold)
 local WHITE = Color3.new(1, 1, 1)
-local GRAY800 = Color3.fromRGB(31, 41, 55)
+local GRAY800 = Color3.fromRGB(14, 43, 64)
 local C = MenuKit.C
 
 local localPlayer = Players.LocalPlayer
@@ -39,6 +39,7 @@ local state = {
 	counts = {} :: { [string]: number },
 	readyAt = {} :: { [string]: number }, -- key -> game seconds of fighting when it's usable again
 	prices = {} :: { [string]: number },
+	icons = {} :: { [string]: number }, -- Night: product picture ids (from the same product lookup)
 	phase = "Lobby",
 	ranked = false,
 	msg = "",
@@ -49,6 +50,7 @@ local state = {
 }
 local ui: any = {}
 
+local MatchSkin=require(script.Parent:WaitForChild("MatchSkin"))
 local function make(className: string, props: { [string]: any })
 	local inst = Instance.new(className)
 	for k, v in props do
@@ -59,6 +61,7 @@ local function make(className: string, props: { [string]: any })
 	if props.Parent then
 		inst.Parent = props.Parent
 	end
+	MatchSkin.decorate(inst)
 	return inst
 end
 
@@ -97,6 +100,9 @@ local function grey(act: TextButton, text: string)
 	act.AutoButtonColor = false
 end
 
+-- Night names (same as the shop).
+local NIGHT_NAMES = { goldCrate = "Gold crate", reinforcements = "Reinforcements", shield = "Shield", nukeVoucher = "Free nuke", revive = "Extra revive" }
+
 local function refresh()
 	if not ui.button then
 		return
@@ -121,8 +127,8 @@ local function refresh()
 		elseif n > 0 and why then
 			grey(act, why)
 		elseif n > 0 then
-			act.Text = "Use"
-			act.BackgroundColor3 = C.MALIBU
+			act.Text = "Use " .. n .. "x"
+			act.BackgroundColor3 = MatchSkin.C.cyan
 			act.AutoButtonColor = true
 		elseif b.id == 0 then
 			grey(act, "Store")
@@ -130,10 +136,41 @@ local function refresh()
 			-- None owned: buy one now (works any time outside ranked).
 			local price = state.prices[b.key]
 			act.Text = if price then "R$ " .. price else "Buy"
-			act.BackgroundColor3 = C.EMERALD500
+			act.BackgroundColor3 = MatchSkin.C.gold
 			act.AutoButtonColor = true
 		end
+		-- Owning some no longer hides buying: a small Robux button sits next to Use (owner, 11 Oct 2026).
+		local canBuy = n > 0 and b.id ~= 0 and not state.ranked
+		local price = state.prices[b.key]
+		row.buy.Visible = canBuy
+		row.buy.Text = if price then "R$ " .. price else "Buy"
+		if canBuy then
+			act.AnchorPoint, act.Position, act.Size = Vector2.new(0, 1), UDim2.new(0, 8, 1, -4), UDim2.new(1, -80, 0, 25)
+		else
+			act.AnchorPoint, act.Position, act.Size = Vector2.new(0.5, 1), UDim2.new(0.5, 0, 1, -4), UDim2.new(1, -16, 0, 25)
+		end
+		act.TextColor3=if act.AutoButtonColor then Color3.new(0,0,0) else MatchSkin.C.white
 		row.icon.ImageTransparency = if act.AutoButtonColor then 0 else 0.4
+		if MatchSkin.night then
+			-- Night: yellow "Use", green Robux price (like the shop), the boost's own picture.
+			local K = MatchSkin.Kit.C
+			if act.AutoButtonColor then
+				local using = n > 0
+				act.Text = if using then (if n > 1 then "Use (" .. n .. ")" else "Use") else act.Text
+				act.BackgroundColor3 = if using then K.YELLOW else K.GREEN
+				act.TextColor3 = if using then K.YELLOW_TEXT else K.GREEN_TEXT
+			else
+				act.BackgroundColor3, act.TextColor3 = K.DEEP, K.MUTED
+			end
+			row.buy.BackgroundColor3, row.buy.TextColor3 = K.GREEN, K.GREEN_TEXT
+			local image = state.icons[b.key]
+			if row.art then
+				row.art.Visible = image ~= nil
+				row.art.Image = if image then "rbxassetid://" .. image else ""
+				row.art.ImageTransparency = row.icon.ImageTransparency
+				row.icon.Visible = image == nil
+			end
+		end
 	end
 	ui.status.Text = state.msg
 	ui.status.Visible = state.msg ~= "" or ui.tipFor ~= nil
@@ -150,7 +187,7 @@ local function onAction(b)
 		return
 	end
 	if (state.counts[b.key] or 0) > 0 then
-		if blocked() then
+		if blocked() or (state.readyAt[b.key] or 0) > elapsedNow() then
 			return
 		end
 		state.msg = ""
@@ -164,11 +201,12 @@ end
 -- crown button in the top-right bar folds it away and back.
 local function build(c)
 	ui.button, ui.net = c.button, c.net
-	local panel = make("Frame", {
+	local panel = make("ScrollingFrame", {
+  CanvasSize=UDim2.fromOffset(0,0),AutomaticCanvasSize=Enum.AutomaticSize.Y,ScrollingDirection=Enum.ScrollingDirection.Y,ScrollBarThickness=3,ClipsDescendants=true,
 		Name = "BoostsPanel",
 		AnchorPoint = Vector2.new(1, 0),
-		Size = UDim2.fromOffset(0, 0),
-		AutomaticSize = Enum.AutomaticSize.XY,
+		Size = UDim2.fromOffset(320, 232),
+		AutomaticSize = Enum.AutomaticSize.None,
 		BackgroundColor3 = GRAY800,
 		BackgroundTransparency = 0.08,
 		BorderSizePixel = 0,
@@ -180,24 +218,29 @@ local function build(c)
 	corner(panel, 8)
 	make("UIPadding", { PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6), PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6), Parent = panel })
 	make("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, HorizontalAlignment = Enum.HorizontalAlignment.Right, Padding = UDim.new(0, 4), Parent = panel })
-	local tiles = make("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(0, 62), AutomaticSize = Enum.AutomaticSize.X, LayoutOrder = 1, ZIndex = 41, Parent = panel })
-	make("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 4), Parent = tiles })
+	local header=make("Frame",{Name="Header",Size=UDim2.fromOffset(308,24),BackgroundTransparency=1,LayoutOrder=0,ZIndex=41,Parent=panel})
+ make("TextLabel",{BackgroundTransparency=1,Text="BOOSTS",FontFace=FONT_BOLD,TextSize=13,TextColor3=MatchSkin.C.white,TextXAlignment=Enum.TextXAlignment.Left,Size=UDim2.fromOffset(240,24),ZIndex=42,Parent=header})
+ local back=make("TextButton",{Name="Close",BackgroundTransparency=1,Text="",Position=UDim2.fromOffset(280,0),Size=UDim2.fromOffset(24,24),ZIndex=43,Parent=header})
+ back.Activated:Connect(function() state.collapsed=true;refresh() end)
+ local tiles = make("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(308,192), LayoutOrder = 1, ZIndex = 41, Parent = panel })
+	make("UIGridLayout",{CellSize=UDim2.fromOffset(150,92),CellPadding=UDim2.fromOffset(8,8),SortOrder=Enum.SortOrder.LayoutOrder,Parent=tiles})
 	ui.rows = {}
 	for i, b in MetaConfig.BOOSTS do
-		local tile = make("Frame", { BackgroundColor3 = C.WHITE, BackgroundTransparency = 0.95, Size = UDim2.fromOffset(56, 62), LayoutOrder = i, ZIndex = 41, Parent = tiles })
+		local tile = make("Frame", { Name="BoostCard",BackgroundColor3 = MatchSkin.C.raised, BackgroundTransparency = 0, Size = UDim2.fromOffset(150,92), LayoutOrder = i, ZIndex = 41, Parent = tiles })
+ make("TextLabel",{BackgroundTransparency=1,Size=UDim2.fromOffset(102,16),Position=UDim2.fromOffset(10,8),FontFace=FONT_BOLD,TextSize=10,TextColor3=MatchSkin.C.white,Text=string.upper(b.name),TextTruncate=Enum.TextTruncate.AtEnd,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=43,Parent=tile})
 		corner(tile, 6)
 		make("UIStroke", { Color = C.WHITE, Transparency = 0.9, Thickness = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = tile })
-		local icon = IconKit.image(b.icon or "Gold", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 6), Size = UDim2.fromOffset(24, 24), ZIndex = 42, Parent = tile })
+		local icon = IconKit.image(b.icon or "Gold", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 29), Size = UDim2.fromOffset(25, 25), ZIndex = 42, Parent = tile })
 		local count = make("TextLabel", { BackgroundColor3 = C.CYBER, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -2, 0, 2), Size = UDim2.fromOffset(0, 14), AutomaticSize = Enum.AutomaticSize.X, FontFace = FONT_BOLD, TextSize = 10, TextColor3 = C.BLACK, Text = "x0", Visible = false, ZIndex = 43, Parent = tile })
 		corner(count, 7)
 		make("UIPadding", { PaddingLeft = UDim.new(0, 3), PaddingRight = UDim.new(0, 3), Parent = count })
-		local action = make("TextButton", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -4), Size = UDim2.new(1, -6, 0, 22), BackgroundColor3 = C.MALIBU, FontFace = FONT_BOLD, TextSize = 11, TextColor3 = WHITE, Text = "Use", ZIndex = 42, Parent = tile })
+		local action = make("TextButton", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -4), Size = UDim2.new(1, -16, 0, 25), BackgroundColor3 = C.MALIBU, FontFace = FONT_BOLD, TextSize = 11, TextColor3 = WHITE, Text = "Use", ZIndex = 42, Parent = tile })
 		corner(action, 5)
 		action.Activated:Connect(function()
 			onAction(b)
 		end)
-		-- Hovering a tile shows what the boost does under the strip.
-		local hit = make("TextButton", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 1, -26), Text = "", ZIndex = 44, Parent = tile })
+		-- The whole card activates the same use/purchase action; hover still shows its description.
+		local hit = make("TextButton", { Name="CardClickTarget", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Text = "", ZIndex = 44, Parent = tile })
 		hit.MouseEnter:Connect(function()
 			ui.tipFor = b
 			refresh()
@@ -209,13 +252,38 @@ local function build(c)
 			end
 		end)
 		hit.Activated:Connect(function()
-			-- Touch / gamepad: tapping the icon shows the description.
-			ui.tipFor = if ui.tipFor == b then nil else b
-			refresh()
+			onAction(b)
 		end)
-		ui.rows[b.key] = { count = count, action = action, icon = icon }
+		-- Robux buy button beside Use (only shown while you own some; above the card's click target).
+		local buy = make("TextButton", { Name = "Buy", AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -8, 1, -4), Size = UDim2.fromOffset(62, 25), BackgroundColor3 = MatchSkin.C.gold, FontFace = FONT_BOLD, TextSize = 11, TextColor3 = Color3.new(0, 0, 0), Text = "Buy", Visible = false, ZIndex = 45, Parent = tile })
+		corner(buy, 5)
+		buy.Activated:Connect(function()
+			if not state.ranked and b.id ~= 0 then
+				MarketplaceService:PromptProductPurchase(localPlayer, b.id)
+			end
+		end)
+		local art = nil
+		if MatchSkin.night then
+			buy.FontFace = MatchSkin.Kit.F.TITLE
+			buy.TextSize = 12
+			buy:FindFirstChildWhichIsA("UICorner").CornerRadius = UDim.new(0.5, 0)
+			-- Night: plain name, the product's own picture (filled in by fetchPrices), pill buttons.
+			for _, v in tile:GetChildren() do
+				if v:IsA("TextLabel") and v.Text == string.upper(b.name) then
+					v.Text = NIGHT_NAMES[b.key] or b.name
+					v.TextSize = 13
+					v.FontFace = MatchSkin.Kit.F.TITLE
+				end
+			end
+			art = make("ImageLabel", { Name = "BoostArt", BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 25), Size = UDim2.fromOffset(34, 34), ScaleType = Enum.ScaleType.Fit, Visible = false, ZIndex = 42, Parent = tile })
+			corner(art, 8)
+			action.FontFace = MatchSkin.Kit.F.TITLE
+			action.TextSize = 13
+			action:FindFirstChildWhichIsA("UICorner").CornerRadius = UDim.new(0.5, 0)
+		end
+		ui.rows[b.key] = { count = count, action = action, icon = icon, art = art, buy = buy }
 	end
-	ui.status = make("TextLabel", { BackgroundTransparency = 1, Size = UDim2.fromOffset(4 * 56 + 3 * 4, 0), AutomaticSize = Enum.AutomaticSize.Y, FontFace = FONT, TextSize = 11, TextColor3 = C.AMBER300, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, Text = "", Visible = false, LayoutOrder = 2, ZIndex = 41, Parent = panel })
+	ui.status = make("TextLabel", { BackgroundTransparency = 1, Size = UDim2.fromOffset(308, 0), AutomaticSize = Enum.AutomaticSize.Y, FontFace = FONT, TextSize = 11, TextColor3 = C.AMBER300, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, Text = "", Visible = false, LayoutOrder = 2, ZIndex = 41, Parent = panel })
 	ui.panel = panel
 
 	ui.button.Activated:Connect(function()
@@ -230,10 +298,14 @@ local function fetchPrices()
 		if b.id ~= 0 then
 			task.spawn(function()
 				local ok, info = pcall(function()
-					return MarketplaceService:GetProductInfo(b.id, Enum.InfoType.Product)
+					return MarketplaceService:GetProductInfoAsync(b.id, Enum.InfoType.Product)
 				end)
 				if ok and type(info) == "table" and tonumber(info.PriceInRobux) then
 					state.prices[b.key] = tonumber(info.PriceInRobux)
+					local image = tonumber(info.IconImageAssetId)
+					if image and image > 0 then
+						state.icons[b.key] = image
+					end
 					refresh()
 				end
 			end)
@@ -301,6 +373,7 @@ function BoostsPanel.setup(c)
 		end
 	end)
 	playerGui:GetAttributeChangedSignal("WFReplay"):Connect(refresh)
+ playerGui:GetAttributeChangedSignal("WFMatchModal"):Connect(function() if playerGui:GetAttribute("WFMatchModal") then BoostsPanel.collapse() end end)
 	refresh()
 	-- Count down "In 12s".
 	task.spawn(function()
@@ -312,6 +385,11 @@ function BoostsPanel.setup(c)
 		end
 	end)
 	return ui.panel
+end
+
+function BoostsPanel.collapse()
+ state.collapsed=true
+ if ui.panel then ui.panel.Visible=false end
 end
 
 return BoostsPanel

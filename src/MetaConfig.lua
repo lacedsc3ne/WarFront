@@ -18,6 +18,11 @@ end
 MetaConfig.GAMEPASS = {
 	VIP = 2008730377, -- x1.5 XP and coins, gold name, VIP tag (199 R$)
 	AllColors = 2008508400, -- unlocks every territory colour (299 R$)
+	-- Season pass Gold row (ServerScriptService.Quests GOLD rewards). 0 = not on sale: the gold row
+	-- shows as locked. Passes belong to one experience: 2025902661 is the TEST experience's pass
+	-- (created 11 Oct 2026, 199 R$); make a live one before release and use it for the live GameId.
+	-- Live pass 2026424659 (universe 10769499668) was created off sale: put it on sale when this update ships.
+	GoldPass = if game.GameId == 10769671248 then 2025902661 elseif game.GameId == 10769499668 then 2026424659 else 0,
 }
 MetaConfig.PRODUCTS = {
 	{ id = 3716869826, coins = 500, label = "500 medals" }, -- 35 R$
@@ -52,7 +57,7 @@ MetaConfig.BOOSTS = {
 	{ key = "nukeVoucher", id = 3716871701, coins = 800, name = "Nuke Voucher", desc = "Your next Atom Bomb is free (needs a silo)", icon = "AtomBomb" }, -- 49 R$
 }
 MetaConfig.BOOST_DELAY = 0 -- seconds after the spawn phase before boosts can be used (none: bought = usable)
-MetaConfig.BOOST_COOLDOWN = 10 -- seconds between two uses of the same boost (stops accidental double use)
+MetaConfig.BOOST_COOLDOWN = 0 -- seconds between two uses of the same boost (owner removed the wait, 11 Oct 2026; was 10)
 MetaConfig.BOOST_GOLD = 100000
 MetaConfig.BOOST_TROOPS = 0.25 -- Reinforcements: +25% of max troops now, max troops x1.25 ...
 MetaConfig.BOOST_TROOPS_SECONDS = 60 -- ... for this long

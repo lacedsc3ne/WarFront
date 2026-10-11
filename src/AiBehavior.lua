@@ -197,7 +197,7 @@ end
 
 -- shouldAttack: tribes attack anyone; nations hold back against humans now and then.
 function B.shouldAttack(p, targetId: number): boolean
-	local q = ctx.players()[targetId]
+ local q = ctx.players()[targetId]
 	if targetId == 0 or not q or q.kind ~= "Human" or Diplomacy.isTraitor(targetId, ctx.tick()) or p.kind == "Bot" then
 		return true
 	end

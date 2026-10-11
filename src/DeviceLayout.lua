@@ -9,7 +9,7 @@
 -- DeviceLayout.state (live, shared by every client script):
 --   input   "KeyboardMouse" | "Touch" | "Gamepad"   (last input actually used)
 --   size    "Phone" | "Tablet" | "Desktop"           (from the screen size)
---   tv      GuiService:IsTenFootInterface()
+--   tv      (GuiService.ViewportDisplaySize == Enum.DisplaySize.Large)
 --   profile "phone" | "tablet" | "console" | "desktop" (what the layouts switch on)
 --   scale   UIScale factor for 10-foot UI (1 elsewhere)
 --   screen  full screen size in points
@@ -110,7 +110,7 @@ end
 
 local function recompute(force: boolean?)
 	local s = screenSize()
-	local tv = GuiService:IsTenFootInterface()
+	local tv = (GuiService.ViewportDisplaySize == Enum.DisplaySize.Large)
 	local touch = UserInputService.TouchEnabled
 	local short = math.min(s.X, s.Y)
 
@@ -159,7 +159,7 @@ end
 do
 	local initial = inputKind(UserInputService:GetLastInputType())
 	if not initial then
-		if GuiService:IsTenFootInterface() then
+		if (GuiService.ViewportDisplaySize == Enum.DisplaySize.Large) then
 			initial = "Gamepad"
 		elseif UserInputService.TouchEnabled and not UserInputService.MouseEnabled then
 			initial = "Touch"
@@ -170,6 +170,10 @@ do
 	state.input = initial
 	recompute(false)
 end
+
+GuiService:GetPropertyChangedSignal("ViewportDisplaySize"):Connect(function()
+	recompute(true)
+end)
 
 UserInputService.LastInputTypeChanged:Connect(function(t)
 	setInput(inputKind(t))
@@ -318,6 +322,7 @@ DeviceLayout.relayout = queueLayout
 
 -- Closes the phone leaderboard if it's open. Returns true if something was closed.
 function DeviceLayout.closePopups(): boolean
+	if matchRefs and matchRefs.cornerHud then return matchRefs.cornerHud.close() end
 	if matchRefs and state.profile == "phone" and boardOpen then
 		boardOpen = false
 		queueLayout()
@@ -328,6 +333,7 @@ end
 
 -- The leaderboard header's stats button collapses / expands the table (per device class).
 function DeviceLayout.toggleBoard()
+	if matchRefs and matchRefs.cornerHud then matchRefs.cornerHud.toggleBoard(); return end
 	if state.profile == "phone" then
 		boardOpen = not boardOpen
 	else
@@ -475,6 +481,7 @@ end
 
 function layoutMatch()
 	local r = matchRefs
+	if r.cornerHud then r.cornerHud.layout(r); return end
 	local gui: ScreenGui = r.gui
 	local X, Y = gui.AbsoluteSize.X, gui.AbsoluteSize.Y
 	if X < 2 or Y < 2 then
@@ -740,6 +747,10 @@ function DeviceLayout.bindMatchUI(refs)
 	gui:GetPropertyChangedSignal("AbsolutePosition"):Connect(queueLayout)
 	probe:GetPropertyChangedSignal("AbsolutePosition"):Connect(queueLayout)
 	layoutMatch()
+end
+
+function DeviceLayout.setCornerHud(api)
+ if matchRefs then matchRefs.cornerHud=api;api.layout(matchRefs) end
 end
 
 return DeviceLayout

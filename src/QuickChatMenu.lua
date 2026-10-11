@@ -103,7 +103,7 @@ local PHRASES = {
 QuickChat.CATEGORIES = CATEGORIES
 QuickChat.PHRASES = PHRASES
 
-local FONT = Font.fromEnum(Enum.Font.GothamMedium)
+local FONT = Font.fromEnum(Enum.Font.GothamBold)
 local FONT_BOLD = Font.fromEnum(Enum.Font.GothamBold)
 local WHITE = Color3.new(1, 1, 1)
 local OPTION = Color3.fromHex("#333333")
@@ -143,6 +143,7 @@ function QuickChat.text(phraseKey: string, targetName: string?): string?
 	return p.text
 end
 
+local MatchSkin=require(script.Parent:WaitForChild("MatchSkin"))
 local function make(className: string, props: { [string]: any })
 	local inst = Instance.new(className)
 	for k, v in props do
@@ -153,6 +154,7 @@ local function make(className: string, props: { [string]: any })
 	if props.Parent then
 		inst.Parent = props.Parent
 	end
+	MatchSkin.decorate(inst)
 	return inst
 end
 
@@ -309,6 +311,13 @@ local function build()
 	local dim = make("TextButton", { Name = "QuickChatDim", Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.4, AutoButtonColor = false, Text = "", Selectable = false, Visible = false, ZIndex = 90, Parent = gui })
 	local card = make("Frame", { Name = "QuickChat", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(600, 460), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.3, Active = true, Visible = false, ZIndex = 91, Parent = gui })
 	corner(card, 16)
+ local function fitMobile()
+  local st=require(script.Parent.DeviceLayout).state
+  card.Size=if st.touch and (st.profile=="phone" or st.profile=="tablet") then UDim2.fromOffset(math.min(600,gui.AbsoluteSize.X-24),math.min(460,gui.AbsoluteSize.Y-24)) else UDim2.fromOffset(600,460)
+ end
+ local resize=gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitMobile)
+ card.Destroying:Connect(function()resize:Disconnect()end)
+ fitMobile()
 	make("UIStroke", { Color = WHITE, Transparency = 0.9, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = card })
 	make("UISizeConstraint", { MaxSize = Vector2.new(640, 520), Parent = card })
 	make("TextLabel", { Position = UDim2.fromOffset(22, 14), Size = UDim2.new(1, -80, 0, 32), BackgroundTransparency = 1, FontFace = FONT_BOLD, TextSize = 24, TextColor3 = WHITE, TextXAlignment = Enum.TextXAlignment.Left, Text = "Quick Chat", ZIndex = 92, Parent = card })
@@ -335,7 +344,7 @@ local function build()
 	ui.playerList.Position = UDim2.fromOffset(0, 24 + 64)
 	ui.playerList.Size = UDim2.new(1, 0, 1, -24 - 64)
 	ui.sortToggle = make("TextButton", { Position = UDim2.fromOffset(0, 24), Size = UDim2.new(1, 0, 0, 24), BackgroundTransparency = 1, FontFace = FONT, TextSize = 13, TextColor3 = WHITE, TextXAlignment = Enum.TextXAlignment.Left, Text = "", ZIndex = 93, Parent = ui.playerCol })
-	ui.search = make("TextBox", { Position = UDim2.fromOffset(0, 52), Size = UDim2.new(1, -4, 0, 30), BackgroundColor3 = WHITE, TextColor3 = Color3.new(0, 0, 0), PlaceholderText = "Search player...", PlaceholderColor3 = Color3.fromRGB(110, 110, 110), FontFace = FONT, TextSize = 14, ClearTextOnFocus = false, Text = "", TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 93, Parent = ui.playerCol })
+	ui.search = make("TextBox", { Position = UDim2.fromOffset(0, 52), Size = UDim2.new(1, -4, 0, 30), BackgroundColor3 = WHITE, TextColor3 = Color3.new(0, 0, 0), PlaceholderText = "Search player...", PlaceholderColor3 = Color3.fromRGB(14, 43, 64), FontFace = FONT, TextSize = 14, ClearTextOnFocus = false, Text = "", TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 93, Parent = ui.playerCol })
 	corner(ui.search, 4)
 	make("UIStroke", { Color = Color3.fromHex("#666666"), ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = ui.search })
 	make("UIPadding", { PaddingLeft = UDim.new(0, 8), Parent = ui.search })

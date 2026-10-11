@@ -46,7 +46,7 @@ function AlertFrame.mount(gui: Instance)
 	f.ZIndex = 40
 	f.Visible = false
 	local s = Instance.new("UIStroke")
-	s.Thickness = 17
+	s.Thickness = 6
 	s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 	s.Transparency = 1
 	s.Parent = f
@@ -63,8 +63,8 @@ local function activate(color: Color3)
 		tween:Cancel()
 	end
 	-- UIStroke draws outside the frame: inset it so the 17 px band sits on the screen edge.
-	frame.Position = UDim2.fromOffset(17, 17)
-	frame.Size = UDim2.new(1, -34, 1, -34)
+	frame.Position = UDim2.fromOffset(6, 6)
+	frame.Size = UDim2.new(1, -12, 1, -12)
 	stroke.Color = color
 	stroke.Transparency = 1
 	frame.Visible = true

@@ -25,11 +25,13 @@ local UserInputService = game:GetService("UserInputService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local MapUtil = require(Shared:WaitForChild("MapUtil"))
+local InGameLayoutCatalog = require(Shared:WaitForChild("InGameLayoutCatalog"))
 local DeviceLayout = require(script.Parent:WaitForChild("DeviceLayout"))
 
 local Settings = {}
 
 local DEFAULTS = {
+	inGameUILayout = "Default",
 	terrainShading = true,
 	nameLabels = true,
 	structureIcons = true,
@@ -62,7 +64,7 @@ local DEFAULTS = {
 	attackRatioIncrement = 10, -- % per T / Y press and Shift + wheel step
 	nukeAllySafety = 5, -- ticks: a nuke that would hit an alliance this new is held back once
 	emojis = true, -- show emojis in game
-	perfOverlay = false, -- performance overlay (Shift + D)
+	perfOverlay = false, -- performance overlay (F3)
 	muteOnBlur = false, -- silence the game while the window is not focused
 	alertsWhenUnfocused = true, -- ... but keep alerts audible
 	keybinds = "", -- JSON action -> key overrides (KeybindData)
@@ -97,6 +99,10 @@ local function clean(key: string, v: any): any
 	end
 	if type(d) == "boolean" then
 		return if type(v) == "boolean" then v else nil
+	end
+	if key == "inGameUILayout" then
+		local entry = InGameLayoutCatalog.find(v)
+		return if entry then entry.id else nil
 	end
 	if type(d) == "string" then
 		return if type(v) == "string" and #v <= (if key == "keybinds" then 2000 else 300) then v else nil

@@ -123,6 +123,25 @@ local function isShore(map, t: number): boolean
 	return false
 end
 
+-- Ports (OpenFront isOceanShore): land next to OCEAN water, so lakes inside a country don't count.
+-- Terrain byte bit 5 = ocean (MapUtil).
+local function isOceanShore(map, t: number): boolean
+	if not MapUtil.isLand(map, t) then
+		return false
+	end
+	local n = MapUtil.neighbors(map, t, NB2)
+	for i = 1, n do
+		local w = NB2[i]
+		if not MapUtil.isLand(map, w) and bit32.band(buffer.readu8(map.terrain, w), 32) ~= 0 then
+			return true
+		end
+	end
+	return false
+end
+CoreRules.isOceanShore = function(t: number): boolean
+	return isOceanShore(mapNow(), t)
+end
+
 -- Own tiles reachable from `tile` through own tiles inside the search radius, that keep the
 -- minimum distance to every structure (any owner, incl. under construction), nearest first.
 local function validSpawnTiles(p, tile: number): { number }
@@ -216,7 +235,7 @@ function CoreRules.spawnTile(p, tile: number, kind: string): number?
 			local x, y = cx + dx, cy + dy
 			if d <= r and d < bestD and x >= 0 and x < W and y >= 0 and y < H then
 				local t = y * W + x
-				if validSet[t] and isShore(map, t) then
+				if validSet[t] and isOceanShore(map, t) then
 					best, bestD = t, d
 				end
 			end
@@ -399,27 +418,44 @@ function CoreRules.handleDeadDefender(attacker, defender)
 	local map = mapNow()
 	local getOwner = ctx.getOwner
 	local players = ctx.players()
-	-- Collect the defender's tiles: flood from its border tiles through its own land.
+	-- Collect all remnant tiles, including offshore components. Every component has a tile in the
+	-- defender's border set (GameServer keeps it exact on each ownership change), so flood from
+	-- there instead of scanning the whole map; if that ever misses tiles, scan the map as before.
 	local tiles, seen = {}, {}
 	local stack = {}
-	for t in pairs(defender.border) do
-		if not seen[t] then
-			seen[t] = true
-			stack[#stack + 1] = t
-		end
-	end
-	while #stack > 0 do
-		local t = table.remove(stack)
-		tiles[#tiles + 1] = t
-		local n = MapUtil.neighbors(map, t, NB)
-		for i = 1, n do
-			local nt = NB[i]
-			if not seen[nt] and getOwner(nt) == defender.id then
-				seen[nt] = true
-				stack[#stack + 1] = nt
+	local function flood()
+		while #stack > 0 do
+			local t = table.remove(stack)
+			tiles[#tiles + 1] = t
+			local n = MapUtil.neighbors(map, t, NB)
+			for i = 1, n do
+				local nt = NB[i]
+				if not seen[nt] and getOwner(nt) == defender.id then
+					seen[nt] = true
+					stack[#stack + 1] = nt
+				end
 			end
 		end
 	end
+	for t in pairs(defender.border or {}) do
+		if not seen[t] and getOwner(t) == defender.id then
+			seen[t] = true
+			stack[#stack + 1] = t
+			flood()
+		end
+	end
+	if #tiles < defender.tiles then
+		for t = 0, map.size - 1 do
+			if not seen[t] and getOwner(t) == defender.id then
+				seen[t] = true
+				stack[#stack + 1] = t
+				flood()
+			end
+		end
+	end
+	-- Same order as the former full scan produced (highest tile first), so the transfer passes
+	-- below hand tiles to the same neighbours.
+	table.sort(tiles, function(x, y) return x > y end)
 	for _ = 1, 100 do
 		local progressed = false
 		for _, t in tiles do
@@ -450,6 +486,11 @@ function CoreRules.handleDeadDefender(attacker, defender)
 		if not progressed then
 			break
 		end
+	end
+	-- Conquest has already been awarded. Finish isolated islands too, so the
+	-- player reaches zero tiles and the caller can eliminate them normally.
+	for _, t in tiles do
+		if getOwner(t) == defender.id then ctx.setOwner(t, attacker.id) end
 	end
 end
 
@@ -814,3 +855,4 @@ function CoreRules.step()
 end
 
 return CoreRules
+

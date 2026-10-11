@@ -29,6 +29,10 @@
 -- MapMarkers.setGhost(g, zoom)               build ghost under the cursor (see setGhost), nil hides
 
 local IconKit = require(script.Parent:WaitForChild("IconKit"))
+local Art = require(script.Parent:WaitForChild("NightMenu"):WaitForChild("Art"))
+-- Owner's full-colour icons on the markers (11 Oct 2026): the shape keeps the owner's colour, the
+-- picture replaces the small white glyph. Off with workspace attribute WFNightMarkerArt = false.
+local MARKER_ART = workspace:GetAttribute("WFNightMarkerArt") ~= false
 local Ballistics = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Ballistics"))
 local SharedConfig = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Config"))
 local DELETION_SECONDS = SharedConfig.DELETION_MARK_TICKS * SharedConfig.TICK
@@ -145,17 +149,25 @@ local function tint(img: ImageLabel, c: Color3)
 	end
 end
 
+-- Icons never get smaller than MIN_ICON_PX on screen (owner, 11 Oct 2026: real icons, not dots).
+-- Zoomed out, though, icons pile on top of each other (owner: "a lot of buildings are visible"):
+-- once buildings at the minimum spacing would be closer than about an icon on screen, each one is
+-- a small dot in its owner's colour instead, so you still see where buildings are. Zoom in and
+-- the icons come back.
+local MIN_ICON_PX = 22
+local DOT_PX = 11
 local function sizeFor(zoom: number): (number, boolean)
+	if zoom * SharedConfig.MIN_STRUCTURE_DISTANCE < MIN_ICON_PX * 0.8 then
+		return DOT_PX, false
+	end
 	local z = zoom / ZOOM_EQUIV
 	local iconScale
-	if z <= DOTS_ZOOM then
-		return ICON_SIZE * DOT_SCALE, false
-	elseif z >= GROW_ZOOM then
+	if z >= GROW_ZOOM then
 		iconScale = z / GROW_ZOOM
 	else
 		iconScale = math.min(1, z / SCALE_FACTOR)
 	end
-	return ICON_SIZE * iconScale, true
+	return math.max(MIN_ICON_PX, ICON_SIZE * iconScale), true
 end
 
 -- Dashed ring: a rotating holder with dashes laid around its edge (sizes by scale, so it follows
@@ -263,7 +275,19 @@ local function newMarker(kind: string)
 	if icon:FindFirstChild("IconGlyph") and SHAPES[kind] then
 		IconKit.set(icon, IconKit.KIND[kind] or "City")
 	end
-	return { outer = outer, inner = inner, icon = icon, kind = kind, scale = shape.scale }
+	if MARKER_ART and Art.has(kind) then
+		local glyph = icon:FindFirstChild("IconGlyph")
+		if glyph then
+			glyph:Destroy()
+		end
+		Art.set(icon, kind)
+		icon.ScaleType = Enum.ScaleType.Fit
+		icon.ImageColor3 = Color3.new(1, 1, 1)
+		icon.BackgroundTransparency = 1
+		local a = 0.8 / shape.scale -- leaves a rim of the owner's colour showing
+		icon.Size = UDim2.fromScale(a, a)
+	end
+	return { outer = outer, inner = inner, icon = icon, kind = kind, scale = shape.scale, art = MARKER_ART and Art.has(kind) }
 end
 
 -- StructureLevelPass: the level number (level > 1) in white with a dark outline, just above the
@@ -324,7 +348,13 @@ local function borderColor(owner: number): Color3
 end
 
 local function styleMarker(m, owner: number, done: boolean)
-	if done then
+	if done and m.art then
+		-- Picture markers: a bright rim in the owner's colour (full value, a bit more saturated)
+		-- with a dark edge of the same hue, so whose building it is reads at a glance.
+		local h, sat, _ = ownerColor(owner):ToHSV()
+		tint(m.inner, Color3.fromHSV(h, math.min(1, sat * 1.15 + 0.05), 1))
+		tint(m.outer, Color3.fromHSV(h, math.min(1, sat + 0.1), 0.3))
+	elseif done then
 		local c = ownerColor(owner)
 		tint(m.inner, darken(c, FILL_DARKEN))
 		tint(m.outer, darken(borderColor(owner), BORDER_DARKEN))
@@ -788,7 +818,11 @@ function MapMarkers.setGhost(g, zoom: number)
 		local icon = ghostExtra.icon
 		if not icon then
 			-- Kind -> icon name (HydrogenBomb is "HBomb" in IconKit).
-			icon = IconKit.image(IconKit.KIND[g.kind] or g.kind, { Name = "BuildGhostIcon", AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(26, 26), ImageTransparency = 0.15, ZIndex = 4, Parent = ctx.layer })
+			if MARKER_ART and Art.has(g.kind) then
+				icon = Art.image(g.kind, { Name = "BuildGhostIcon", AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(34, 34), ImageTransparency = 0.1, ZIndex = 4, Parent = ctx.layer })
+			else
+				icon = IconKit.image(IconKit.KIND[g.kind] or g.kind, { Name = "BuildGhostIcon", AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(26, 26), ImageTransparency = 0.15, ZIndex = 4, Parent = ctx.layer })
+			end
 			ghostExtra.icon, ghostExtra.kind = icon, g.kind
 		end
 		icon.Position = xyScale(g.x - 0.5, g.y - 0.5)

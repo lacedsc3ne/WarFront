@@ -20,7 +20,7 @@
 
 local AttackLabels = {}
 
-local OUTGOING = Color3.fromHex("#3fa9f5")
+local OUTGOING = Color3.fromRGB(0,177,235)
 local INCOMING = Color3.fromHex("#f87171")
 -- OpenFront animates 250 ms between 200 ms polls; our server updates every 500 ms, so the glide
 -- spans the whole interval to stay continuous.

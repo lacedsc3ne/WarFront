@@ -123,7 +123,7 @@ local mode: { type: string, kind: string }? = nil -- build / nuke placement mode
 local mouseAbs = Vector2.new(-1e4, -1e4)
 local ghost: any = { state = nil, shown = false, tile = nil, kind = nil, checkAt = 0 } -- build ghost (one table: GameClient is near the 200-local limit)
 -- Counters the tutorial watches to notice the player doing things.
-local tutorialCounters = { attacksSent = 0, playerAttacksSent = 0, ratioMoves = 0 }
+local tutorialCounters = { attacksSent = 0, playerAttacksSent = 0, ratioMoves = 0, cancelMoves = 0, homeVisits = 0, bombsLaunched = 0, buildsSent = {} }
 
 local function ownerOf(t: number): number
 	local o = buffer.readu16(owners, t * 2)
@@ -195,17 +195,12 @@ local function applyTiles(b: buffer)
 		for _ = 1, count do
 			local t = buffer.readu32(b, off)
 			off += 4
+			MapRender.captureTile(t, o)
 			buffer.writeu16(owners, t * 2, o)
 			touched[t] = true
-			local n = MapUtil.neighbors(map, t, NB)
-			for i = 1, n do
-				touched[NB[i]] = true
-			end
 		end
 	end
-	if Settings.values.borderContrast then
-		Settings.growTouched(map, touched)
-	end
+	-- MapRender.markTile already marks the neighbours needed by borders.
 	for t in touched do
 		paint(t)
 	end
@@ -1069,9 +1064,8 @@ local function refreshHud()
 	end
 	-- ControlPanel.tick: hidden during the spawn phase and once we're dead / spectating
 	local showPanel = mine ~= nil and mine.stats.alive and (phase.phase == "Play" or phase.phase == "Ended")
-	if hud.Visible ~= showPanel then
-		hud.Visible = showPanel
-	end
+	hud.Visible = false -- CornerHud owns the visible match controls
+	if cp.corner then cp.corner.update(mine, me, phase, attackRatio) end
 	sliderFill.Size = UDim2.fromScale(attackRatio, 1)
 	sliderKnob.Position = UDim2.fromScale(attackRatio, 0.5)
 
@@ -1079,7 +1073,7 @@ local function refreshHud()
 	if mode and mode.type == "unit" then
 		parts[#parts + 1] = "Click near one of your ports (or the water to patrol) to launch a " .. Config.UNITS[mode.kind].name .. "  (right-click / Esc to cancel)"
 	elseif mode then
-		local def = if mode.type == "build" then Config.STRUCTURES[mode.kind] else Config.NUKES[mode.kind]
+		local def = if mode.type == "build" then Config.STRUCTURES[mode.kind] elseif mode.type == "unit" then Config.UNITS[mode.kind] else Config.NUKES[mode.kind]
 		parts[#parts + 1] = DeviceLayout.verb() .. (if mode.type == "build" then " your land to place a " else " a target for your ") .. def.name .. "  " .. DeviceLayout.cancelHint()
 	else
 		if selectedUnit then
@@ -1092,9 +1086,14 @@ local function refreshHud()
 		-- Attacks and boats are listed by MatchHud's attacks display (OpenFront AttacksDisplay).
 	end
 	attacksText.Text = table.concat(parts, "     ")
-	attacksText.Visible = #parts > 0
+	-- (hidden while the tutorial runs: its own bubble says what to do)
+	attacksText.Visible = #parts > 0 and localPlayer:WaitForChild("PlayerGui"):GetAttribute("FrontlinesTutorial") ~= true
 	refreshBuildBar()
 end
+
+-- Refreshes asked for by the "stats" / "me" / "phase" messages run from the frame loop, one kind per
+-- frame, so the half-second update never stacks HUD + names + board into one long frame.
+local pending = { hud = false, names = false, board = false }
 
 -- ControlPanel.addGoldGain: last-wins "+amount" above the gold box for 2 s, popping up 4 px.
 function cp.showGain(amount: number)
@@ -1317,6 +1316,21 @@ local function applyUnits(b: buffer, fresh: boolean)
 		if not u then
 			-- OpenFront warship sprite + BarPass health bar (11x3 full-res tiles, 1-tile black border).
 			local marker = SpriteKit.unit("Warship", { ZIndex = 3, Parent = unitLayer })
+			-- Night: the owner's full-colour warship picture on a round badge in the owner's colour
+			-- (red while fighting, blinking black while retreating) instead of the pixel sprite.
+			local NightArt = playerScripts:FindFirstChild("NightMenu") and require(playerScripts.NightMenu:WaitForChild("Art"))
+			local badge = nil
+			if NightArt and NightArt.has("Warship") and workspace:GetAttribute("WFNightMarkerArt") ~= false then
+				for _, layer in marker:GetDescendants() do
+					if layer:IsA("ImageLabel") then
+						layer.ImageTransparency = 1
+					end
+				end
+				badge = make("Frame", { Name = "NightBadge", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromScale(0.95, 0.95), BorderSizePixel = 0, ZIndex = 3, Parent = marker })
+				make("UICorner", { CornerRadius = UDim.new(0.5, 0), Parent = badge })
+				make("UIStroke", { Color = Color3.new(0, 0, 0), Transparency = 0.4, Thickness = 1.5, Parent = badge })
+				NightArt.image("Warship", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromScale(1.25, 1.25), ZIndex = 3, Parent = badge })
+			end
 			local bar = make("Frame", {
 				AnchorPoint = Vector2.new(0.5, 0),
 				BackgroundColor3 = Color3.new(0, 0, 0),
@@ -1326,7 +1340,7 @@ local function applyUnits(b: buffer, fresh: boolean)
 				Parent = unitLayer,
 			})
 			local fill = make("Frame", { Position = UDim2.fromScale(1 / 11, 1 / 3), Size = UDim2.fromScale(9 / 11, 1 / 3), BorderSizePixel = 0, ZIndex = 3, Parent = bar })
-			u = { marker = marker, bar = bar, fill = fill, fx = x, fy = y, tx = x, ty = y, t0 = now }
+			u = { marker = marker, badge = badge, bar = bar, fill = fill, fx = x, fy = y, tx = x, ty = y, t0 = now }
 			units[id] = u
 		else
 			u.fx, u.fy = unitPos(u)
@@ -1433,6 +1447,9 @@ local function drawWarships()
 		if centre and centre:IsA("ImageLabel") and u.retreating and angryBlink then
 			centre.ImageColor3 = Color3.new(0, 0, 0)
 		end
+		if u.badge then
+			u.badge.BackgroundColor3 = if u.retreating and angryBlink then Color3.new(0, 0, 0) else territory
+		end
 		local cell = SpriteKit.cellPx(zoom)
 		u.marker.Size = UDim2.fromOffset(cell, cell)
 		if u.bar.Visible then
@@ -1538,6 +1555,287 @@ do
 		return best
 	end
 
+	-- Tutorial "Reach the sea": is any of our land next to the ocean, and which free tile next to
+	-- us is closest to the sea. Scans a box around our land, at most once a second.
+	local function isOcean(t: number): boolean
+		return bit32.band(buffer.readu8(map.terrain, t), 160) == 32
+	end
+	local seaCache = { at = -1, coastal = false, target = nil }
+	local function seaInfo()
+		if os.clock() - seaCache.at < 1 then
+			return seaCache
+		end
+		seaCache.at = os.clock()
+		seaCache.coastal, seaCache.target = false, nil
+		local home = liveTerritory(myId)
+		if not home then
+			return seaCache
+		end
+		local R = math.min(220, math.floor(math.sqrt(home.tiles) * 2) + 24)
+		local cx, cy = math.floor(home.cx), math.floor(home.cy)
+		local x0, x1, y0, y1 = math.max(1, cx - R), math.min(W - 2, cx + R), math.max(1, cy - R), math.min(H - 2, cy + R)
+		-- 1. coastal?
+		for y = y0, y1 do
+			for x = x0, x1 do
+				local t = y * W + x
+				if ownerOf(t) == myId and (isOcean(t - 1) or isOcean(t + 1) or isOcean(t - W) or isOcean(t + W)) then
+					seaCache.coastal = true
+					return seaCache
+				end
+			end
+		end
+		-- 2. nearest ocean to our land, then the free tile next to us closest to it
+		local seaX, seaY, best = nil, nil, math.huge
+		for y = 1, H - 2, 3 do -- the whole map, coarsely
+			for x = 1, W - 2, 3 do
+				local t = y * W + x
+				if isOcean(t) then
+					local d = (x - cx) ^ 2 + (y - cy) ^ 2
+					if d < best then
+						best, seaX, seaY = d, x, y
+					end
+				end
+			end
+		end
+		if not seaX then
+			return seaCache
+		end
+		best = math.huge
+		for y = y0, y1 do
+			for x = x0, x1 do
+				local t = y * W + x
+				-- free land, or a computer player's land when they box us in (they can't hit back here)
+				if ownerOf(t) ~= myId and MapUtil.isOwnable(map, t) and (ownerOf(t - 1) == myId or ownerOf(t + 1) == myId or ownerOf(t - W) == myId or ownerOf(t + W) == myId) then
+					local d = (x - seaX) ^ 2 + (y - seaY) ^ 2 + (if ownerOf(t) ~= 0 then 900 else 0) -- free land first
+					if d < best then
+						best, seaCache.target = d, t
+					end
+				end
+			end
+		end
+		return seaCache
+	end
+
+	-- Tutorial "Attack a player": an enemy tile touching our land (closest to our centre), or when
+	-- nobody borders us yet, the free tile next to us closest to the nearest enemy. Once a second.
+	local fightCache = { at = -1, target = nil }
+	local function fightTarget(): number?
+		if os.clock() - fightCache.at < 1 then
+			return fightCache.target
+		end
+		fightCache.at, fightCache.target = os.clock(), nil
+		local home = liveTerritory(myId)
+		local foe = nearestEnemy()
+		if not home or not foe then
+			return nil
+		end
+		local R = math.min(220, math.floor(math.sqrt(home.tiles) * 2) + 24)
+		local cx, cy = math.floor(home.cx), math.floor(home.cy)
+		local bestEnemy, bestEnemyD, bestFree, bestFreeD = nil, math.huge, nil, math.huge
+		for y = math.max(1, cy - R), math.min(H - 2, cy + R) do
+			for x = math.max(1, cx - R), math.min(W - 2, cx + R) do
+				local t = y * W + x
+				local o = ownerOf(t)
+				if o ~= myId and MapUtil.isOwnable(map, t) and (ownerOf(t - 1) == myId or ownerOf(t + 1) == myId or ownerOf(t - W) == myId or ownerOf(t + W) == myId) then
+					if o ~= 0 then
+						local p = roster[o]
+						if p and p.stats.alive and not ContextMenu.isAlly(o) then
+							local d = (x - cx) ^ 2 + (y - cy) ^ 2
+							if d < bestEnemyD then bestEnemy, bestEnemyD = t, d end
+						end
+					else
+						local d = (x - foe.cx) ^ 2 + (y - foe.cy) ^ 2
+						if d < bestFreeD then bestFree, bestFreeD = t, d end
+					end
+				end
+			end
+		end
+		fightCache.target = bestEnemy or bestFree
+		return fightCache.target
+	end
+
+	-- Tutorial Port / Warship placing: our coast tile nearest our centre, and the sea next to it.
+	local coastCache = { at = -1, land = nil, sea = nil }
+	local function coastSpot(): (number?, number?)
+		if os.clock() - coastCache.at < 1 then
+			return coastCache.land, coastCache.sea
+		end
+		coastCache.at, coastCache.land, coastCache.sea = os.clock(), nil, nil
+		local home = liveTerritory(myId)
+		if not home then
+			return nil, nil
+		end
+		local R = math.min(260, math.floor(math.sqrt(home.tiles) * 2) + 24)
+		local cx, cy = math.floor(home.cx), math.floor(home.cy)
+		local best = math.huge
+		for y = math.max(1, cy - R), math.min(H - 2, cy + R) do
+			for x = math.max(1, cx - R), math.min(W - 2, cx + R) do
+				local t = y * W + x
+				if ownerOf(t) == myId then
+					for _, w in { t - 1, t + 1, t - W, t + W } do
+						if isOcean(w) then
+							local d = (x - cx) ^ 2 + (y - cy) ^ 2
+							if d < best then
+								best, coastCache.land, coastCache.sea = d, t, w
+							end
+							break
+						end
+					end
+				end
+			end
+		end
+		return coastCache.land, coastCache.sea
+	end
+
+	-- Tutorial building steps: our tile nearest our centre that is far enough from every
+	-- structure (CoreRules MIN_STRUCTURE_DISTANCE). nil = no room left: grab more land first.
+	local roomCache = { at = -1, tile = nil }
+	local function buildRoom(): number?
+		if os.clock() - roomCache.at < 1 then
+			return roomCache.tile
+		end
+		roomCache.at, roomCache.tile = os.clock(), nil
+		local home = liveTerritory(myId)
+		if not home then
+			return nil
+		end
+		local minD = Config.MIN_STRUCTURE_DISTANCE + 1
+		local minD2 = minD * minD
+		local R = math.min(260, math.floor(math.sqrt(home.tiles) * 2) + 24)
+		local cx, cy = math.floor(home.cx), math.floor(home.cy)
+		local near = {}
+		for _, s in structureList do
+			local st = s[3]
+			if type(st) == "number" and (st % W - cx) ^ 2 + (st // W - cy) ^ 2 <= (R + minD) ^ 2 then
+				near[#near + 1] = st
+			end
+		end
+		local best = math.huge
+		for y = math.max(1, cy - R), math.min(H - 2, cy + R) do
+			for x = math.max(1, cx - R), math.min(W - 2, cx + R) do
+				local t = y * W + x
+				local d = (x - cx) ^ 2 + (y - cy) ^ 2
+				if d < best and ownerOf(t) == myId then
+					local blocked = false
+					for _, st in near do
+						if (x - st % W) ^ 2 + (y - st // W) ^ 2 < minD2 then
+							blocked = true
+							break
+						end
+					end
+					if not blocked then
+						best, roomCache.tile = d, t
+					end
+				end
+			end
+		end
+		return roomCache.tile
+	end
+	-- "Grab more land": a free tile next to us (nearest our centre), else a neighbour's.
+	local growCache = { at = -1, target = nil }
+	local function growTarget(): number?
+		if os.clock() - growCache.at < 1 then
+			return growCache.target
+		end
+		growCache.at, growCache.target = os.clock(), nil
+		local home = liveTerritory(myId)
+		if not home then
+			return nil
+		end
+		local R = math.min(260, math.floor(math.sqrt(home.tiles) * 2) + 24)
+		local cx, cy = math.floor(home.cx), math.floor(home.cy)
+		local bestFree, bestFreeD, bestFoe, bestFoeD = nil, math.huge, nil, math.huge
+		for y = math.max(1, cy - R), math.min(H - 2, cy + R) do
+			for x = math.max(1, cx - R), math.min(W - 2, cx + R) do
+				local t = y * W + x
+				local o = ownerOf(t)
+				if o ~= myId and MapUtil.isOwnable(map, t) and (ownerOf(t - 1) == myId or ownerOf(t + 1) == myId or ownerOf(t - W) == myId or ownerOf(t + W) == myId) then
+					local d = (x - cx) ^ 2 + (y - cy) ^ 2
+					if o == 0 then
+						if d < bestFreeD then bestFree, bestFreeD = t, d end
+					elseif not ContextMenu.isAlly(o) and d < bestFoeD then
+						bestFoe, bestFoeD = t, d
+					end
+				end
+			end
+		end
+		growCache.target = bestFree or bestFoe
+		return growCache.target
+	end
+	-- Ring a map tile for the tutorial, moving the camera when it would be hidden.
+	local function ringTile(t: number, follow: boolean?)
+		if not tutorialCounters.target then tutorialCounters.target=make("Frame",{Name="TutorialMapTarget",Size=UDim2.fromOffset(36,36),AnchorPoint=Vector2.new(.5,.5),BackgroundTransparency=1,Active=false,Selectable=false,Parent=gui}) end
+		local p=mapImage.AbsolutePosition;local sz=mapImage.AbsoluteSize
+		if follow then
+			local dev=cp.corner and cp.corner.development
+			local px,py=p.X+(t%W+.5)/W*sz.X,p.Y+(t//W+.5)/H*sz.Y
+			local bottom=if dev and dev.bar then dev.bar.AbsolutePosition.Y-40 else gui.AbsoluteSize.Y-120
+			if py<150 or py>bottom or px<60 or px>gui.AbsoluteSize.X-60 then
+				focusCamera(t%W,t//W,50)
+				p=mapImage.AbsolutePosition;sz=mapImage.AbsoluteSize
+			end
+		end
+		tutorialCounters.target.Position=UDim2.fromOffset(p.X-gui.AbsolutePosition.X+(t%W+.5)/W*sz.X,p.Y-gui.AbsolutePosition.Y+(t//W+.5)/H*sz.Y)
+		return {tutorialCounters.target}
+	end
+
+	-- Tutorial "Launch an Atom Bomb": an enemy building (Cities first), nearest to us, whose blast
+	-- doesn't reach our own land; else an enemy country's own land (same check). Once a second.
+	local bombCache = { at = -1, target = nil }
+	local function bombTarget(): number?
+		if os.clock() - bombCache.at < 1 then
+			return bombCache.target
+		end
+		bombCache.at, bombCache.target = os.clock(), nil
+		local home = liveTerritory(myId)
+		if not home then
+			return nil
+		end
+		local nuke = Config.NUKES and Config.NUKES.AtomBomb
+		local R = math.ceil((nuke and nuke.outer or 7.5) + 1)
+		local function clearOfUs(t: number): boolean
+			local x0, y0 = t % W, t // W
+			for y = math.max(0, y0 - R), math.min(H - 1, y0 + R) do
+				for x = math.max(0, x0 - R), math.min(W - 1, x0 + R) do
+					if (x - x0) ^ 2 + (y - y0) ^ 2 <= R * R and ownerOf(y * W + x) == myId then
+						return false
+					end
+				end
+			end
+			return true
+		end
+		local best, bestScore = nil, math.huge
+		for _, s in structureList do
+			local kind, t, o = s[2], s[3], s[4]
+			if type(t) == "number" and o ~= 0 and o ~= myId and ownerOf(t) == o and not ContextMenu.isAlly(o) then
+				local p = roster[o]
+				if p and p.stats.alive then
+					local d = (t % W - home.cx) ^ 2 + (t // W - home.cy) ^ 2
+					local score = d * (if kind == "City" then 0.5 else 1)
+					if score < bestScore and clearOfUs(t) then
+						best, bestScore = t, score
+					end
+				end
+			end
+		end
+		if not best then
+			-- no enemy buildings yet: the nearest enemy country's own land, still clear of ours
+			local bestD = math.huge
+			for id, p in roster do
+				local st = p.stats
+				if id ~= myId and st.alive and st.tiles > 0 and not ContextMenu.isAlly(id) then
+					local t = math.floor(st.cy) * W + math.floor(st.cx)
+					local d = (st.cx - home.cx) ^ 2 + (st.cy - home.cy) ^ 2
+					if d < bestD and ownerOf(t) == id and clearOfUs(t) then
+						best, bestD = t, d
+					end
+				end
+			end
+		end
+		bombCache.target = best
+		return bombCache.target
+	end
+
 	local function tutorialSnapshot()
 		local mine = roster[myId]
 		local s = if mine then mine.stats else nil
@@ -1548,12 +1846,17 @@ do
 				attackingPlayer = true
 			end
 		end
+  for _,boat in me.boatList or {} do
+   if not boat[5] then attacking=true; if boat[3]~=0 then attackingPlayer=true end end
+  end
 		return {
 			inRound = myId ~= 0 and s ~= nil and (phase.phase == "Spawn" or phase.phase == "Play"),
 			phase = phase.phase,
 			spawned = s ~= nil and s.tiles > 0,
 			alive = s ~= nil and (s.alive or phase.phase == "Spawn"),
 			gold = if s then s.gold else 0,
+			tiles = if s then s.tiles else 0,
+			kills = if s then s.kills else 0,
 			cityCost = (me.costs and me.costs.City) or Config.STRUCTURES.City.cost(0),
 			counts = ownedCounts(),
 			attacking = attacking,
@@ -1561,6 +1864,20 @@ do
 			attacksSent = tutorialCounters.attacksSent,
 			playerAttacksSent = tutorialCounters.playerAttacksSent,
 			ratioMoves = tutorialCounters.ratioMoves,
+			cancelMoves = tutorialCounters.cancelMoves,
+			homeVisits = tutorialCounters.homeVisits,
+			bombsLaunched = tutorialCounters.bombsLaunched,
+			siloReady = me.siloReady == true,
+			-- for the tutorial's live readouts and pause handling
+			troops = if s then s.troops else 0,
+			ratio = attackRatio,
+			sendText = fmtTroops((if s then s.troops else 0) * attackRatio), -- as the command bar shows it
+			builds = table.clone(tutorialCounters.buildsSent),
+			costs = me.costs or {},
+			paused = phase.paused == true,
+			coastal = if s and s.tiles > 0 then seaInfo().coastal else false,
+			roomToBuild = if s and s.tiles > 0 then buildRoom() ~= nil else true,
+			protected = phase.phase == "Spawn" or (tonumber(me.immunityEndsIn) or 0) > 0, -- spawn protection: no attacks or nukes yet
 		}
 	end
 
@@ -1569,6 +1886,206 @@ do
 		layoutOrder = 2,
 		deviceLayout = DeviceLayout,
 		snapshot = tutorialSnapshot,
+		targets = function(stepId)
+			local c=cp.corner
+   local dev=c and c.development
+   local mobileDefault=dev and dev.mobileLayout
+   if mobileDefault then
+    if stepId=="growth" then return {dev.population}end
+    if stepId=="gold" then return {dev.money}end
+    if stepId=="win" then return {dev.panels.goal}end
+   end
+			local coast=stepId=="spawnCoast"
+			if coast then stepId="spawn" end
+			if stepId=="spawn" or stepId=="expand" or (stepId=="cancel" and #(me.attacks or {})==0) then
+				local mine=roster[myId];local st=mine and mine.stats
+				local cx=if stepId=="spawn" then math.floor(W*.42) else st and math.floor(st.cx) or 0
+				local cy=if stepId=="spawn" then math.floor(H*.5) else st and math.floor(st.cy) or 0
+    if stepId=="spawn" and dev and dev.bar then
+     local image=mapImage.AbsolutePosition;local size=mapImage.AbsoluteSize
+     local lower=dev.bar.AbsolutePosition.Y-40
+     local upper=math.max(80,game:GetService("GuiService"):GetGuiInset().Y+24)
+     cy=math.clamp(math.floor(((upper+lower)/2-image.Y)/size.Y*H),5,H-6)
+    end
+				local target
+				for radius=0,if coast then 160 else 40 do
+					for dx=-radius,radius do
+						for _,dy in {-radius,radius} do
+							local x,y=cx+dx,cy+dy
+							if x>4 and x<W-5 and y>4 and y<H-5 then
+								local t=y*W+x
+								if ownerOf(t)==0 and MapUtil.isOwnable(map,t) then
+									local usable=false
+									if stepId~="spawn" then
+										for _,n in {t-1,t+1,t-W,t+W} do if ownerOf(n)==myId then usable=true;break end end
+									else
+										usable=true
+										if coast then
+											-- ocean 2-3 tiles away, so the starting land reaches the shore
+											usable=false
+											for _,step in {1,-1,W,-W} do
+												local n2,n3,n1=t+step*2,t+step*3,t+step
+												if MapUtil.isOwnable(map,t-step) and ownerOf(t-step)==0 and MapUtil.isOwnable(map,n1)
+													and (bit32.band(buffer.readu8(map.terrain,n2),160)==32 or bit32.band(buffer.readu8(map.terrain,n3),160)==32) then usable=true;break end
+											end
+										else
+										for _,n in {t-4,t+4,t-W*4,t+W*4} do if not MapUtil.isOwnable(map,n) or ownerOf(n)~=0 then usable=false;break end end
+										end
+									end
+									if usable and dev and dev.bar then
+          local image=mapImage.AbsolutePosition;local size=mapImage.AbsoluteSize
+          local point=Vector2.new(image.X+(x+.5)/W*size.X,image.Y+(y+.5)/H*size.Y)
+          local lower=dev.bar.AbsolutePosition.Y-22
+          usable=point.Y>math.max(72,game:GetService("GuiService"):GetGuiInset().Y+18) and point.Y<lower and point.X>24 and point.X<gui.AbsoluteSize.X-24
+         end
+         if usable then target=t;break end
+								end
+							end
+						end
+						if target then break end
+					end
+					if target then break end
+				end
+				if target then
+					if not tutorialCounters.target then tutorialCounters.target=make("Frame",{Name="TutorialMapTarget",Size=UDim2.fromOffset(36,36),AnchorPoint=Vector2.new(.5,.5),BackgroundTransparency=1,Active=false,Selectable=false,Parent=gui}) end
+					local p=mapImage.AbsolutePosition;local sz=mapImage.AbsoluteSize
+					tutorialCounters.target.Position=UDim2.fromOffset(p.X-gui.AbsolutePosition.X+(target%W+.5)/W*sz.X,p.Y-gui.AbsolutePosition.Y+(target//W+.5)/H*sz.Y)
+					return {tutorialCounters.target}
+				end
+			elseif stepId=="reachSea" then
+				local t=seaInfo().target
+				if t then
+					if not tutorialCounters.target then tutorialCounters.target=make("Frame",{Name="TutorialMapTarget",Size=UDim2.fromOffset(36,36),AnchorPoint=Vector2.new(.5,.5),BackgroundTransparency=1,Active=false,Selectable=false,Parent=gui}) end
+					local p=mapImage.AbsolutePosition;local sz=mapImage.AbsoluteSize
+					-- keep the spot on screen (clear of the top pills and the bottom bar): follow it
+					local px,py=p.X+(t%W+.5)/W*sz.X,p.Y+(t//W+.5)/H*sz.Y
+					local bottom=if dev and dev.bar then dev.bar.AbsolutePosition.Y-40 else gui.AbsoluteSize.Y-120
+					if py<150 or py>bottom or px<60 or px>gui.AbsoluteSize.X-60 then
+						focusCamera(t%W,t//W,60)
+						p=mapImage.AbsolutePosition;sz=mapImage.AbsoluteSize
+					end
+					tutorialCounters.target.Position=UDim2.fromOffset(p.X-gui.AbsolutePosition.X+(t%W+.5)/W*sz.X,p.Y-gui.AbsolutePosition.Y+(t//W+.5)/H*sz.Y)
+					return {tutorialCounters.target}
+				end
+			elseif stepId=="growLand" then
+				local t=growTarget()
+				if t then return ringTile(t,true) end
+			elseif stepId=="territory" then
+				local plate=labelLayer:FindFirstChild("Name"..myId)
+				local name=plate and plate:FindFirstChildOfClass("TextLabel")
+				if name then return {name} end
+			end
+			if stepId=="players" or stepId=="bomb" and (mode and mode.type=="nuke") then
+				-- Land attacks need a border: an enemy tile touching us (or free land toward them).
+				-- Bombs fly anywhere: the nearest enemy's centre.
+				local e=nearestEnemy()
+				local tx,ty
+				if stepId=="players" then
+					local t=fightTarget()
+					if t then tx,ty=t%W,t//W end
+				else
+					-- an enemy building away from our land (never our own tiles)
+					local t=bombTarget()
+					if t then tx,ty=t%W,t//W end
+				end
+				if tx then
+					if not tutorialCounters.target then tutorialCounters.target=make("Frame",{Name="TutorialMapTarget",Size=UDim2.fromOffset(36,36),AnchorPoint=Vector2.new(.5,.5),BackgroundTransparency=1,Active=false,Selectable=false,Parent=gui}) end
+					local p=mapImage.AbsolutePosition;local sz=mapImage.AbsoluteSize
+					tutorialCounters.target.Position=UDim2.fromOffset(p.X-gui.AbsolutePosition.X+(tx+.5)/W*sz.X,p.Y-gui.AbsolutePosition.Y+(ty+.5)/H*sz.Y)
+					return {tutorialCounters.target}
+				end
+			end
+			if stepId=="ratio" then return {if c then c.slider else slider} end
+			if stepId=="growth" then return {if c then c.growth else growthPill} end
+			if stepId=="gold" then return {if c then c.gold else goldPill} end
+			if stepId=="win" then return {if c then c.goal else troopsText} end
+			if stepId=="cancel" then
+				if c and not mobileDefault and not c.attackOpen and #(me.attacks or {})>0 then c.showAttacks() end
+				local parent=if mobileDefault then c.refs.stack elseif c then c.attackBody else hudStack
+				local targets={}
+				for _,v in parent:GetDescendants() do if v:IsA("GuiButton") and v.Name=="Action" then targets[#targets+1]=v end end
+				if #targets>0 then return targets end
+				return {if c then c.attackBtn else holder}
+			end
+			local kinds={city="City",port="Port",warshipPort="Port",defense="DefensePost",nukes="MissileSilo",warships="Warship",bomb=if (ownedCounts().MissileSilo or 0)>0 then "AtomBomb" else "MissileSilo"}
+			local kind=kinds[stepId]
+			-- already placing it: a Port / Warship gets a ring on the right spot (coast / sea by it);
+			-- anything else gets no spotlight, so the map isn't dimmed while you pick a spot
+			if kind and mode and mode.kind==kind then
+				if kind=="Port" or kind=="Warship" then
+					local land,sea=coastSpot()
+					local t=if kind=="Port" then land else sea
+					if t then
+						if not tutorialCounters.target then tutorialCounters.target=make("Frame",{Name="TutorialMapTarget",Size=UDim2.fromOffset(36,36),AnchorPoint=Vector2.new(.5,.5),BackgroundTransparency=1,Active=false,Selectable=false,Parent=gui}) end
+						local p=mapImage.AbsolutePosition;local sz=mapImage.AbsoluteSize
+						local px,py=p.X+(t%W+.5)/W*sz.X,p.Y+(t//W+.5)/H*sz.Y
+						local bottom=if dev and dev.bar then dev.bar.AbsolutePosition.Y-40 else gui.AbsoluteSize.Y-120
+						if py<150 or py>bottom or px<60 or px>gui.AbsoluteSize.X-60 then
+							focusCamera(t%W,t//W,40)
+							p=mapImage.AbsolutePosition;sz=mapImage.AbsoluteSize
+						end
+						tutorialCounters.target.Position=UDim2.fromOffset(p.X-gui.AbsolutePosition.X+(t%W+.5)/W*sz.X,p.Y-gui.AbsolutePosition.Y+(t//W+.5)/H*sz.Y)
+						return {tutorialCounters.target}
+					end
+				end
+				if Config.STRUCTURES[kind] then
+					local t=buildRoom()
+					if t then return ringTile(t,true) end
+				end
+				return {}
+			end
+			if kind and mobileDefault then
+    for _,card in dev.cards do if card.entry.action.kind==kind then dev.selectedGroup=card.group;require(script.Parent.DevelopmentInGameLayout).layout(c);return {card.entry.button}end end
+   end
+			if kind and c then
+				local group=if stepId=="warships" or (stepId=="bomb" and kind=="AtomBomb") then "military" else "build"
+				if c.open~=group then c.openBuild(group) end
+				for _,entry in c.choices do if entry.action.kind==kind then return {entry.button} end end
+			end
+			return {holder}
+		end,
+		retreat = function()
+			local sent = false
+			for _, order in me.attacks or {} do
+				if not order[3] then net:FireServer("retreat", order[1]); sent = true end
+			end
+			if sent then tutorialCounters.cancelMoves += 1 end
+			return sent
+		end,
+		onFinish = function(reason)
+			localPlayer:WaitForChild("PlayerGui"):SetAttribute("FrontlinesTutorialFinished",reason)
+		end,
+		-- The tutorial pauses the (solo) game while it waits for the player, and resumes it.
+		setPaused = function(on: boolean)
+			net:FireServer("pause", on)
+		end,
+		-- Stop placing (build modes stay armed after a build), so the next step's click isn't a build.
+		clearMode = function()
+			if mode then
+				mode = nil
+				refreshHud()
+			end
+		end,
+		-- Fast-forward while the player saves up gold (solo speeds 0.5 / 1 / 2 / 6).
+		setSpeed = function(mult: number)
+			net:FireServer("gameSpeed", mult)
+		end,
+		-- Send all troops (tutorial "Reach the sea": computer players can't hit back there).
+		setRatio = function(r: number)
+			attackRatio = math.clamp(r, 0.01, 1)
+			refreshHud()
+		end,
+		-- Saving up in a lesson: the server tops gold up to the price (tutorial matches only).
+		-- Bomb lesson: ask the server for an enemy City to aim at (tutorial matches only).
+		requestBombTarget = function()
+			net:FireServer("tutorialTarget")
+		end,
+		topUpGold = function(kind: string)
+			net:FireServer("tutorialGold", kind)
+		end,
+		chapterDone = function(chapter: string)
+			net:FireServer("tutorialChapter", chapter)
+		end,
 		canGoTo = function(kind: string): boolean
 			if kind == "enemy" then
 				return nearestEnemy() ~= nil
@@ -1578,6 +2095,7 @@ do
 		goTo = function(kind: string)
 			local s = if kind == "enemy" then nearestEnemy() else liveTerritory(myId)
 			if s then
+				if kind == "home" then tutorialCounters.homeVisits += 1 end
 				focusCamera(s.cx, s.cy, math.sqrt(s.tiles) * 3 + 20)
 			end
 		end,
@@ -1587,13 +2105,15 @@ do
 	-- tutorial steps (MapFx.spawnRing).
 	function drawHomeRing(now: number)
 		local s = liveTerritory(myId)
-		local show = myId ~= 0 and s ~= nil and (phase.phase == "Spawn" or (phase.phase == "Play" and tutorial.wantsRing()))
+		local show = myId ~= 0 and s ~= nil and phase.phase == "Spawn"
 		MapFx.spawnRing(if show then s else nil, now)
 	end
 end
 
 -- Network
 SoundKit.setup({
+	ownerOf = ownerOf,
+	getPhase = function() return phase.phase end,
 	myId = function()
 		return myId
 	end,
@@ -1667,15 +2187,8 @@ local function onNet(kind: string, data: any, quiet: boolean?)
 		refreshBoard()
 	elseif kind == "stats" then
 		applyStats(data)
-		Perf.start("stats:names")
-		refreshNameLabels()
-		Perf.stop("stats:names")
-		Perf.start("stats:board")
-		refreshBoard()
-		Perf.stop("stats:board")
-		Perf.start("stats:hud")
-		refreshHud()
-		Perf.stop("stats:hud")
+		-- Names, board and HUD refresh from the frame loop, one per frame (see pending).
+		pending.hud, pending.names, pending.board = true, true, true
 		refreshBanner()
 	elseif kind == "structures" then
 		structureList = data
@@ -1690,14 +2203,15 @@ local function onNet(kind: string, data: any, quiet: boolean?)
 			focusCamera(mine.stats.cx, mine.stats.cy, math.sqrt(mine.stats.tiles) * 3 + 20)
 		end
 		refreshBanner()
-		refreshHud()
+		pending.hud = true
 	elseif kind == "me" then
 		myId = data.id
 		me = data
 		local mine = roster[myId]
 		require(playerScripts:WaitForChild("AlertFrame")).update(data, if mine then mine.stats.troops else 0, mine ~= nil and mine.stats.alive)
 		AttackLabels.update(data)
-		refreshHud()
+		pending.hud = true
+		tutorial.update() -- observe confirmed orders immediately, before fast attacks end
 	elseif kind == "betrayed" then
 		require(playerScripts:WaitForChild("AlertFrame")).betrayed()
 	elseif kind == "boat" then
@@ -1705,9 +2219,19 @@ local function onNet(kind: string, data: any, quiet: boolean?)
 	elseif kind == "boatEnd" then
 		removeBoat(data)
 	elseif kind == "nuke" then
+		if data.owner == myId then tutorialCounters.bombsLaunched += 1 end
 		addNuke(data)
+		tutorial.update()
 	elseif kind == "nukeEnd" then
 		endNuke(data)
+	elseif kind == "tutorialReward" then
+		if tutorial.reward then
+			tutorial.reward(data)
+		end
+ elseif kind == "buildResult" then
+  if not data.ok then
+   pushFeed(data.reason or "Build rejected. Choose another location and retry.","info",myId)
+  end
 	elseif kind == "event" then
 		pushFeed(data.text, data.kind, data.owner)
 	elseif kind == "diplomacy" then
@@ -1880,8 +2404,9 @@ slider.InputBegan:Connect(function(input)
 	end
 end)
 
+-- The camera moved: re-fit name labels on screen to the zoom (cheap), redraw markers.
 local function refreshOverlays()
-	refreshNameLabels()
+	NameLabels.relayout()
 	refreshStructures()
 end
 
@@ -1899,27 +2424,58 @@ end)
 local function act(t: number)
 	local ph = phase.phase
 	if ph == "Spawn" then
+		-- Tutorial "Start on the coast": a click near the sea lands on the nearest coastal land.
+		if localPlayer:WaitForChild("PlayerGui"):GetAttribute("FrontlinesTutorialStep") == "spawnCoast" then
+			local function coastal(c: number): boolean
+				if not MapUtil.isOwnable(map, c) or ownerOf(c) ~= 0 then return false end
+				for _, step in { 1, -1, W, -W } do
+					for k = 1, 2 do
+						local n = c + step * k
+						if n >= 0 and n < W * H and bit32.band(buffer.readu8(map.terrain, n), 160) == 32 then return true end
+					end
+				end
+				return false
+			end
+			if not coastal(t) then
+				local x0, y0, best, bestD = t % W, t // W, nil, math.huge
+				for y = math.max(3, y0 - 40), math.min(H - 4, y0 + 40) do
+					for x = math.max(3, x0 - 40), math.min(W - 4, x0 + 40) do
+						local d = (x - x0) ^ 2 + (y - y0) ^ 2
+						if d < bestD and coastal(y * W + x) then
+							best, bestD = y * W + x, d
+						end
+					end
+				end
+				if not best then
+					return -- too far from the sea: the ring shows a good spot
+				end
+				t = best
+			end
+		end
 		net:FireServer("spawn", t)
 		SoundKit.play("spawn") -- SendSpawnIntentEvent
 	elseif ph == "Play" then
 		if mode then
 			-- BuildPreviewController.createStructure: upgrade the structure under the ghost when
 			-- there is one, else build; atom / hydrogen bomb ghosts stay armed for the next target.
-			local keep = mode.type == "nuke" and (mode.kind == "AtomBomb" or mode.kind == "HydrogenBomb")
+			local keep = mode.type == "build" or mode.type == "unit" or mode.type == "nuke" and (mode.kind == "AtomBomb" or mode.kind == "HydrogenBomb")
 			-- Hold Shift to keep placing the same building / unit (quick placement).
 			if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.RightShift) then
 				keep = true
 			end
 			if mode.type == "build" then
-				local _, canUpgrade = Interact.build.ghostInfo(mode.kind, t)
-				if canUpgrade then
-					net:FireServer("upgrade", t, mode.kind)
-				else
-					net:FireServer("build", t, mode.kind)
+				-- Ports clicked on the water next to our coast go on the shore spot the preview shows.
+				if not MapUtil.isLand(map, t) and Interact.build.coastSnap then
+					t = Interact.build.coastSnap(mode.kind, t) or t
 				end
+    -- The server resolves upgrades and returns a visible rejection reason.
+    tutorialCounters.buildsSent[mode.kind] = (tutorialCounters.buildsSent[mode.kind] or 0) + 1
+    net:FireServer("build", t, mode.kind)
 			elseif mode.type == "unit" then
+				tutorialCounters.buildsSent[mode.kind] = (tutorialCounters.buildsSent[mode.kind] or 0) + 1
 				net:FireServer("buildUnit", t, mode.kind)
 			else
+				tutorialCounters.buildsSent[mode.kind] = (tutorialCounters.buildsSent[mode.kind] or 0) + 1
 				Interact.build.fireNuke(t, mode.kind)
 			end
 			if not keep then
@@ -2185,10 +2741,18 @@ local gamepad = GamepadControls.start({
 		setRatio(attackRatio + delta)
 	end,
 	cycleAction = function(dir)
-		local n = #actionList
+  local choices=actionList
+  if cp.corner and cp.corner.development then
+   choices={}
+   for _,card in cp.corner.development.cards do
+    if card.entry.button.Visible and cp.corner.development.groups[card.group].frame.Visible then table.insert(choices,card.entry.action) end
+   end
+  end
+  local n = #choices
+  if n==0 then return end
 		local cur = 0
 		if mode then
-			for i, a in actionList do
+			for i, a in choices do
 				if a.type == mode.type and a.kind == mode.kind then
 					cur = i
 				end
@@ -2199,7 +2763,7 @@ local gamepad = GamepadControls.start({
 			mode = nil
 			refreshHud()
 		else
-			setMode({ type = actionList[nxt].type, kind = actionList[nxt].kind })
+			setMode({ type = choices[nxt].type, kind = choices[nxt].kind })
 		end
 	end,
 	zoomAt = zoomAt,
@@ -2212,8 +2776,20 @@ local gamepad = GamepadControls.start({
 		fitMap()
 		refreshOverlays()
 	end,
-	overlaysChanged = refreshOverlays,
+	overlaysChanged = function() -- settings / other modules: full label refresh
+		refreshNameLabels()
+		refreshStructures()
+	end,
 	focusTarget = function()
+  if cp.corner then
+   local dev = cp.corner.development
+   if dev then
+    for _, card in dev.cards do
+     if card.entry.button.Visible and dev.groups[card.group].frame.Visible then return card.entry.button end
+    end
+   end
+   return cp.corner.buildBtn
+  end
 		local first = actionButtons[1]
 		return first and first.button
 	end,
@@ -2224,6 +2800,7 @@ local gamepad = GamepadControls.start({
 
 -- OpenFront interaction: radial menu, player panel / emojis, attacks display, win modal, keybinds.
 Interact.setup({
+	onRetreat = function() tutorialCounters.cancelMoves += 1 end,
 	gui = gui,
 	net = net,
 	roster = roster,
@@ -2239,7 +2816,10 @@ Interact.setup({
 	zoomAt = zoomAt,
 	pushFeed = pushFeed,
 	ownerOf = ownerOf,
-	overlaysChanged = refreshOverlays,
+	overlaysChanged = function() -- settings / other modules: full label refresh
+		refreshNameLabels()
+		refreshStructures()
+	end,
 	getMap = function()
 		return map
 	end,
@@ -2300,6 +2880,7 @@ Interact.setup({
 		local p = roster[myId]
 		local vs = holder.AbsoluteSize
 		if p and p.stats.tiles > 0 then
+			tutorialCounters.homeVisits += 1
 			focusCamera(p.stats.cx, p.stats.cy, math.min(vs.X, vs.Y) / zoom)
 		end
 	end,
@@ -2312,7 +2893,24 @@ Interact.setup({
 	end,
 })
 
--- OpenFront AlertFrame (betrayal / land attack border) and PerformanceOverlay (Shift + D).
+-- Corner layout uses the same simulation state and command callbacks.
+cp.corner = require(playerScripts:WaitForChild("CornerHud")).create({
+ gui = gui, actions = actionList, fmt = fmt, fmtTroops = fmtTroops,
+ device = DeviceLayout, cost = actionCost, usable = actionUsable,
+ setMode = setMode, setRatio = setRatio, toast = Interact.hud.toast,
+ getMine = function() return roster[myId] end,
+ getRoster = function() return roster end,
+ getMyId = function() return myId end,
+ focusPlayer = function(id) if leaderboard.focusPlayer then leaderboard.focusPlayer(id) end end,
+ getMap = function() return map end,
+ openMenu = Interact.side.openMenu,
+})
+require(playerScripts:WaitForChild('MatchSkin')).decorateTree(buildTip)
+DeviceLayout.setCornerHud(cp.corner)
+Interact.side.setCornerHud(cp.corner)
+refreshHud()
+
+-- OpenFront AlertFrame (betrayal / land attack border) and PerformanceOverlay (F3).
 require(playerScripts:WaitForChild("AlertFrame")).mount(gui)
 require(playerScripts:WaitForChild("PerfOverlay")).mount(gui)
 
@@ -2354,6 +2952,22 @@ local lastTutorialUpdate = 0
 RunService.RenderStepped:Connect(function()
 	local now = os.clock()
 	Perf.start("frame")
+	if pending.hud then
+		pending.hud = false
+		Perf.start("stats:hud")
+		refreshHud()
+		Perf.stop("stats:hud")
+	elseif pending.names then
+		pending.names = false
+		Perf.start("stats:names")
+		refreshNameLabels()
+		Perf.stop("stats:names")
+	elseif pending.board then
+		pending.board = false
+		Perf.start("stats:board")
+		refreshBoard()
+		Perf.stop("stats:board")
+	end
 	if stepCamera(now) then
 		refreshOverlays()
 	end
@@ -2446,10 +3060,23 @@ RunService.RenderStepped:Connect(function()
 	-- Build ghost under the cursor (BuildPreviewController): validity re-checked every 50 ms,
 	-- the icon follows the pointer every frame. Not on touch screens without a gamepad pointer.
 	-- Warships and bombs can be aimed at water too, so only buildings hide their ghost there.
-	if mode and tile and (padAbs or DeviceLayout.state.input ~= "Touch") and (mode.type ~= "build" or MapUtil.isLand(map, tile)) then
-		if now - ghost.checkAt > 0.05 or ghost.tile ~= tile or ghost.kind ~= mode.kind then
-			ghost.checkAt, ghost.tile, ghost.kind = now, tile, mode.kind
-			local canPlace, canUpgrade, upTile, cost, afford = Interact.build.ghostInfo(mode.kind, tile)
+	-- Ports are the exception: over the water next to our coast they show on the shore spot they'd use.
+	local shoreTile = nil
+	if mode and tile and mode.type == "build" and not MapUtil.isLand(map, tile) and Interact.build.coastSnap then
+		if ghost.waterTile == tile and ghost.waterKind == mode.kind and now - ghost.waterAt < 0.05 then
+			shoreTile = ghost.waterSnap
+		else
+			shoreTile = Interact.build.coastSnap(mode.kind, tile)
+			ghost.waterTile, ghost.waterKind, ghost.waterAt, ghost.waterSnap = tile, mode.kind, now, shoreTile
+		end
+	end
+	if mode and tile and (padAbs or DeviceLayout.state.input ~= "Touch") and (mode.type ~= "build" or MapUtil.isLand(map, tile) or shoreTile ~= nil) then
+		local gt = shoreTile or tile
+		if now - ghost.checkAt > 0.05 or ghost.tile ~= gt or ghost.kind ~= mode.kind then
+			ghost.checkAt, ghost.tile, ghost.kind = now, gt, mode.kind
+			local canPlace, canUpgrade, upTile, cost, afford = Interact.build.ghostInfo(mode.kind, gt)
+			-- Ports: show the preview on the coast spot the port will really use, not under the pointer.
+			ghost.snap = if canPlace and not canUpgrade and Interact.build.coastSnap then Interact.build.coastSnap(mode.kind, gt) else nil
 			ghost.state = {
 				kind = mode.kind,
 				owner = myId,
@@ -2464,6 +3091,10 @@ RunService.RenderStepped:Connect(function()
 		local ip, is = mapImage.AbsolutePosition, mapImage.AbsoluteSize
 		ghost.state.x = (mp.X - ip.X) / is.X * W
 		ghost.state.y = (mp.Y - ip.Y) / is.Y * H
+		if ghost.snap then
+			ghost.state.x = ghost.snap % W + 0.5
+			ghost.state.y = ghost.snap // W + 0.5
+		end
 		MapMarkers.setGhost(ghost.state, zoom)
 		ghost.shown = true
 	elseif ghost.shown then
@@ -2482,7 +3113,7 @@ RunService.RenderStepped:Connect(function()
 		tooltipText.Text = string.format(
 			"%s%s\nTroops %s · Land %.1f%%",
 			p.name,
-			if p.kind == "Bot" then " (bot)" elseif p.kind == "Human" then string.format(" · Lv %d", p.level or 1) else "",
+			if p.kind == "Bot" then " (bot)" elseif p.kind == "Human" then string.format(" · Lv %d", p.level or 1) else " · AI country",
 			fmt(p.stats.troops),
 			p.stats.tiles / map.landTiles * 100
 		)

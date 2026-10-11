@@ -38,11 +38,11 @@ local SpriteKit = require(script.Parent:WaitForChild("SpriteKit"))
 
 local ClockPanels = {}
 
-local FONT = Font.fromEnum(Enum.Font.GothamMedium)
+local FONT = Font.fromEnum(Enum.Font.GothamBold)
 local FONT_BOLD = Font.fromEnum(Enum.Font.GothamBold)
 local WHITE = Color3.new(1, 1, 1)
-local GRAY800 = Color3.fromRGB(31, 41, 55)
-local GRAY600 = Color3.fromRGB(75, 85, 99)
+local GRAY800 = Color3.fromRGB(14, 43, 64)
+local GRAY600 = Color3.fromRGB(14, 43, 64)
 local GRAY400 = Color3.fromRGB(156, 163, 175)
 local GRAY300 = Color3.fromRGB(209, 213, 219)
 local RED500 = Color3.fromRGB(239, 68, 68)
@@ -64,6 +64,7 @@ local state = {
 	teamGame = false,
 }
 
+local MatchSkin=require(script.Parent:WaitForChild("MatchSkin"))
 local function make(class: string, props: { [string]: any }): any
 	local inst = Instance.new(class)
 	local parent = props.Parent
@@ -74,6 +75,7 @@ local function make(class: string, props: { [string]: any }): any
 	if parent then
 		inst.Parent = parent
 	end
+	MatchSkin.decorate(inst)
 	return inst
 end
 

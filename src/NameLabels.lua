@@ -16,7 +16,8 @@
 --                                zoom() -> px per tile, map() -> GameMap, owners() -> buffer,
 --                                isAlly(id), isTraitor(id), isShielded(id), tagColor(id) -> Color3,
 --                                net: RemoteEvent?, getMyId()?, nukeState(id) -> nil|"white"|"red" }
--- NameLabels.refresh()   update text / colours / visibility of every label (after stats, zoom, ...)
+-- NameLabels.refresh()   update text / colours / visibility of every label (after stats, ...)
+-- NameLabels.relayout()  camera moved: re-fit the labels on screen to the zoom (layout only)
 -- NameLabels.step(now)   per frame: incremental placement search + smooth movement
 -- NameLabels.clear()     destroy all labels and placements (new round / map)
 -- Like OpenFront, a name sits in the centre of the largest rectangle inside the player's bounding
@@ -75,11 +76,19 @@ local STATUS_ROW = 1.4 -- name.statusRowOffset (line heights above the name cent
 local RESCAN = 0.5 -- seconds between placement passes
 local SAMPLES_PER_FRAME = 16000
 local CELLS_PER_FRAME = 24000
+-- Screen-space limits apply to the entire plate, including icons and thumbnails.
+local MAX_NAME_PX = 34
+local MAX_PLATE_WIDTH = 320
+local AVATAR_H = 1.35 -- readable headshot beside the bounded name plate
+local AVATAR_GAP = 0.15
 
 local ctx: any = nil
 local entries: { [number]: any } = {}
 local fit = 1 -- Roblox TextSize per OpenFront em (see calibrate)
 local crownId = 0
+local thumbnailCache: { [number]: any } = {}
+local thumbnailOrder: { number } = {}
+local THUMBNAIL_CACHE_LIMIT = 256
 
 -- Diplomacy as the status row needs it (expiry times for the drain / flash effects), read from
 -- the same server messages ContextMenu uses.
@@ -195,17 +204,27 @@ local function nameLength(name: string): number
 	return math.max(1, utf8.len(name) or #name)
 end
 
+-- OpenFront's grid step for a box, picked from the full-resolution box size, converted to our tiles.
+local function gridStep(box: { number }): number
+	local size = math.min(box[3] - box[1], box[4] - box[2]) * MAP_SCALE
+	local sfFull = if size < 25 then 1 elseif size < 50 then 2 elseif size < 100 then 4 elseif size < 250 then 8 elseif size < 500 then 16 else 32
+	return math.max(1, sfFull // MAP_SCALE)
+end
+
+-- Grid cells placeName will visit for this box (known before searching).
+local function placeCost(box: { number }): number
+	local sf = gridStep(box)
+	return (box[3] // sf - box[1] // sf + 1) * (box[4] // sf - box[2] // sf + 1)
+end
+
 -- Returns centre x, y (tiles) and font size (tiles), plus the number of grid cells visited.
-local function placeName(id: number, box: { number }, name: string): (number, number, number, number)
+local function placeName(id: number, box: { number }, name: string): (number, number, number, number, number, number)
 	local map = ctx.map()
 	local owners = ctx.owners()
 	local terrain = map.terrain
 	local W = map.width
 	local x0, y0, x1, y1 = box[1], box[2], box[3], box[4]
-	-- OpenFront's grid step, picked from the full-resolution box size, converted to our tiles.
-	local size = math.min(x1 - x0, y1 - y0) * MAP_SCALE
-	local sfFull = if size < 25 then 1 elseif size < 50 then 2 elseif size < 100 then 4 elseif size < 250 then 8 elseif size < 500 then 16 else 32
-	local sf = math.max(1, sfFull // MAP_SCALE)
+	local sf = gridStep(box)
 	local gx0, gy0 = x0 // sf, y0 // sf
 	local cols = x1 // sf - gx0 + 1
 	local rows = y1 // sf - gy0 + 1
@@ -240,7 +259,7 @@ local function placeName(id: number, box: { number }, name: string): (number, nu
 	local fontSize = math.min(rw / nameLength(name) * 2, rh / 3)
 	local cx = math.floor(rx + rw / 2 + gx0 * sf)
 	local cy = math.floor(ry + rh / 2 + gy0 * sf)
-	return cx, cy - fontSize / 3, fontSize, rows * cols
+	return cx, cy - fontSize / 3, fontSize, rows * cols, rw, rh
 end
 
 local function startScan()
@@ -325,6 +344,68 @@ local function newFlag(code: string?, parent: Instance): ImageLabel?
 	return FlagKit.image(code, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.fromScale(0, 0.5), ZIndex = 4, Parent = parent })
 end
 
+local function applyThumbnail(e, uid: number, image: string)
+	if entries[e.id] ~= e or e.avatarUid ~= uid or not e.avatar or not e.avatar.Parent or not ctx or e.frame.Parent ~= ctx.layer then return end
+	e.avatar.Image = image
+	for _, placeholder in e.avatarPlaceholder do placeholder.Visible = false end
+end
+
+local function requestThumbnail(e, uid: number)
+	local cached = thumbnailCache[uid]
+	if cached then
+		if cached.image then applyThumbnail(e, uid, cached.image)
+		elseif cached.pending then cached.listeners[e] = true end
+		return
+	end
+	cached = { pending = true, listeners = { [e] = true } }
+	thumbnailCache[uid] = cached
+	thumbnailOrder[#thumbnailOrder + 1] = uid
+	-- Keep recent completed results without evicting an in-flight request.
+	if #thumbnailOrder > THUMBNAIL_CACHE_LIMIT then
+		for i, previous in thumbnailOrder do
+			if previous ~= uid and thumbnailCache[previous] and not thumbnailCache[previous].pending then
+				thumbnailCache[previous] = nil;table.remove(thumbnailOrder, i);break
+			end
+		end
+	end
+	task.spawn(function()
+		-- Thumbnail generation can lag; retry inside one job, never on the render path.
+		for attempt = 1, 3 do
+			local ok, image, ready = pcall(function()
+				return Players:GetUserThumbnailAsync(uid, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
+			end)
+			if ok and ready and type(image) == "string" and image ~= "" then cached.image = image;break end
+			if attempt < 3 then task.wait(attempt * 2) end
+		end
+		cached.pending = false
+		if cached.image then for listener in cached.listeners do applyThumbnail(listener, uid, cached.image) end end
+		table.clear(cached.listeners)
+	end)
+end
+
+local function updateAvatar(e, p)
+	local uid = p.userId
+	local human = p.kind == "Human" and type(uid) == "number" and uid == uid and uid > 0 and uid <= 9007199254740991 and uid % 1 == 0
+	if not human then
+		if e.avatar then e.avatar:Destroy();e.avatar = nil;e.avatarUid = nil;e.layoutKey = "" end
+		return
+	end
+	if e.avatarUid == uid and e.avatar then return end
+	if e.avatar then e.avatar:Destroy() end
+	local avatar = Instance.new("ImageLabel")
+	avatar.Name = "PlayerHeadshot";avatar.BackgroundColor3 = Color3.fromRGB(45, 57, 66)
+	avatar.BorderSizePixel = 0;avatar.Image = "";avatar.AnchorPoint = Vector2.new(1, 0.5)
+	avatar.Position = UDim2.fromScale(0, 0.5);avatar.Size = UDim2.fromOffset(14, 14);avatar.ZIndex = 4
+	local corner = Instance.new("UICorner");corner.CornerRadius = UDim.new(1, 0);corner.Parent = avatar
+	local head = Instance.new("Frame");head.BackgroundColor3 = Color3.fromRGB(173, 184, 190);head.BorderSizePixel = 0
+	head.Position = UDim2.fromScale(0.34, 0.19);head.Size = UDim2.fromScale(0.32, 0.32);head.ZIndex = 5;head.Parent = avatar
+	local headCorner = Instance.new("UICorner");headCorner.CornerRadius = UDim.new(1, 0);headCorner.Parent = head
+	local shoulders = head:Clone();shoulders.Position = UDim2.fromScale(0.2, 0.57);shoulders.Size = UDim2.fromScale(0.6, 0.27);shoulders.Parent = avatar
+	avatar.Parent = e.name
+	e.avatar = avatar;e.avatarPlaceholder = { head, shoulders };e.avatarUid = uid;e.layoutKey = ""
+	requestThumbnail(e, uid)
+end
+
 local function newEntry(id: number, p: any)
 	local frame = Instance.new("Frame")
 	frame.Name = "Name" .. id
@@ -352,6 +433,7 @@ local function newEntry(id: number, p: any)
 	list.SortOrder = Enum.SortOrder.LayoutOrder
 	list.Parent = status
 	local e = {
+		id = id,
 		frame = frame,
 		scale = scale,
 		name = name,
@@ -373,6 +455,9 @@ local function newEntry(id: number, p: any)
 	}
 	frame.Parent = ctx.layer
 	entries[id] = e
+	name:GetPropertyChangedSignal("TextBounds"):Connect(function() e.boundsDirty = true end)
+	troops:GetPropertyChangedSignal("TextBounds"):Connect(function() e.boundsDirty = true end)
+	updateAvatar(e, p)
 	return e
 end
 
@@ -558,6 +643,8 @@ end
 
 -- Positions and sizes one label from its current (lerped) placement and the zoom.
 local function layout(e, p)
+	e.boundsDirty = false
+	local ownHuman = e.id == myId() and p.kind == "Human" and p.stats.alive and p.stats.tiles > 0
 	local W, H = ctx.map().width, ctx.map().height
 	local zoom = ctx.zoom()
 	-- size pipeline from name.vert.glsl, in full-resolution tiles
@@ -567,7 +654,49 @@ local function layout(e, p)
 	local emPx = nameSize * nameScale / MAP_SCALE * zoom -- OpenFront em on screen
 	local cam = Workspace.CurrentCamera
 	local vw = if cam then cam.ViewportSize.X else 1000
-	if emPx * BASE < vw * CULL or e.s <= 0 then
+	local vh = if cam then cam.ViewportSize.Y else 700
+	-- Off screen: hide it and skip the work below. Camera moves lay labels out again (relayout),
+	-- so it shows at the right size as soon as it comes into view.
+	local layer = ctx.layer
+	local ls, lp = layer.AbsoluteSize, layer.AbsolutePosition
+	if not ownHuman and ls.X > 0 and ls.Y > 0 then
+		local sx = lp.X + (e.x + 0.5) / W * ls.X
+		local sy = lp.Y + (e.y + 0.5) / H * ls.Y
+		local margin = MAX_PLATE_WIDTH
+		if sx < -margin or sx > vw + margin or sy < -margin or sy > vh + margin then
+			if e.vis then
+				e.vis = false
+				e.frame.Visible = false
+			end
+			return
+		end
+	end
+	local side = math.sqrt(math.max(p.stats.tiles, 1))
+	local availableWidth = (e.availableWidth or side) * zoom * 0.9
+	local availableHeight = (e.availableHeight or side) * zoom * 0.9
+	local nameWidth = if e.name.TextBounds.X > 0 then e.name.TextBounds.X / math.max(1, e.name.TextSize) * fit else nameLength(p.name) * 0.75 * fit
+	local troopWidth = if e.troops.TextBounds.X > 0 then e.troops.TextBounds.X / math.max(1, e.troops.TextSize) * TROOP_SIZE * fit else nameLength(e.troopsText or "0") * 0.75 * TROOP_SIZE * fit
+	local identityWidth = if e.flag then BASE * FLAG_H * FlagKit.ASPECT else 0
+	if e.avatar then identityWidth += BASE * (AVATAR_H + AVATAR_GAP) end
+	local shown = 0;for _, icon in e.icons do if icon.shown then shown += 1 end end
+	local statusWidth = BASE * ICON * (shown + math.max(0, shown - 1) * 0.15)
+	local plateWidth = math.max(nameWidth + identityWidth, troopWidth, statusWidth, 1)
+	local plateHeight = BASE * (STATUS_ROW + TROOP_LINE) + fit * (1 + TROOP_SIZE) / 2
+	local maxNameSize = math.clamp(math.min(vw, vh) * 0.045, 20, MAX_NAME_PX)
+	local widthBudget = math.min(availableWidth, math.max(60, math.min(MAX_PLATE_WIDTH, vw * 0.32)))
+	local heightBudget = math.min(availableHeight, vh * 0.18)
+	if ownHuman then
+		-- A tiny starting patch must not hide its owner's identity. Other labels still fit land.
+		emPx = math.max(emPx, 28 / math.max(fit, 0.6))
+		widthBudget = math.min(MAX_PLATE_WIDTH, math.max(80, vw * 0.85))
+		heightBudget = math.max(72, vh * 0.18)
+		-- Long local names truncate within a bounded plate instead of shrinking below readable size.
+		plateWidth = math.max(troopWidth, statusWidth, identityWidth, 1)
+	end
+	-- Reserve extra room for the owner's minimum 24px thumbnail without enlarging text/icons.
+	local avatarReserve = if ownHuman and e.avatar then 28 else 0
+	emPx = math.min(emPx, maxNameSize / math.max(fit, 0.6), math.max(0, widthBudget - OUTLINE * 2 - avatarReserve) / plateWidth, math.max(0, heightBudget - OUTLINE * 2) / plateHeight)
+	if not ownHuman and (emPx * BASE < vw * CULL or e.s <= 0) then
 		if e.vis then
 			e.vis = false
 			e.frame.Visible = false
@@ -589,21 +718,33 @@ local function layout(e, p)
 		e.px, e.py = e.x, e.y
 		e.frame.Position = UDim2.fromScale((e.x + 0.5) / W, (e.y + 0.5) / H)
 	end
-	-- TextSize tops out at 100: draw at <= ~96 and scale the whole plate up beyond that.
-	local k = math.max(1, emPx * math.max(fit, 1) / 96)
-	local em = math.floor(emPx / k * 2 + 0.5) / 2
+	-- Bound final screen-space visuals; never enlarge a plate with UIScale beyond its cap.
+	local k = 1
+	local em = math.floor(emPx * 2) / 2
 	if e.k ~= k then
 		e.k = k
 		e.scale.Scale = k
 	end
 	local outline = math.clamp(emPx * OUTLINE_PER_EM - 1, 0, OUTLINE)
-	local key = string.format("%.1f|%.2f|%.3f", em, outline, fit)
+	local key = string.format("%.1f|%.2f|%.3f|%s|%.1f|%.2f", em, outline, fit, tostring(ownHuman), widthBudget, if ownHuman then nameWidth else 0)
 	if key == e.layoutKey then
 		return
 	end
 	e.layoutKey = key
 	local lineH = em * BASE
 	e.name.TextSize = em * fit
+	if ownHuman then
+		local identityPixels = if e.flag then lineH * FLAG_H * FlagKit.ASPECT else 0
+		if e.avatar then identityPixels += math.max(28, lineH * AVATAR_H) + lineH * AVATAR_GAP end
+		e.name.AutomaticSize = Enum.AutomaticSize.Y
+		local textBudget = math.max(40, widthBudget - identityPixels - OUTLINE * 2)
+		e.name.Size = UDim2.fromOffset(math.max(40, math.min(nameWidth * em, textBudget)), 0)
+		e.name.TextTruncate = Enum.TextTruncate.AtEnd
+	else
+		e.name.AutomaticSize = Enum.AutomaticSize.XY
+		e.name.Size = UDim2.fromOffset(0, 0)
+		e.name.TextTruncate = Enum.TextTruncate.None
+	end
 	e.troops.TextSize = em * TROOP_SIZE * fit
 	e.troops.Position = UDim2.fromOffset(0, lineH * TROOP_LINE)
 	local nameStroke: any, troopStroke: any = e.name:FindFirstChildOfClass("UIStroke"), e.troops:FindFirstChildOfClass("UIStroke")
@@ -614,6 +755,13 @@ local function layout(e, p)
 	if e.flag then
 		local fh = lineH * FLAG_H
 		e.flag.Size = UDim2.fromOffset(fh * FlagKit.ASPECT, fh)
+		local avatarSize = if ownHuman then math.max(28, lineH * AVATAR_H) else lineH * AVATAR_H
+		e.flag.Position = UDim2.new(0, if e.avatar then -avatarSize - lineH * AVATAR_GAP else 0, 0.5, 0)
+	end
+	if e.avatar then
+		local avatarSize = if ownHuman then math.max(28, lineH * AVATAR_H) else lineH * AVATAR_H
+		e.avatar.Size = UDim2.fromOffset(avatarSize, avatarSize)
+		e.avatar.Position = UDim2.new(0, -lineH * AVATAR_GAP, 0.5, 0)
 	end
 	local iconSize = lineH * ICON
 	e.status.Size = UDim2.fromOffset(0, iconSize)
@@ -625,11 +773,11 @@ local function layout(e, p)
 	end
 end
 
-local function fallbackPlacement(p): (number, number, number)
+local function fallbackPlacement(p, id: number): (number, number, number)
 	local s = p.stats
 	local side = math.sqrt(math.max(s.tiles, 1))
 	local size = math.min(side * 2 / nameLength(p.name), side / 3)
-	return s.cx, s.cy - size / 3, size
+	return s.cx, if id == myId() and p.kind == "Human" then s.cy else s.cy - size / 3, size
 end
 
 function NameLabels.refresh()
@@ -656,6 +804,7 @@ function NameLabels.refresh()
 		local s = p.stats
 		if s.alive and s.tiles > 0 then
 			local e = entries[id] or newEntry(id, p)
+			updateAvatar(e, p)
 			if e.flagCode ~= p.flag then
 				e.flagCode = p.flag
 				if e.flag then
@@ -667,7 +816,7 @@ function NameLabels.refresh()
 			end
 			if not e.placed then
 				-- until the first placement pass has seen this player: centre of mass, size from area
-				local x, y, size = fallbackPlacement(p)
+				local x, y, size = fallbackPlacement(p, id)
 				if e.x == nil then
 					e.x, e.y, e.s = x, y, size
 					e.t0 = os.clock()
@@ -705,6 +854,21 @@ function NameLabels.refresh()
 	end
 end
 
+-- The camera moved (zoom / pan): re-fit the labels to the new zoom. Only the layout runs here
+-- (cheap, on-screen labels only); names, flags, troops and status stay with refresh().
+function NameLabels.relayout()
+	if not ctx then
+		return
+	end
+	local roster = ctx.roster
+	for id, e in entries do
+		local p = roster[id]
+		if p and e.x then
+			layout(e, p)
+		end
+	end
+end
+
 function NameLabels.step(now: number)
 	if not ctx or not ctx.layer.Visible then
 		return
@@ -715,16 +879,24 @@ function NameLabels.step(now: number)
 	elseif #queue > 0 then
 		local budget = CELLS_PER_FRAME
 		while budget > 0 and #queue > 0 do
-			local id = table.remove(queue) :: number
+			local id = queue[#queue]
 			local box = queueBoxes[id]
+			-- The search size is known up front: leave a search that wouldn't fit for the next
+			-- frame (the first search of a frame always runs, so big countries still get placed).
+			if box and budget < CELLS_PER_FRAME and placeCost(box) > budget then
+				break
+			end
+			table.remove(queue)
 			local e = entries[id]
 			local p = ctx.roster[id]
 			if e and p and box then
-				local x, y, size, cost = placeName(id, box, p.name)
+				local x, y, size, cost, availableWidth, availableHeight = placeName(id, box, p.name)
 				budget -= cost
 				if size > 0 then
 					e.placed = true
 					e.tx, e.ty, e.ts = x, y, size
+					e.availableWidth, e.availableHeight = availableWidth, availableHeight
+					e.boundsDirty = true
 				end
 			end
 		end
@@ -749,6 +921,10 @@ function NameLabels.step(now: number)
 			if p then
 				layout(e, p)
 			end
+		end
+		if e.boundsDirty then
+			local p = ctx.roster[id]
+			if p then layout(e, p) end
 		end
 		e.t0 = now
 		if next(e.flashing) and e.vis then

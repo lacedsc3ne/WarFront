@@ -6,7 +6,7 @@
 ]]
 
 -- StarterPlayer.StarterPlayerScripts.PerfOverlay (ModuleScript), used by GameClient.
--- OpenFront PerformanceOverlay: Settings "Performance Overlay" or Shift + D shows a small panel
+-- OpenFront PerformanceOverlay: Settings "Performance Overlay" or F3 shows a small panel
 -- with the current / 60 s average FPS, frame time, ping and the slowest client sections (Perf.lua
 -- writes them to the PlayerGui attribute "FrontlinesPerf" every 5 s).
 -- PerfOverlay.mount(gui)
@@ -71,7 +71,7 @@ function PerfOverlay.mount(gui: Instance)
 	local f = Instance.new("Frame")
 	f.Name = "PerfOverlay"
 	f.AnchorPoint = Vector2.new(0.5, 0)
-	f.Position = UDim2.new(0.5, 0, 0, 56)
+	f.Position = UDim2.new(0.5, 0, 0, 96) -- below the battle's top bar
 	f.AutomaticSize = Enum.AutomaticSize.XY
 	f.BackgroundColor3 = Color3.new(0, 0, 0)
 	f.BackgroundTransparency = 0.3
@@ -105,12 +105,11 @@ function PerfOverlay.mount(gui: Instance)
 		end
 	end)
 	UserInputService.InputBegan:Connect(function(input, processed)
-		if processed or input.KeyCode ~= Enum.KeyCode.D then
+		-- F3, not Shift + D: D also pans the camera.
+		if input.KeyCode ~= Enum.KeyCode.F3 or UserInputService:GetFocusedTextBox() then
 			return
 		end
-		if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.RightShift) then
-			Settings.set("perfOverlay", not Settings.values.perfOverlay)
-		end
+		Settings.set("perfOverlay", not Settings.values.perfOverlay)
 	end)
 	RunService.RenderStepped:Connect(function()
 		local now = os.clock()

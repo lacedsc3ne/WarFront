@@ -49,8 +49,10 @@ local Matchmaker = {}
 
 local IS_STUDIO = RunService:IsStudio()
 local JOB = if game.JobId ~= "" then game.JobId else "studio-" .. HttpService:GenerateGUID(false)
-local PREFIX = "WF1_"
+local PREFIX = if IS_STUDIO then "WF1_Studio_" else "WF1_"
 local SYNC_SECONDS = 2
+local FAST_SYNC_SECONDS = 0.5 -- while a battle is about to start, so every server sends its players quickly
+local fastUntil = 0 -- os.clock() until which the sync loop runs fast
 local CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
 local ctx: any = nil
@@ -118,11 +120,47 @@ end
 
 -- Teleports
 local function handOff(plr: Player)
-	-- Save the profile now and stop this server from saving it again, so the next server reads
-	-- the up-to-date profile (Progression.handOff).
 	if ctx.progression and ctx.progression.handOff then
-		pcall(ctx.progression.handOff, plr)
+		local ok, saved = pcall(ctx.progression.handOff, plr)
+		return ok and saved == true
 	end
+	return true
+end
+
+local function resumeHandOff(plr: Player)
+	if ctx and ctx.progression and ctx.progression.resumeHandOff then
+		ctx.progression.resumeHandOff(plr)
+	end
+end
+
+TeleportService.TeleportInitFailed:Connect(function(plr)
+	resumeHandOff(plr)
+end)
+
+-- Saves everyone at the same time (one save per player in parallel, not one after another), so a
+-- full battle doesn't wait for ten saves in a row before the teleport.
+local function savedPlayers(list)
+	local ready = {}
+	local pending = #list
+	local done = Instance.new("BindableEvent")
+	for _, plr in list do
+		task.spawn(function()
+			if handOff(plr) then
+				if plr.Parent then table.insert(ready, plr) end
+			else
+				notice(plr, "Your progress could not be saved yet. Please try again before leaving.", "red")
+			end
+			pending -= 1
+			if pending == 0 then
+				done:Fire()
+			end
+		end)
+	end
+	if pending > 0 then
+		done.Event:Wait()
+	end
+	done:Destroy()
+	return ready
 end
 
 -- Sends players to a reserved match server (lobby -> match).
@@ -148,9 +186,8 @@ local function teleportToMatch(list: { Player }, access: string, label: string)
 		end
 		return
 	end
-	for _, plr in alive do
-		handOff(plr)
-	end
+	alive = savedPlayers(alive)
+	if #alive == 0 then return end
 	local options = Instance.new("TeleportOptions")
 	options.ReservedServerAccessCode = access
 	local ok, err = pcall(function()
@@ -159,13 +196,28 @@ local function teleportToMatch(list: { Player }, access: string, label: string)
 	if not ok then
 		warn("[War Front] teleport to match failed: " .. tostring(err))
 		for _, plr in alive do
+			resumeHandOff(plr)
 			notice(plr, "Couldn't join the match. Please try again.", "red")
 		end
 	end
 end
 
 -- Match / anywhere -> lobby place.
-function Matchmaker.toLobby(list: { Player })
+local REQUEUE_TYPES = { ffa=true, team=true, special=true, ranked=true, solo=true }
+local function requeuePlayer(plr: Player, queue: string)
+	if not plr.Parent or not Matchmaker.active or not REQUEUE_TYPES[queue] then return end
+	Matchmaker.handle(plr, if queue == "ranked" then "rankedJoin" else "play", if queue ~= "ranked" then queue else nil)
+end
+
+function Matchmaker.toLobby(list: { Player }, queue: string?)
+	queue = if queue and REQUEUE_TYPES[queue] then queue else nil
+	-- Leaving an unfinished tutorial counts as having been offered onboarding.
+	-- This also covers participants who arrived after the match config was loaded.
+	if workspace:GetAttribute("WFMatchKind") == "tutorial" and ctx.progression and ctx.progression.markTutorialStarted then
+		for _, plr in list do
+			if plr.Parent then ctx.progression.markTutorialStarted(plr) end
+		end
+	end
 	local alive = {}
 	for _, plr in list do
 		if plr.Parent then
@@ -179,16 +231,21 @@ function Matchmaker.toLobby(list: { Player })
 	if IS_STUDIO then
 		if ctx.studioToLobby then
 			ctx.studioToLobby(alive) -- back to the menu in this server
+			if queue then
+				for _, plr in alive do task.defer(requeuePlayer, plr, queue) end
+			end
 		end
 		return
 	end
-	for _, plr in alive do
-		handOff(plr)
-	end
+	alive = savedPlayers(alive)
+	if #alive == 0 then return end
 	local ok, err = pcall(function()
-		TeleportService:TeleportAsync(Config.LOBBY_PLACE_ID, alive)
+		local options = Instance.new("TeleportOptions")
+		if queue then options:SetTeleportData({ warFrontRequeue = queue }) end
+		TeleportService:TeleportAsync(Config.LOBBY_PLACE_ID, alive, options)
 	end)
 	if not ok then
+		for _, plr in alive do resumeHandOff(plr) end
 		warn("[War Front] teleport to lobby failed: " .. tostring(err))
 	end
 end
@@ -204,7 +261,7 @@ local function reserveMatch(cfg): string?
 		return nil
 	end
 	local ok, access, privateId = pcall(function()
-		return TeleportService:ReserveServer(Config.MATCH_PLACE_ID)
+		return TeleportService:ReserveServerAsync(Config.MATCH_PLACE_ID)
 	end)
 	if not ok or not access then
 		warn("[War Front] ReserveServer failed: " .. tostring(access))
@@ -511,7 +568,7 @@ local function rollGame(kind: string, prev)
 	local unadjusted = crowdedPlayers or rollMaxPlayers(map, team, m.compact == true)
 	teams = if team then fitTeams(teams, unadjusted) else nil
 	local maxPlayers = math.max(2, adjustForTeams(unadjusted, teams))
-	maxPlayers = math.max(2, math.min(maxPlayers, adjustForTeams(Config.PUBLIC_MAX_PLAYERS, teams)))
+	maxPlayers = if kind == "ffa" then 10 else math.max(2, math.min(maxPlayers, adjustForTeams(Config.PUBLIC_MAX_PLAYERS, teams)))
 	local mode = if team then { kind = "Team", teams = teams } else { kind = "FFA" }
 	local hvn = teams == "Humans Vs Nations"
 	local recent = if prev and type(prev.recent) == "table" then table.clone(prev.recent) else {}
@@ -632,7 +689,7 @@ local function startPublic(rec, members)
 	local ids = {}
 	for _, m in members do
 		local uid = tonumber(string.match(m.key, ":(%d+)$"))
-		if uid then
+		if uid and (rec.type ~= "ffa" or #ids < 10) then
 			ids[#ids + 1] = uid
 		end
 	end
@@ -645,13 +702,15 @@ local function startPublic(rec, members)
 		settings = rec.settings,
 	}
 	local access = reserveMatch(cfg)
-	try(function()
-		store("Public"):UpdateAsync(rec.type, function(old)
+	return try(function()
+		return store("Public"):UpdateAsync(rec.type, function(old)
 			if not old or old.id ~= rec.id then
 				return nil
 			end
 			if access then
 				old.state = "started"
+				-- All lobby servers use the same admitted players; overflow stays queued.
+				if rec.type == "ffa" then old.players = ids end
 				old.access = access
 				old.startedAt = os.time()
 			else
@@ -695,6 +754,18 @@ local function syncPublicType(kind: string)
 	if not rec then
 		return
 	end
+	if kind == "ffa" and rec.state == "open" and (rec.max ~= 10 or not rec.mode or rec.mode.kind ~= "FFA") then
+		local normalized = try(function()
+			return pubStore:UpdateAsync(kind, function(old)
+				if old and old.id == rec.id and old.state == "open" then
+					old.max, old.mode = 10, { kind = "FFA" }
+					return old
+				end
+				return nil
+			end, 3600)
+		end)
+		if normalized then rec = normalized else return end
+	end
 	pub.recs[kind] = rec
 
 	-- Our players: membership entries for the open lobby (written on change, refreshed every 10 s).
@@ -717,10 +788,13 @@ local function syncPublicType(kind: string)
 	end
 	pub.members[kind] = list
 
+	if rec.state ~= "open" or (rec.startsAt and rec.startsAt - now <= 4) then
+		fastUntil = os.clock() + 12 -- starting soon: check often so no server lags behind
+	end
 	if rec.state == "open" then
 		local max = rec.max or Config.PUBLIC_MAX_PLAYERS
-		if #members > 0 and not rec.startsAt then
-			-- The countdown starts with the first player (an empty lobby waits).
+		if not rec.startsAt then
+			-- The countdown always runs, even with nobody queued (owner, 11 Oct 2026).
 			try(function()
 				pubStore:UpdateAsync(kind, function(old)
 					if old and old.id == rec.id and old.state == "open" and not old.startsAt then
@@ -730,16 +804,22 @@ local function syncPublicType(kind: string)
 					return nil
 				end, 3600)
 			end)
-		elseif #members == 0 and rec.startsAt then
-			try(function()
-				pubStore:UpdateAsync(kind, function(old)
-					if old and old.id == rec.id and old.state == "open" then
-						old.startsAt = nil
-						return old
+		elseif #members == 0 and now >= rec.startsAt then
+			-- Time's up with nobody queued: a new battle (next map) and a fresh countdown.
+			local rolled = try(function()
+				return pubStore:UpdateAsync(kind, function(old)
+					if old and old.id == rec.id and old.state == "open" and old.startsAt and now >= old.startsAt then
+						local fresh = rollGame(kind, old)
+						fresh.startsAt = now + Config.PUBLIC_LOBBY_SECONDS
+						return fresh
 					end
 					return nil
 				end, 3600)
 			end)
+			if type(rolled) == "table" then
+				rec = rolled
+				pub.recs[kind] = rec
+			end
 		elseif #members > 0 and rec.startsAt and (now >= rec.startsAt or #members >= max) then
 			-- Full or time's up: the first server to claim it starts the game.
 			local claimed = false
@@ -755,15 +835,26 @@ local function syncPublicType(kind: string)
 				end, 3600)
 			end)
 			if claimed then
-				startPublic(rec, members)
+				-- Send our own players right away instead of on the next sync beat.
+				local started = startPublic(rec, members)
+				if type(started) == "table" and started.state == "started" and started.access then
+					rec = started
+					pub.recs[kind] = rec
+				end
 			end
 		end
-	elseif rec.state == "started" and rec.access then
+	end
+	if rec.state == "started" and rec.access then
 		-- Send our members of this lobby to the match.
 		local list2 = {}
 		for plr, k in pub.want do
 			if k == kind and pub.memberOf[plr] == rec.id then
-				list2[#list2 + 1] = plr
+				if kind == "ffa" and rec.players and not table.find(rec.players, plr.UserId) then
+					removeMember(plr)
+					notice(plr, "That game filled up. You are queued for the next Free For All.", "blue")
+				else
+					list2[#list2 + 1] = plr
+				end
 			end
 		end
 		if #list2 > 0 then
@@ -1214,6 +1305,20 @@ local function startLobby(plr: Player)
 		return old
 	end)
 	unlist(code)
+	fastUntil = os.clock() + 12 -- other servers' members follow on their next (fast) beat
+	-- Send this server's members now instead of on the next sync beat.
+	local go = {}
+	for p, c in private.codeOf do
+		if c == code and rec.members[tostring(p.UserId)] then
+			go[#go + 1] = p
+		end
+	end
+	for _, p in go do
+		private.codeOf[p] = nil
+	end
+	if #go > 0 then
+		task.spawn(teleportToMatch, go, access, "Starting...")
+	end
 end
 
 local function syncPrivate()
@@ -1288,7 +1393,7 @@ local function soloMatch(plr: Player, kind: string, custom: any)
 	end
 	pub.want[plr] = nil
 	removeMember(plr)
-	local settings = if kind == "solo" then { difficulty = "Medium", bots = 400, nations = true } else {}
+	local settings = if kind == "solo" then { difficulty = "Medium", bots = 400, nations = true } else { difficulty = "Easy", bots = 12, nations = true, overtime = false }
 	local mode = { kind = "FFA" }
 	if kind == "solo" and type(custom) == "table" then
 		local s = Matchmaker.cleanSettings(custom, Matchmaker.DEFAULT_SETTINGS)
@@ -1298,8 +1403,14 @@ local function soloMatch(plr: Player, kind: string, custom: any)
 		mode = modeFromSettings(s)
 		settings = rulesFromSettings(s)
 	end
-	local access = reserveMatch({ kind = kind, map = map, mode = mode, players = { plr.UserId }, settings = settings })
+	-- Tutorial lessons (How to play page): which short lesson to run instead of the full tutorial.
+	local lesson = if kind == "tutorial" and type(custom) == "string" and #custom <= 20 and string.match(custom, "^%a+$") then custom else nil
+	local access = reserveMatch({ kind = kind, map = map, mode = mode, players = { plr.UserId }, settings = settings, lesson = lesson })
 	if access then
+		-- Record onboarding in the source profile before its save/teleport handoff.
+		if kind == "tutorial" and ctx.progression and ctx.progression.markTutorialStarted then
+			ctx.progression.markTutorialStarted(plr)
+		end
 		task.spawn(teleportToMatch, { plr }, access, "Starting...")
 	else
 		notice(plr, "An error occurred. Please try again or contact support.", "red")
@@ -1315,6 +1426,11 @@ end)
 
 function Matchmaker.handle(plr: Player, kind: string, a1: any, a2: any)
 	-- At most 5 requests a second per player (each may write to MemoryStore).
+	-- Validate before cooldown/cache lookup; keys are fixed operation categories.
+	if kind == "lobbyJoin" and (typeof(a1) ~= "string" or #a1 > 32 or not cleanCode(a1)) then
+		notice(plr, "Please enter a valid lobby ID.", "red")
+		return
+	end
 	local now = os.clock()
 	if lastRequestAt[plr] and now - lastRequestAt[plr] < 0.2 then
 		return
@@ -1323,7 +1439,7 @@ function Matchmaker.handle(plr: Player, kind: string, a1: any, a2: any)
 	-- Each of these reserves a server or writes a lobby: spaced out so spam can't flood them.
 	local gap = if kind == "play" and (a1 == "tutorial" or a1 == "solo") then 10 elseif kind == "lobbyCreate" then 3 elseif kind == "lobbyJoin" then 1 elseif kind == "lobbyList" or kind == "lobbyVisibility" then 1.5 else 0
 	if gap > 0 then
-		local key = kind .. (if typeof(a1) == "string" then a1 else "")
+		local key = if kind == "play" then "play:" .. a1 else kind
 		heavyAt[plr] = heavyAt[plr] or {}
 		if heavyAt[plr][key] and now - heavyAt[plr][key] < gap then
 			notice(plr, "Please wait a few seconds before trying again.", "blue")
@@ -1333,7 +1449,7 @@ function Matchmaker.handle(plr: Player, kind: string, a1: any, a2: any)
 	end
 	if kind == "play" then
 		if a1 == "tutorial" then
-			task.spawn(soloMatch, plr, "tutorial")
+			task.spawn(soloMatch, plr, "tutorial", a2) -- a2: lesson key (optional)
 			return
 		end
 		if a1 == "solo" then
@@ -1482,6 +1598,12 @@ function Matchmaker.init(c)
 		local ok, data = pcall(function()
 			return plr:GetJoinData()
 		end)
+		local teleport = ok and type(data) == "table" and data.TeleportData
+		local queue = type(teleport) == "table" and teleport.warFrontRequeue
+		if type(queue) == "string" and REQUEUE_TYPES[queue] and data.SourcePlaceId == Config.MATCH_PLACE_ID then
+			task.delay(4, requeuePlayer, plr, queue)
+			return
+		end
 		local code = ok and type(data) == "table" and cleanCode(data.LaunchData)
 		if code then
 			task.delay(4, function() -- the menu is up by then
@@ -1500,7 +1622,7 @@ function Matchmaker.init(c)
 			try(syncPublic)
 			try(syncRanked)
 			try(syncPrivate)
-			task.wait(SYNC_SECONDS)
+			task.wait(if os.clock() < fastUntil then FAST_SYNC_SECONDS else SYNC_SECONDS)
 		end
 	end)
 end

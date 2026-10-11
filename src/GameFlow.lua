@@ -124,6 +124,10 @@ function Flow.canAttackPlayer(p, targetId: number): boolean
 	if q and p.kind == "Human" and Flow.isImmune(q) then
 		return false
 	end
+	-- Tutorial: computer players never attack the learner, so no lesson can be lost.
+	if q and q.kind == "Human" and p.kind ~= "Human" and workspace:GetAttribute("WFMatchKind") == "tutorial" then
+		return false
+	end
 	return true
 end
 
@@ -553,6 +557,10 @@ function Flow.checkWin()
 		if p.kind == "Human" and ctx.playerOf(p) then
 			humans += 1
 		end
+	end
+	-- Private tutorial bots cannot end the lesson while the learner reads or experiments.
+	if workspace:GetAttribute("WFMatchKind") == "tutorial" and leader and leader.kind ~= "Human" then
+		return nil, humans == 0
 	end
 	if leader then
 		if elapsedSeconds() >= Config.HARD_TIME_LIMIT_SECONDS then

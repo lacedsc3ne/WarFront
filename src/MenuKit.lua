@@ -30,6 +30,11 @@ local UserInputService = game:GetService("UserInputService")
 local MenuIconsData = require(script.Parent:WaitForChild("MenuIconsData"))
 
 local MenuKit = {}
+local DeviceLayout=require(script.Parent:WaitForChild("DeviceLayout"))
+local function mobileDevice()
+ local st=DeviceLayout.state
+ return st.touch==true and (st.profile=="phone" or st.profile=="tablet")
+end
 
 local function rgb(hex: number): Color3
 	return Color3.fromRGB(hex // 65536, (hex // 256) % 256, hex % 256)
@@ -81,6 +86,10 @@ local function fontOf(weight: Enum.FontWeight, fallback: Enum.Font): Font
 	end
 	return Font.fromEnum(fallback)
 end
+
+MenuKit.C.PANEL=Color3.fromRGB(5,22,40)
+MenuKit.C.PANEL_ROW=Color3.fromRGB(11,37,63)
+MenuKit.C.PANEL_HI=Color3.fromRGB(18,53,82)
 
 MenuKit.F = {
 	REGULAR = fontOf(Enum.FontWeight.Regular, Enum.Font.Gotham),
@@ -485,16 +494,16 @@ function MenuKit.page(parent: Instance, title: string, onBack: () -> ()): Page
 	self.tabButtons = {}
 	local frame = make("Frame", {
 		Name = "Page",
-		BackgroundColor3 = C.BLACK,
-		BackgroundTransparency = 0.15, -- bg-black/70 + backdrop-blur (no blur here, so a bit darker)
+		BackgroundColor3 = C.PANEL,
+		BackgroundTransparency = 0,
 		BorderSizePixel = 0,
 		ClipsDescendants = true,
 		Visible = false,
 		Active = true,
 		Parent = parent,
 	})
-	self.corner = MenuKit.corner(frame, 16)
-	self.border = MenuKit.stroke(frame, 0.9)
+	self.corner = MenuKit.corner(frame, 8)
+	self.border = MenuKit.stroke(frame, 0.2,Color3.fromRGB(63,131,187),1.5)
 	self.frame = frame
 
 	local header = make("Frame", { Name = "Header", BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 88), Parent = frame })
@@ -513,8 +522,8 @@ function MenuKit.page(parent: Instance, title: string, onBack: () -> ()): Page
 		Name = "Back",
 		Text = "",
 		AutoButtonColor = false,
-		BackgroundColor3 = C.WHITE,
-		BackgroundTransparency = 0.95,
+		BackgroundColor3 = C.PANEL_ROW,
+		BackgroundTransparency = 0,
 		BorderSizePixel = 0,
 		AnchorPoint = Vector2.new(0, 0.5),
 		Size = UDim2.fromOffset(40, 40),
@@ -530,7 +539,8 @@ function MenuKit.page(parent: Instance, title: string, onBack: () -> ()): Page
 		Parent = back,
 	})
 	MenuKit.hover(back, function(s)
-		back.BackgroundTransparency = if s == "idle" then 0.95 else 0.9
+		back.BackgroundTransparency = 0
+		back.BackgroundColor3 = if s=="idle" then C.PANEL_ROW else C.PANEL_HI
 		arrow.ImageColor3 = if s == "idle" then C.GRAY400 else C.WHITE
 	end)
 	back.Activated:Connect(onBack)
@@ -546,7 +556,7 @@ function MenuKit.page(parent: Instance, title: string, onBack: () -> ()): Page
 		Parent = header,
 	})
 
-	local tabBar = make("Frame", { Name = "Tabs", BackgroundTransparency = 1, Visible = false, Parent = frame })
+	local tabBar = make(if mobileDevice() then "ScrollingFrame" else "Frame", { Name = "Tabs", BackgroundTransparency = 1, Visible = false, Parent = frame })
 	MenuKit.list(tabBar, true, 4, { HorizontalAlignment = Enum.HorizontalAlignment.Center })
 	make("Frame", {
 		Name = "Divider",
@@ -559,6 +569,7 @@ function MenuKit.page(parent: Instance, title: string, onBack: () -> ()): Page
 		Parent = frame,
 		Visible = false,
 	})
+	if tabBar:IsA("ScrollingFrame") then tabBar.BorderSizePixel=0;tabBar.CanvasSize=UDim2.new();tabBar.AutomaticCanvasSize=Enum.AutomaticSize.X;tabBar.ScrollingDirection=Enum.ScrollingDirection.X;tabBar.ScrollBarThickness=2 end
 	self.tabBar = tabBar
 
 	local body = make("ScrollingFrame", {
@@ -584,17 +595,18 @@ end
 function Page.layout(self: any, mobile: boolean)
 	self.mobile = mobile
 	local hp = if mobile then 16 else 24 -- p-4 lg:p-6
-	local headerH = 40 + 2 * hp
+	local headerH = if mobileDevice() then 56 else 40 + 2 * hp
 	self.header.Size = UDim2.new(1, 0, 0, headerH)
 	self.back.Position = UDim2.new(0, hp, 0.5, 0)
 	self.title.Position = UDim2.new(0, hp + 40 + 16, 0.5, 0)
 	self.title.Size = UDim2.new(1, -(2 * hp + 56), 0, 32)
 	self.title.TextSize = if mobile then 20 else 24
-	self.corner.CornerRadius = UDim.new(0, if mobile then 0 else 16)
+	self.corner.CornerRadius = UDim.new(0, if mobile then 0 else 8)
 	self.border.Enabled = not mobile
 	local y = headerH
 	local hasTabs = #self.tabs > 0
 	self.tabBar.Visible = hasTabs
+ if self.tabBar:IsA("ScrollingFrame") then self.tabBar.ScrollingEnabled=mobileDevice();self.tabBar:FindFirstChildWhichIsA("UIListLayout").HorizontalAlignment=if mobileDevice() then Enum.HorizontalAlignment.Left else Enum.HorizontalAlignment.Center end
 	if hasTabs then
 		self.tabBar.Position = UDim2.fromOffset(0, y)
 		self.tabBar.Size = UDim2.new(1, 0, 0, 44)
@@ -740,8 +752,8 @@ function MenuKit.card(parent: Instance, order: number, padX: number?, padY: numb
 	local f = make("Frame", {
 		Name = "Card",
 		LayoutOrder = order,
-		BackgroundColor3 = C.WHITE,
-		BackgroundTransparency = 0.95,
+		BackgroundColor3 = C.PANEL_ROW,
+		BackgroundTransparency = 0,
 		BorderSizePixel = 0,
 		Size = UDim2.new(1, 0, 0, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
@@ -784,8 +796,8 @@ local function settingRow(parent: Instance, order: number, label: string, desc: 
 		LayoutOrder = order,
 		Text = "",
 		AutoButtonColor = false,
-		BackgroundColor3 = C.WHITE,
-		BackgroundTransparency = 0.95,
+		BackgroundColor3 = C.PANEL_ROW,
+		BackgroundTransparency = 0,
 		BorderSizePixel = 0,
 		Size = UDim2.new(1, 0, 0, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
@@ -795,7 +807,10 @@ local function settingRow(parent: Instance, order: number, label: string, desc: 
 	local st = MenuKit.stroke(b, 0.9)
 	MenuKit.pad(b, 16, 16, 16, 16)
 	MenuKit.hover(b, function(s)
-		b.BackgroundTransparency = if s == "idle" then 0.95 else 0.9
+		b.BackgroundTransparency = 0
+		if not b:GetAttribute("RedHover") then -- red rows (navRow) colour themselves
+			b.BackgroundColor3=if s=="idle" then C.PANEL_ROW else C.PANEL_HI
+		end
 		st.Color = if GuiService.SelectedObject == b then C.MALIBU else C.WHITE
 		st.Transparency = if GuiService.SelectedObject == b then 0.2 else 0.9
 	end)
@@ -813,6 +828,17 @@ local function settingRow(parent: Instance, order: number, label: string, desc: 
 		BackgroundTransparency = 1,
 		Parent = b,
 	})
+	local function fitControl()
+  local narrow=mobileDevice() and b.AbsoluteSize.X<480
+  col.Size=UDim2.new(1,if narrow then 0 else -(rightW+16),0,0)
+  right.AnchorPoint=if narrow then Vector2.zero else Vector2.new(1,.5)
+  right.Position=if narrow then UDim2.fromOffset(0,col.AbsoluteSize.Y+12) else UDim2.fromScale(1,.5)
+  right.Size=UDim2.fromOffset(if narrow then math.min(rightW,math.max(40,b.AbsoluteSize.X-32)) else rightW,if narrow then 36 else 28)
+ end
+ local resize=b:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitControl)
+ local textResize=col:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitControl)
+ b.Destroying:Connect(function()resize:Disconnect();textResize:Disconnect()end)
+ fitControl()
 	return b, right
 end
 
@@ -1004,19 +1030,71 @@ function MenuKit.selectRow(parent: Instance, order: number, label: string, desc:
 	return refresh
 end
 
+-- A real expandable dropdown; options occupy their own space in the scrolling page.
+function MenuKit.dropdownRow(parent, order, label, desc, options, get, set)
+ local card = MenuKit.card(parent, order, 16, 12, 8)
+ card.Name = "InGameUILayout"
+ MenuKit.paragraph(card, 1, label, {FontFace=F.BOLD, TextSize=16})
+ MenuKit.paragraph(card, 2, desc, {TextSize=14, TextColor3=C.GRAY400})
+ local selected = make("TextButton", {
+  Name="Selected", LayoutOrder=3, Size=UDim2.new(1,0,0,38),
+  BackgroundColor3=C.PANEL_HI, BorderSizePixel=0, AutoButtonColor=false,
+  FontFace=F.BOLD, TextSize=16, TextColor3=C.WHITE, Parent=card,
+ })
+ MenuKit.corner(selected, 6)
+ MenuKit.stroke(selected, .5, C.MALIBU, 1)
+ local choices = make("Frame", {
+  Name="Options", LayoutOrder=4, Size=UDim2.new(1,0,0,0),
+  AutomaticSize=Enum.AutomaticSize.Y, BackgroundTransparency=1, Visible=false, Parent=card,
+ })
+ MenuKit.list(choices, false, 4)
+ local buttons = {}
+ local function refresh()
+  local value=get()
+  for i,option in options do
+   if option[1]==value then selected.Text=option[2].."  ▾" end
+   buttons[i].BackgroundColor3=if option[1]==value then C.PANEL_HI else C.PANEL
+  end
+ end
+ for i,option in options do
+  local b=make("TextButton", {
+   Name=tostring(option[1]), LayoutOrder=i, Size=UDim2.new(1,0,0,36),
+   BackgroundColor3=C.PANEL, BorderSizePixel=0, AutoButtonColor=false,
+   FontFace=F.BOLD, TextSize=15, TextColor3=C.WHITE, Text=option[2], Parent=choices,
+  })
+  MenuKit.corner(b,6)
+  buttons[i]=b
+  b.Activated:Connect(function() set(option[1]);choices.Visible=false;refresh() end)
+ end
+ selected.Activated:Connect(function() choices.Visible=not choices.Visible end)
+ refresh()
+ return refresh
+end
+
 -- Navigation row (same shell as the setting rows) with an icon, label, description and a
 -- chevron; red = the danger style (SettingsModal exit row: text-red-400, hover bg-red-600/20).
 function MenuKit.navRow(parent: Instance, order: number, iconName: string?, label: string, desc: string?, red: boolean?): (TextButton, TextLabel)
 	local b, right = settingRow(parent, order, label, desc, 64)
 	if red then
+		b:SetAttribute("RedHover", true)
 		local col = b:FindFirstChild("Text")
 		local first = col and col:FindFirstChildWhichIsA("TextLabel")
 		if first then
 			first.TextColor3 = C.RED400
 		end
 		MenuKit.hover(b, function(s)
-			b.BackgroundColor3 = if s == "idle" then C.WHITE else C.RED600
-			b.BackgroundTransparency = if s == "idle" then 0.95 else 0.8
+			local lit = s ~= "idle"
+			b.BackgroundColor3 = if lit then Color3.fromRGB(214, 64, 86) else C.PANEL_ROW
+			b.BackgroundTransparency = 0
+			-- Text and icons go white on the red hover so they stay readable.
+			if first then
+				first.TextColor3 = if lit then C.WHITE else C.RED400
+			end
+			for _, d in b:GetDescendants() do
+				if d:IsA("ImageLabel") then
+					d.ImageColor3 = if lit then C.WHITE else C.RED400
+				end
+			end
 		end)
 	end
 	if iconName then
@@ -1057,7 +1135,7 @@ function MenuKit.modal(gui: Instance, name: string?): any
 		Size = UDim2.fromScale(1, 1),
 		Parent = holder,
 	})
-	local box = make("Frame", { Name = "Box", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), BackgroundColor3 = C.GRAY900, BackgroundTransparency = 0.25, BorderSizePixel = 0, Active = true, Parent = holder })
+	local box = make("Frame", { Name = "Box", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), BackgroundColor3 = C.PANEL, BackgroundTransparency = 0, BorderSizePixel = 0, Active = true, Parent = holder })
 	local boxCorner = MenuKit.corner(box, 16)
 	m.onBack = function()
 		m.close()

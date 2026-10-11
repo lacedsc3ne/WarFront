@@ -91,7 +91,16 @@ local function assetFor(name: string): string?
 	return nil
 end
 
-function SoundKit.play(name: string)
+local lastClick = -math.huge
+function SoundKit.play(name: string, volume: number?)
+	if name == "click" then
+		-- UIClickSound plays it for menu buttons; places that also play it themselves don't double up.
+		local now = os.clock()
+		if now - lastClick < 0.06 then
+			return
+		end
+		lastClick = now
+	end
 	local asset = assetFor(name)
 	if not asset then
 		return
@@ -106,6 +115,9 @@ function SoundKit.play(name: string)
 		templates[name] = t
 	end
 	local s = t:Clone()
+	if volume ~= nil then
+		s.Volume = math.clamp(volume, 0, 10)
+	end
 	s.Parent = SoundService
 	s.Ended:Once(function()
 		s:Destroy()

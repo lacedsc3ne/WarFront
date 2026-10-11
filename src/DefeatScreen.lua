@@ -32,14 +32,14 @@ local MenuKit = require(script.Parent:WaitForChild("MenuKit"))
 
 local DefeatScreen = {}
 
-local FONT = MenuKit.F.REGULAR
+local FONT = MenuKit.F.BOLD
 local FONT_BOLD = MenuKit.F.BOLD
 local FONT_BLACK = MenuKit.F.BOLD
 local K = MenuKit.C
 local C = {
-	NAVY = K.GRAY800, -- WinModal bg-gray-800/70
+	NAVY = Color3.fromRGB(5,22,40), -- WinModal bg-gray-800/70
 	NAVY_LIGHT = K.SURFACE, -- secondary action card bg-surface
-	BLUE = K.MALIBU, -- --color-malibu-blue
+	BLUE = Color3.fromRGB(0,177,235), -- --color-malibu-blue
 	BLUE_DARK = K.AQUARIUS,
 	YELLOW = K.CYBER, -- --color-cyber-yellow
 	SLATE = K.WHITE,
@@ -52,6 +52,14 @@ local C = {
 local B_ACTION = "FrontlinesDefeatB"
 local UP_ACTION = "FrontlinesDefeatUp"
 
+local MatchSkin=require(script.Parent:WaitForChild("MatchSkin"))
+-- Night look (MatchSkin.night): menu colours, plain words, green revive button.
+local NIGHT = MatchSkin.night == true
+local NK = if NIGHT then MatchSkin.Kit.C else nil
+if NIGHT then
+	C.NAVY, C.BLUE, C.BLUE_DARK = NK.PAGE, NK.RAISED, NK.RAISED:Lerp(NK.WHITE, 0.1)
+	C.GRAY_DARK, C.YELLOW, C.WHITE, C.GRAY = NK.DEEP, NK.YELLOW, NK.TEXT, NK.MUTED
+end
 local function make(className: string, props: { [string]: any })
 	local inst = Instance.new(className)
 	for k, v in props do
@@ -62,6 +70,7 @@ local function make(className: string, props: { [string]: any })
 	if props.Parent then
 		inst.Parent = props.Parent
 	end
+	MatchSkin.decorate(inst)
 	return inst
 end
 
@@ -125,6 +134,7 @@ local card = make("Frame", {
 	Parent = gui,
 })
 corner(card, 8)
+ make("TextLabel",{BackgroundTransparency=1,Size=UDim2.new(1,0,0,16),Text="YOUR COUNTRY HAS FALLEN",FontFace=FONT_BOLD,TextSize=11,TextColor3=MatchSkin.C.cyan,LayoutOrder=0,Parent=card})
 local cardScale = make("UIScale", { Parent = card })
 local cardPad = make("UIPadding", {
 	PaddingTop = UDim.new(0, 24),
@@ -144,9 +154,9 @@ local title = make("TextLabel", {
 	Size = UDim2.new(1, 0, 0, 32),
 	BackgroundTransparency = 1,
 	FontFace = FONT,
-	Text = "You died", -- win_modal.died
-	TextColor3 = C.WHITE,
-	TextSize = 26,
+	Text = "DEFEAT", -- win_modal.died
+	TextColor3 = MatchSkin.C.red,
+	TextSize = 42,
 	LayoutOrder = 1,
 	Parent = card,
 })
@@ -211,13 +221,7 @@ local row = make("Frame", {
 	LayoutOrder = 3,
 	Parent = card,
 })
-local rowLayout = make("UIListLayout", {
-	FillDirection = Enum.FillDirection.Horizontal,
-	HorizontalAlignment = Enum.HorizontalAlignment.Center,
-	SortOrder = Enum.SortOrder.LayoutOrder,
-	Padding = UDim.new(0, 10),
-	Parent = row,
-})
+local rowLayout=make("UIGridLayout",{CellSize=UDim2.new(.25,-8,0,48),CellPadding=UDim2.fromOffset(10,10),FillDirectionMaxCells=4,SortOrder=Enum.SortOrder.LayoutOrder,Parent=row})
 
 -- o-button variant="primary" width="block": bg-malibu-blue hover:bg-aquarius, rounded-xl,
 -- font-bold uppercase tracking-wider, py-3 px-4 text-base; disabled:bg-gray-600 text-gray-300.
@@ -234,6 +238,9 @@ local function oButton(text: string, order: number): (TextButton, TextLabel)
 	corner(b, 12)
 	b:SetAttribute("Base", C.BLUE)
 	MenuKit.hover(b, function(s)
+		if b:GetAttribute("RedHover") then
+			return -- Leave battle (Night) colours itself
+		end
 		local base = b:GetAttribute("Base") or C.BLUE
 		if b.Selectable == false or base ~= C.BLUE then
 			b.BackgroundColor3 = base
@@ -255,10 +262,64 @@ local function oButton(text: string, order: number): (TextButton, TextLabel)
 	return b, l
 end
 
-local leaveBtn, leaveLabel = oButton("EXIT GAME", 1) -- win_modal.exit
-local newBtn, newLabel = oButton("NEW COUNTRY", 2)
-local reviveBtn, reviveTitle = oButton("REVIVE", 3)
-local watchBtn, watchLabel = oButton("SPECTATE", 4) -- win_modal.spectate
+local reviveBtn, reviveTitle = oButton(if NIGHT then "Come back" else "REVIVE", 1)
+local watchBtn, watchLabel = oButton(if NIGHT then "Watch" else "SPECTATE", 2)
+local newBtn, newLabel = oButton(if NIGHT then "New country" else "NEW COUNTRY", 4)
+local leaveBtn, leaveLabel = oButton(if NIGHT then "Leave battle" else "EXIT GAME", 5)
+if NIGHT then
+	for _, l in { reviveTitle, watchLabel, newLabel, leaveLabel } do
+		l.FontFace = MatchSkin.Kit.F.TITLE
+	end
+	leaveLabel.TextColor3 = NK.PINK
+	for _, b in { reviveBtn, watchBtn, newBtn, leaveBtn } do
+		b:FindFirstChildWhichIsA("UICorner").CornerRadius = UDim.new(0.5, 0)
+	end
+	for _, v in card:GetChildren() do
+		if v:IsA("TextLabel") and v.Text == "YOUR COUNTRY HAS FALLEN" then
+			v.Visible = false
+		end
+	end
+	title.Text = "You were defeated"
+	-- The owner's pictures: torn flag on top, heart on Come back, binoculars on Watch.
+	local Art = require(script.Parent:WaitForChild("NightMenu"):WaitForChild("Art"))
+	Art.image("Defeated", { Size = UDim2.fromOffset(88, 88), LayoutOrder = 0, Parent = card })
+	-- Picture and label centred together as one group.
+	for _, pair in { { reviveBtn, reviveTitle, "FreeRevive" }, { watchBtn, watchLabel, "Watching" } } do
+		local group = make("Frame", { Name = "NightContent", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(0, 0, 1, 0), AutomaticSize = Enum.AutomaticSize.X, BackgroundTransparency = 1, Parent = pair[1] })
+		make("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, VerticalAlignment = Enum.VerticalAlignment.Center, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 8), Parent = group })
+		Art.image(pair[3], { Size = UDim2.fromOffset(26, 26), LayoutOrder = 1, Parent = group })
+		pair[2].TextWrapped = false
+		pair[2].AutomaticSize = Enum.AutomaticSize.X
+		pair[2].Size = UDim2.new(0, 0, 1, 0)
+		pair[2].Position = UDim2.new()
+		pair[2].LayoutOrder = 2
+		pair[2].Parent = group
+	end
+	title.TextSize = 30
+	title.FontFace = MatchSkin.Kit.F.TITLE
+	box.BackgroundColor3, box.BackgroundTransparency = NK.CARD, 0
+	box:FindFirstChildWhichIsA("UICorner").CornerRadius = UDim.new(0, 12)
+	subtitle.FontFace = MatchSkin.Kit.F.TITLE
+end
+row.Name = "RecoveryActions"
+reviveBtn.Name = "Revive"
+watchBtn.Name = "Spectate"
+newBtn.Name = "NewCountry"; newBtn.Parent = card
+leaveBtn.Name = "ExitGame"; leaveBtn.Parent = card
+if NIGHT then
+	-- Leave battle turns red on hover.
+	leaveBtn:SetAttribute("RedHover", true)
+	local leaveBase = leaveBtn.BackgroundColor3
+	MenuKit.hover(leaveBtn, function(s)
+		local lit = s ~= "idle"
+		local red = Color3.fromRGB(214, 64, 86)
+		if lit and leaveBtn.BackgroundColor3 ~= red then
+			leaveBase = leaveBtn.BackgroundColor3 -- the Night skin may recolour it after creation
+		end
+		leaveBtn.BackgroundColor3 = if lit then red else leaveBase
+		leaveLabel.TextColor3 = if lit then C.WHITE else NK.PINK
+	end)
+end
 local freeBadge = make("TextLabel", {
 	AnchorPoint = Vector2.new(1, 0),
 	Position = UDim2.new(1, -4, 0, 4),
@@ -274,6 +335,19 @@ local freeBadge = make("TextLabel", {
 })
 corner(freeBadge, 4)
 make("UIPadding", { PaddingLeft = UDim.new(0, 4), PaddingRight = UDim.new(0, 4), Parent = freeBadge })
+if NIGHT then
+	-- The price sits next to "Come back" in a big dark pill so it's easy to read.
+	freeBadge.AnchorPoint, freeBadge.Position = Vector2.zero, UDim2.new()
+	freeBadge.Size = UDim2.fromOffset(0, 28)
+	freeBadge.TextSize = 18
+	freeBadge.FontFace = MatchSkin.Kit.F.TITLE
+	freeBadge.TextColor3 = C.WHITE
+	freeBadge.LayoutOrder = 3
+	freeBadge:FindFirstChildWhichIsA("UICorner").CornerRadius = UDim.new(0.5, 0)
+	local pad = freeBadge:FindFirstChildWhichIsA("UIPadding") :: UIPadding
+	pad.PaddingLeft, pad.PaddingRight = UDim.new(0, 10), UDim.new(0, 10)
+	freeBadge.Parent = reviveBtn:FindFirstChild("NightContent")
+end
 
 -- Spectating pill (bottom centre): brings the options back.
 local pill = make("TextButton", {
@@ -323,6 +397,21 @@ local shieldTime = make("TextLabel", { BackgroundTransparency = 1, Size = UDim2.
 local shieldBar = make("Frame", { AnchorPoint = Vector2.new(0, 1), Position = UDim2.fromScale(0, 1), Size = UDim2.new(1, 0, 0, 3), BackgroundColor3 = SKY, BorderSizePixel = 0, Parent = shieldPill })
 make("UIGradient", { Parent = shieldBar }) -- (Transparency drives the drain, see updateShieldPill)
 local shieldSpan = { ends = 0, len = 1 }
+if NIGHT then
+	-- Night pill: card colour, cyan edge and bar, title font; sits just under the win card.
+	shieldPill.BackgroundColor3, shieldPill.BackgroundTransparency = NK.CARD, 0
+	shieldPill.Position = UDim2.new(0.5, 0, 0, 82)
+	shieldPill:FindFirstChildWhichIsA("UICorner").CornerRadius = UDim.new(0.5, 0)
+	local st = shieldPill:FindFirstChildWhichIsA("UIStroke")
+	st.Color, st.Transparency, st.Thickness = NK.CYAN, 0, 1.5
+	shieldText.FontFace, shieldTime.FontFace = MatchSkin.Kit.F.TITLE, MatchSkin.Kit.F.TITLE
+	shieldText.TextColor3, shieldTime.TextColor3, shieldBar.BackgroundColor3 = NK.TEXT, NK.CYAN, NK.CYAN
+	for _, v in shieldRow:GetChildren() do
+		if v:IsA("ImageLabel") then
+			v.ImageColor3 = NK.CYAN
+		end
+	end
+end
 
 DeviceLayout.attachScreenGui(gui)
 
@@ -336,7 +425,7 @@ local function layout()
 	if profile == "phone" then
 		width = math.max(260, screen.X - 32)
 		-- Landscape phones are short: shrink the whole card to fit.
-		scale = math.clamp((screen.Y - 24) / 320, 0.7, 1)
+		scale = math.clamp((screen.Y - 24) / 420, 0.7, 1)
 	elseif profile == "console" then
 		scale = DeviceLayout.state.scale or 1.2
 		width = math.min(width, math.floor(screen.X * 0.9 / scale))
@@ -355,9 +444,13 @@ local function layout()
 	leaveLabel.TextSize = ts
 	reviveTitle.TextSize = ts
 	row.Size = UDim2.new(1, 0, 0, if compact then 44 else 48)
+	newBtn.Size = UDim2.new(1, 0, 0, if compact then 44 else 48)
+	leaveBtn.Size = newBtn.Size
 	pill.Position = UDim2.new(0.5, 0, 1, if profile == "phone" then -96 else -128)
 	pill.TextSize = if profile == "console" then 18 else 15
-	rowLayout.Padding = UDim.new(0, if compact then 6 else 10)
+	local columns=2
+ rowLayout.FillDirectionMaxCells=columns;rowLayout.CellPadding=UDim2.fromOffset(if compact then 6 else 10,10)
+ rowLayout.CellSize=UDim2.new(1/columns,-(if compact then 3 else 5),0,if compact then 44 else 48)
 end
 
 -- Show / hide
@@ -385,7 +478,7 @@ local function buyBadge(): string
 	if buy.tokens > 0 then
 		return "x" .. buy.tokens
 	elseif MetaConfig.REVIVE.id ~= 0 then
-		return if buy.price then "R$ " .. buy.price else "R$"
+		return if buy.price then (if NIGHT then "\u{E002} " else "R$ ") .. buy.price else "R$"
 	end
 	return short(MetaConfig.REVIVE.coins) .. " medals"
 end
@@ -437,6 +530,21 @@ local function render()
 
 	local gp = if gamepad then '<font color="#ffd700">D-pad up</font>  ' else ""
 	pill.Text = gp .. "SPECTATING  ·  " .. (if canRevive or buyable then '<font color="#ffd700">REVIVE</font>' else "OPTIONS")
+	if NIGHT then
+		-- The free / bought revive is the one main (green) action.
+		if on then
+			reviveBtn.BackgroundColor3 = NK.GREEN
+			reviveBtn:SetAttribute("Base", NK.GREEN)
+			reviveTitle.TextColor3 = NK.GREEN_TEXT
+		end
+		reviveTitle.Text = if canRevive then "Free revive" else "Come back"
+		freeBadge.Visible = buyable
+		freeBadge.BackgroundColor3 = Color3.fromRGB(14, 18, 26)
+		pill.Text = (if gamepad then '<font color="#ffc94d">D-pad up</font>  ' else "") .. "Watching  ·  " .. (if canRevive or buyable then '<font color="#7ee2a8">Come back</font>' else "Options")
+		if string.sub(footer.Text, 1, 3) == "New" then
+			footer.Text = "A new country starts somewhere else and uses up your revive"
+		end
+	end
 end
 
 local function bindKeys()
@@ -735,7 +843,7 @@ function DefeatScreen.setup(opts)
 		end
 		if MetaConfig.REVIVE.id ~= 0 then
 			local okInfo, pinfo = pcall(function()
-				return MarketplaceService:GetProductInfo(MetaConfig.REVIVE.id, Enum.InfoType.Product)
+				return MarketplaceService:GetProductInfoAsync(MetaConfig.REVIVE.id, Enum.InfoType.Product)
 			end)
 			if okInfo and type(pinfo) == "table" then
 				buy.price = tonumber(pinfo.PriceInRobux)
