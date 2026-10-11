@@ -23,6 +23,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local SimClock = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("SimClock")) -- game clock (speed / pause)
+local TITLE_NAMES = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("SeasonTitles")).NAMES
+local function escapeRich(s: string): string
+	return (string.gsub(string.gsub(string.gsub(s, "&", "&amp;"), "<", "&lt;"), ">", "&gt;"))
+end
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Emojis = require(Shared:WaitForChild("Emojis"))
@@ -907,7 +911,11 @@ local function refreshPanel()
 		return
 	end
 	local CM = ctx.contextMenu
-	ui.name.Text = p.name
+	-- Name, with the equipped season title as a small purple line under it.
+	local titleName = (p.title or "") ~= "" and TITLE_NAMES[p.title]
+	ui.name.RichText = titleName ~= nil and titleName ~= false
+	ui.name.Text = if titleName then escapeRich(p.name) .. '\n<font size="13" color="#b39cff">' .. titleName .. "</font>" else p.name
+	ui.name.TextTruncate = if titleName then Enum.TextTruncate.None else Enum.TextTruncate.AtEnd
 	ui.gold.Text = ctx.fmt(p.stats.gold or 0)
 	ui.troops.Text = (ctx.fmtTroops or ctx.fmt)(p.stats.troops or 0)
 	ui.betrayals.Text = tostring(CM.betrayals[id] or 0)

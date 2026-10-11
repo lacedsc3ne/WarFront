@@ -940,6 +940,12 @@ function Progression.flagFor(plr: Player): string?
 	return if p and typeof(p.flag) == "string" and Flags.has(p.flag) then p.flag else nil
 end
 
+-- Title id the player equipped (shown under their name in battle), or nil.
+function Progression.titleFor(plr: Player): string?
+	local p = profiles[plr]
+	return if p and typeof(p.title) == "string" and type(p.titles) == "table" and table.find(p.titles, p.title) then p.title else nil
+end
+
 -- Weekly clan goal (Clans): claimed this week already?
 function Progression.clanGoalClaimed(plr: Player, week: number): boolean
 	local p = profiles[plr]

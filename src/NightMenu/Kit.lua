@@ -813,10 +813,11 @@ function Kit.popup(screenGui: Instance, opts: { [string]: any }?)
 	return popup
 end
 
+-- Card-coloured pill with white text; the kind shows in the icon and a thin border.
 local TOAST = {
-	ok = { bg = rgb(0x163a2a), fg = C.GREEN, line = C.GREEN_EDGE, icon = "CheckCircle" },
-	error = { bg = rgb(0x3a1622), fg = rgb(0xff8fa5), line = rgb(0xa33a52), icon = "AlertCircle" },
-	info = { bg = C.CARD, fg = C.TEXT, line = C.LINE, icon = "Info" },
+	ok = { bg = C.CARD, fg = C.TEXT, line = C.GREEN_EDGE, iconColor = C.GREEN, icon = "CheckCircle" },
+	error = { bg = C.CARD, fg = C.TEXT, line = rgb(0xa33a52), iconColor = C.PINK, icon = "AlertCircle" },
+	info = { bg = C.CARD, fg = C.TEXT, line = C.LINE, iconColor = C.YELLOW, icon = "Info" },
 }
 
 function Kit.toast(screenGui: Instance, text: string, kind: string?)
@@ -838,11 +839,13 @@ function Kit.toast(screenGui: Instance, text: string, kind: string?)
 	local group = make("CanvasGroup", {
 		Name = "Toast",
 		BackgroundTransparency = 1,
-		Size = UDim2.fromOffset(0, 40),
+		Size = UDim2.fromOffset(0, 46),
 		AutomaticSize = Enum.AutomaticSize.X,
 		ZIndex = 80,
 		Parent = holder,
 	})
+	-- Room round the pill: the fade draws the group as one image, which would cut off the border.
+	Kit.pad(group, 3, 3, 3, 3)
 	local pill = make("Frame", {
 		Name = "Pill",
 		BackgroundColor3 = style.bg,
@@ -855,8 +858,8 @@ function Kit.toast(screenGui: Instance, text: string, kind: string?)
 	Kit.stroke(pill, style.line)
 	Kit.pad(pill, 16)
 	Kit.list(pill, true, 8, { VerticalAlignment = Enum.VerticalAlignment.Center })
-	Kit.icon(style.icon, { Size = UDim2.fromOffset(20, 20), ImageColor3 = if kind == "info" or kind == nil then C.YELLOW else style.fg, LayoutOrder = 1, Parent = pill })
-	Kit.text({ Text = text, FontFace = F.TITLE, TextSize = 16, TextColor3 = style.fg, LayoutOrder = 2, Parent = pill })
+	Kit.icon(style.icon, { Size = UDim2.fromOffset(20, 20), ImageColor3 = style.iconColor, LayoutOrder = 1, Parent = pill })
+	Kit.text({ Text = text, FontFace = F.BOLD, TextSize = 15, TextColor3 = style.fg, LayoutOrder = 2, Parent = pill })
 	group.GroupTransparency = 1
 	TweenService:Create(group, TweenInfo.new(0.2), { GroupTransparency = 0 }):Play()
 	task.delay(3, function()

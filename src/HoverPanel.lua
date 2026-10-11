@@ -233,6 +233,12 @@ local function build()
 	}
 end
 
+local TITLE_NAMES = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("SeasonTitles")).NAMES
+
+local function escapeRich(s: string): string
+	return (string.gsub(string.gsub(string.gsub(s, "&", "&amp;"), "<", "&lt;"), ">", "&gt;"))
+end
+
 local function kindName(p): string
 	if p.kind == "Bot" then
 		return "AI tribe" -- en.json player_type.bot
@@ -286,6 +292,12 @@ local function fill(id: number)
 	ui.nameText.Text = p.name .. (if id == myId then " (you)" else "")
 	ui.nameText.TextColor3 = if allied or teammate then GREEN500 else Color3.new(1, 1, 1)
 	ui.typeText.Text = kindName(p) .. (if (p.team or "") ~= "" and p.kind ~= "Bot" then " [" .. p.team .. "]" else "")
+	-- Equipped season title, in purple after the player type.
+	local titleName = (p.title or "") ~= "" and TITLE_NAMES[p.title]
+	ui.typeText.RichText = titleName ~= nil and titleName ~= false
+	if titleName then
+		ui.typeText.Text = escapeRich(ui.typeText.Text) .. '  ·  <font color="#b39cff">' .. titleName .. "</font>"
+	end
 	local traitorEnds = cm and cm.traitorUntil and cm.traitorUntil(id)
 	local traitorLeft = if traitorEnds then traitorEnds - SimClock.now() else 0
 	ui.traitorBox.Visible = cm ~= nil and cm.isTraitor(id)

@@ -157,6 +157,7 @@ local function applyRoster(list)
 		p.level, p.vip = e[6] or 0, e[7] or false
 		p.serverColor, p.flag = e[4], e[8] or "" -- flag: OpenFront flag code (nations), "" = none
 		p.team, p.teamKey = e[10] or "", tostring(id) -- team games: team name ("" = none)
+		p.title = e[12] or "" -- equipped season title id ("" = none)
 		Theme.applyPlayerColors(p, Settings.values.borderContrast) -- sets p.r, p.g, p.b and p.paint
 		roster[id] = p
 	end

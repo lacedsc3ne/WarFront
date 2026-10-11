@@ -39,6 +39,7 @@ local TeleportService = game:GetService("TeleportService")
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
 local DeviceLayout = require(script.Parent.Parent:WaitForChild("DeviceLayout"))
 local MapCatalog = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MapCatalog"))
+local TITLE_NAMES = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SeasonTitles")).NAMES
 local UserInputService = game:GetService("UserInputService")
 local LobbyPages = require(script.Parent.Parent:WaitForChild("LobbyPages")) -- open battles list (same as Enter a code)
 
@@ -771,7 +772,11 @@ function Home.create(ctx)
 		local circle = make("Frame", { BackgroundColor3 = C.YELLOW, BorderSizePixel = 0, Size = UDim2.fromOffset(42, 42), LayoutOrder = 1, Parent = top })
 		Kit.corner(circle)
 		ui.level = Kit.number(circle, "1", 19, C.YELLOW_TEXT)
-		ui.name = Kit.text({ Text = localPlayer.DisplayName, FontFace = F.TITLE, TextSize = 17, TextTruncate = Enum.TextTruncate.AtEnd, LayoutOrder = 2, Parent = top })
+		-- Name, and the equipped season title under it (purple).
+		local nameCol = make("Frame", { Name = "NameCol", BackgroundTransparency = 1, Size = UDim2.new(1, -52, 0, 42), LayoutOrder = 2, Parent = top })
+		Kit.list(nameCol, false, 0, { VerticalAlignment = Enum.VerticalAlignment.Center })
+		ui.name = Kit.text({ Text = localPlayer.DisplayName, FontFace = F.TITLE, TextSize = 17, TextTruncate = Enum.TextTruncate.AtEnd, LayoutOrder = 1, Parent = nameCol })
+		ui.titleLine = Kit.text({ Text = "", FontFace = F.BOLD, TextSize = 13, TextColor3 = C.PURPLE, Visible = false, LayoutOrder = 2, Parent = nameCol })
 		ui.seasonLabel = muted(card, "Season pass", 14, 2)
 		local bar, setBar = Kit.progress(0, C.CYAN)
 		bar.LayoutOrder = 3
@@ -1320,6 +1325,11 @@ function Home.create(ctx)
 		end
 		if ui.name then
 			ui.name.Text = snap.name or localPlayer.DisplayName
+		end
+		if ui.titleLine then
+			local titleName = p and type(p.title) == "string" and TITLE_NAMES[p.title]
+			ui.titleLine.Text = titleName or ""
+			ui.titleLine.Visible = titleName ~= nil and titleName ~= false
 		end
 		if ui.setXp then
 			-- Season pass progress (the circle shows the account level).

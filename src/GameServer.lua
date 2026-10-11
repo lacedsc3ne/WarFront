@@ -2257,7 +2257,7 @@ local function rosterPayload()
 	local list = {}
 	for id, p in players do
 		-- [11] = the "Hidden Names" stand-in for human players (createRandomName)
-		list[#list + 1] = { id, p.name, p.kind, p.color, p.userId or 0, p.level, p.vip, p.flag or "", Flow.kindName(p.kind), p.team or "", if p.kind == "Human" then TribeNames.anonymous(p.name) else "" }
+		list[#list + 1] = { id, p.name, p.kind, p.color, p.userId or 0, p.level, p.vip, p.flag or "", Flow.kindName(p.kind), p.team or "", if p.kind == "Human" then TribeNames.anonymous(p.name) else "", p.title or "" }
 	end
 	return list
 end
@@ -2835,6 +2835,7 @@ local function addHuman(plr: Player)
 		end
 		p.level, p.vip = Progression.tagFor(plr)
 		p.flag = Progression.flagFor(plr) or "" -- chosen in My items (roster slot 8, like nations' flags)
+		p.title = Progression.titleFor(plr) or "" -- equipped season title id (roster slot 12)
 	end
 	byUser[plr.UserId] = p
 	if phase == "Spawn" and type(match.rules.startingGold) == "number" then
