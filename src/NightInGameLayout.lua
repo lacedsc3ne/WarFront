@@ -1311,7 +1311,7 @@ function Layout.borrow(api)
 				s.change(c, { CornerRadius = UDim.new(0, 10) })
 			end
 			if not row:FindFirstChild("NightEdge") then
-				local st = make("UIStroke", { Name = "NightEdge", Color = K.LINE, Thickness = 1.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = row })
+				local st = make("UIStroke", { Name = "NightEdge", Color = K.LINE, Thickness = 1, Transparency = 0.45, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = row })
 				table.insert(s.created, st)
 			end
 		end

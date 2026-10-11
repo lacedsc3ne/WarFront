@@ -1006,7 +1006,7 @@ function Home.create(ctx)
 	local function buildDesktop()
 		-- Top bar (in Roblox's top bar row)
 		local top = make("Frame", { Name = "Top", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Parent = topHolder })
-		Kit.pad(top, 10, 12)
+		Kit.pad(top, 10, 12, 10, 0) -- 10 px down: centred on Roblox's own top-bar buttons, not the whole strip
 		Kit.list(top, true, 10, { VerticalAlignment = Enum.VerticalAlignment.Center })
 		-- Logo: chunky outlined letters in the icons' cartoon style (no emblem: owner's call).
 		local logo = make("Frame", { Name = "Logo", BackgroundTransparency = 1, Size = UDim2.fromOffset(0, 40), AutomaticSize = Enum.AutomaticSize.X, LayoutOrder = 1, Parent = top })
@@ -1087,7 +1087,7 @@ function Home.create(ctx)
 
 	local function buildPhone()
 		local top = make("Frame", { Name = "Top", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Parent = topHolder })
-		Kit.pad(top, 8, 10)
+		Kit.pad(top, 8, 10, 10, 0) -- centred on Roblox's top-bar buttons
 		Kit.list(top, true, 8, { VerticalAlignment = Enum.VerticalAlignment.Center })
 		local circle = make("Frame", { BackgroundColor3 = C.YELLOW, BorderSizePixel = 0, Size = UDim2.fromOffset(38, 38), LayoutOrder = 1, Parent = top })
 		Kit.corner(circle)
@@ -1334,13 +1334,7 @@ function Home.create(ctx)
 		end
 		-- Badges: rewards waiting (missions + season) and unread notifications.
 		local ready = tonumber(p and p.missionsReady) or 0
-		if ui.missionsBadge then
-			ui.missionsBadge.Visible = ready > 0
-			local label = ui.missionsBadge:FindFirstChild("Label")
-			if label then
-				label.Text = ready .. " ready"
-			end
-		end
+		-- (the "N ready" badge on Today's missions counts only today's missions: set with the list below)
 		for _, holder in { ui.missionsTile, ui.bell } do
 			local want = if holder == ui.bell then Feed.unread() > 0 else ready > 0
 			local dot = holder:FindFirstChild("Dot")
@@ -1369,19 +1363,49 @@ function Home.create(ctx)
 					muted(list, "Tap to see your missions.", 14, 1)
 					return
 				end
+				-- One row per daily mission: icon slot (same width for all, so the text lines up), the
+				-- mission, then progress / "Claim" / "Done" on the right.
+				local readyToday = 0
 				for i, m in data.daily do
-					local done = (tonumber(m.n) or 0) >= (tonumber(m.goal) or 1)
-					local row = make("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 18), LayoutOrder = i, Parent = list })
-					Kit.list(row, true, 6, { VerticalAlignment = Enum.VerticalAlignment.Center })
-					if not (m.claimed or done) and Art.mission(m.id) then
-					Art.image(Art.mission(m.id), { Size = UDim2.fromOffset(18, 18), LayoutOrder = 1, Parent = row })
-				else
-					Kit.icon(if m.claimed or done then "CheckCircle" else "Missions", { Size = UDim2.fromOffset(14, 14), ImageColor3 = if m.claimed or done then C.GREEN else C.MUTED, LayoutOrder = 1, Parent = row })
-				end
-					local t = Kit.text({ Text = tostring(m.text) .. (if done then "" else " · " .. tostring(m.n) .. "/" .. tostring(m.goal)), FontFace = F.BOLD, TextSize = 13, TextColor3 = if m.claimed then C.MUTED elseif done then C.GREEN else C.TEXT, TextTruncate = Enum.TextTruncate.AtEnd, LayoutOrder = 2, Parent = row })
+					local goal = tonumber(m.goal) or 1
+					local have = math.min(tonumber(m.n) or 0, goal)
+					local done = have >= goal
+					if done and not m.claimed then
+						readyToday += 1
+					end
+					local row = make("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 24), LayoutOrder = i, Parent = list })
+					Kit.list(row, true, 8, { VerticalAlignment = Enum.VerticalAlignment.Center })
+					local slot = make("Frame", { Name = "IconSlot", BackgroundTransparency = 1, Size = UDim2.fromOffset(20, 20), LayoutOrder = 1, Parent = row })
+					if m.claimed or done then
+						Kit.icon("CheckCircle", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(16, 16), ImageColor3 = C.GREEN, Parent = slot })
+					elseif Art.mission(m.id) then
+						Art.image(Art.mission(m.id), { Size = UDim2.fromScale(1, 1), Parent = slot })
+					else
+						Kit.icon("Missions", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(16, 16), ImageColor3 = C.MUTED, Parent = slot })
+					end
+					local t = Kit.text({ Text = tostring(m.text), FontFace = F.BOLD, TextSize = 13, TextColor3 = if m.claimed then C.MUTED else C.TEXT, TextTruncate = Enum.TextTruncate.AtEnd, LayoutOrder = 2, Parent = row })
 					t.AutomaticSize = Enum.AutomaticSize.None
-					t.Size = UDim2.new(1, -20, 1, 0)
+					t.Size = UDim2.new(0, 0, 1, 0)
 					t.TextXAlignment = Enum.TextXAlignment.Left
+					make("UIFlexItem", { FlexMode = Enum.UIFlexMode.Fill, Parent = t })
+					if m.claimed then
+						Kit.text({ Text = "Done", FontFace = F.BOLD, TextSize = 12, TextColor3 = C.GREEN, LayoutOrder = 3, Parent = row })
+					else
+						local tag = Kit.chip(if done then "Claim" else have .. "/" .. goal, {
+							color = if done then C.GREEN else C.DEEP,
+							textColor = if done then C.GREEN_TEXT else C.MUTED,
+							stroke = false, height = 20, textSize = 12, layoutOrder = 3, parent = row,
+						})
+						local pad = tag:FindFirstChildWhichIsA("UIPadding")
+						pad.PaddingLeft, pad.PaddingRight = UDim.new(0, 8), UDim.new(0, 8)
+					end
+				end
+				if ui.missionsBadge then
+					ui.missionsBadge.Visible = readyToday > 0
+					local label = ui.missionsBadge:FindFirstChild("Label")
+					if label then
+						label.Text = readyToday .. " ready"
+					end
 				end
 			end)
 		end

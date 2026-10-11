@@ -122,6 +122,34 @@ local function rowButton(parent: Instance, order: number)
 	return b
 end
 
+-- Night look for one attack / boat row: coloured stripe on the left, icon in a round badge, troops in
+-- the title font, the name filling the free space, the time as a small pill and a round action button.
+local function nightRow(row)
+	local K, F = MatchSkin.Kit.C, MatchSkin.Kit.F
+	local f = row.frame
+	f.BackgroundColor3, f.BackgroundTransparency = K.CARD, 0
+	f:FindFirstChildWhichIsA("UICorner").CornerRadius = UDim.new(0, 10)
+	local pad = f:FindFirstChildWhichIsA("UIPadding")
+	pad.PaddingLeft, pad.PaddingRight = UDim.new(0, 12), UDim.new(0, 4)
+	row.accent = make("Frame", { Name = "Accent", AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, -8, 0.5, 0), Size = UDim2.new(0, 3, 1, -12), BorderSizePixel = 0, BackgroundColor3 = K.CYAN, ZIndex = 4, Parent = f })
+	corner(row.accent, 2)
+	local list = row.main:FindFirstChildWhichIsA("UIListLayout")
+	list.Padding = UDim.new(0, 7)
+	local chip = make("Frame", { Name = "IconChip", Size = UDim2.fromOffset(22, 22), BackgroundColor3 = K.DEEP, BorderSizePixel = 0, LayoutOrder = 1, ZIndex = 4, Parent = row.main })
+	corner(chip, 11)
+	row.icon.AnchorPoint, row.icon.Position, row.icon.Parent = Vector2.new(0.5, 0.5), UDim2.fromScale(0.5, 0.5), chip
+	row.troops.FontFace, row.troops.TextSize = F.TITLE, 15
+	row.name.FontFace = F.BOLD
+	make("UIFlexItem", { FlexMode = Enum.UIFlexMode.Fill, Parent = row.name })
+	row.extra.FontFace, row.extra.TextSize, row.extra.TextColor3 = F.BOLD, 12, K.MUTED
+	row.extra.BackgroundColor3, row.extra.BackgroundTransparency = K.DEEP, 0
+	corner(row.extra, 9)
+	make("UIPadding", { PaddingLeft = UDim.new(0, 7), PaddingRight = UDim.new(0, 7), Parent = row.extra })
+	row.action.Size = UDim2.fromOffset(26, 26)
+	row.action:FindFirstChildWhichIsA("UICorner").CornerRadius = UDim.new(0.5, 0)
+	row.status.FontFace, row.status.TextColor3 = F.BOLD, K.CYAN
+end
+
 local function makeRow(key: string)
 	local f = make("Frame", {
 		Name = key,
@@ -172,6 +200,9 @@ local function makeRow(key: string)
 			row.onAction()
 		end
 	end)
+	if MatchSkin.night then
+		nightRow(row)
+	end
 	attacks.rows[key] = row
 	return row
 end
@@ -226,6 +257,26 @@ local function fillRow(row, kind: string, order: number, d)
 	row.actionStroke.Enabled = kind == "in"
 	row.action.Selectable = row.action.Visible
 	row.main.Selectable = d.onMain ~= nil
+	if MatchSkin.night and row.accent then
+		local K = MatchSkin.Kit.C
+		local accent = if incoming then K.PINK else K.CYAN
+		row.accent.BackgroundColor3 = accent
+		row.arrow.TextColor3 = accent
+		row.troops.TextColor3 = accent
+		row.troops.AutomaticSize, row.troops.Size = Enum.AutomaticSize.X, UDim2.fromOffset(0, 18)
+		row.name.TextColor3, row.name.TextSize = K.TEXT, 13
+		row.name.Size = UDim2.new(0, 0, 0, 18)
+		row.extra.AutomaticSize, row.extra.Size = Enum.AutomaticSize.X, UDim2.fromOffset(0, 18)
+		row.extra.Visible = row.extra.Text ~= ""
+		if not boat and not population then
+			row.icon.ImageColor3 = accent
+		end
+		row.action.BackgroundTransparency = 0
+		row.action.BackgroundColor3 = if kind == "in" then Color3.fromRGB(122, 48, 74) else K.RAISED
+		row.actionStroke.Enabled = false
+		row.retreat.ImageColor3 = K.TEXT
+		row.main.Size = UDim2.new(1, if row.action.Visible or row.status.Visible then -34 else 0, 1, 0)
+	end
 end
 
 local function refreshAttacks()
@@ -353,6 +404,9 @@ local function buildAttacks(parent: Instance)
 	})
 	attacks.frame = frame
 	attacks.grid = frame
+	if MatchSkin.night then
+		frame.ScrollBarImageColor3 = MatchSkin.Kit.C.LINE
+	end
 	make("UIGridLayout", {
 		CellSize = UDim2.new(1, -4, 0, ROW_H),
 		CellPadding = UDim2.fromOffset(4, 4),
@@ -575,21 +629,30 @@ local function buildWin()
 			b.Text = ({ ["KEEP PLAYING"] = "Play again", ["EXIT GAME"] = "Leave", ["WATCH REPLAY"] = "Watch replay", STATS = "Stats" })[text] or text
 			b.FontFace = MatchSkin.Kit.F.TITLE
 			b.TextSize = 18
-			b.TextColor3 = if text == "KEEP PLAYING" then MatchSkin.Kit.C.YELLOW_TEXT else WHITE
+			b.TextColor3 = if text == "KEEP PLAYING" then MatchSkin.Kit.C.YELLOW_TEXT elseif text == "EXIT GAME" then MatchSkin.Kit.C.PINK else WHITE
 			b:FindFirstChildWhichIsA("UICorner").CornerRadius = UDim.new(0.5, 0)
 		end
-		local hoverColor = if MatchSkin.night then malibu:Lerp(WHITE, 0.12) else AQUARIUS
+		-- Night: Leave has pink text and turns red on hover, like the other Leave buttons.
+		local leave = MatchSkin.night and text == "EXIT GAME"
+		local idleText = b.TextColor3
+		local hoverColor = if leave then Color3.fromRGB(214, 64, 86) elseif MatchSkin.night then malibu:Lerp(WHITE, 0.12) else AQUARIUS
+		local function lit(on: boolean)
+			b.BackgroundColor3 = if on then hoverColor else malibu
+			if leave then
+				b.TextColor3 = if on then WHITE else idleText
+			end
+		end
 		b.MouseEnter:Connect(function()
-			b.BackgroundColor3 = hoverColor
+			lit(true)
 		end)
 		b.MouseLeave:Connect(function()
-			b.BackgroundColor3 = malibu
+			lit(false)
 		end)
 		b.SelectionGained:Connect(function()
-			b.BackgroundColor3 = hoverColor
+			lit(true)
 		end)
 		b.SelectionLost:Connect(function()
-			b.BackgroundColor3 = malibu
+			lit(false)
 		end)
 		b.Activated:Connect(onClick)
 		return b

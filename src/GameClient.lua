@@ -2460,7 +2460,12 @@ local function act(t: number)
 			-- there is one, else build; atom / hydrogen bomb ghosts stay armed for the next target.
 			local keep = mode.type == "build" or mode.type == "unit" or mode.type == "nuke" and (mode.kind == "AtomBomb" or mode.kind == "HydrogenBomb")
 			-- Hold Shift to keep placing the same building / unit (quick placement).
-			if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.RightShift) then
+			local shift = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
+			local lastInput = UserInputService:GetLastInputType()
+			local pc = lastInput ~= Enum.UserInputType.Touch and not string.find(lastInput.Name, "Gamepad", 1, true)
+			if (mode.type == "build" or mode.type == "unit") and pc then
+				keep = shift -- PC: one building per click unless Shift is held (owner, 11 Oct 2026)
+			elseif shift then
 				keep = true
 			end
 			if mode.type == "build" then
